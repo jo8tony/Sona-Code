@@ -24,6 +24,7 @@ from llm_api_proxy_recorder.admin.skills import WORKSPACE_COMMANDS
 from llm_api_proxy_recorder.terminal.manager import resolve_opencode
 from llm_api_proxy_recorder.admin.models import application_catalog, public_native_catalog, native_provider_id
 from llm_api_proxy_recorder.workspace.manager import WorkspaceError
+from llm_api_proxy_recorder.recording.parse import session_key_from_header
 
 router = APIRouter()
 
@@ -397,6 +398,16 @@ async def list_messages(project_id: str, session_id: str, request: Request):
     path = _project_path(request, project_id)
     messages = await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}/message")
     return await asyncio.to_thread(request.app.state.runtime.skills.annotate_messages, path, session_id, messages)
+
+
+@router.get("/workspace/projects/{project_id}/sessions/{session_id}/trajectory")
+def session_trajectory(project_id: str, session_id: str, request: Request) -> dict:
+    """Reuse the recorder ledger for OpenCode's explicit X-Session-Id."""
+    from llm_api_proxy_recorder.admin.api import trajectory_session_detail
+
+    _project_path(request, project_id)
+    key = session_key_from_header(_safe_id(session_id))
+    return trajectory_session_detail(key, request, q=None)
 
 
 class PromptBody(BaseModel):

@@ -92,6 +92,7 @@
 .wsp-tab { height: 43px; padding: 0 2px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--text-dim); font-size: 11.5px; font-weight: 700; }
 .wsp-tab:hover { color: var(--text); }
 .wsp-tab.active { border-bottom-color: var(--accent); color: var(--accent); }
+.wsp-tab-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; margin-left: 6px; padding: 0 5px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); font-size: 10px; font-variant-numeric: tabular-nums; }
 .wsp-scroll { flex: 1; min-height: 0; overflow-y: auto; background: linear-gradient(#fff, #fcfdff); }
 .wsp-scroll { overflow-anchor: none; }
 .wsp-content { width: min(860px, calc(100% - 56px)); min-height: 100%; margin: auto; padding: 30px 0 35px; }
@@ -441,6 +442,9 @@
 .wsp-trace-list { overflow: hidden; border: 1px solid var(--border); border-radius: 10px; }
 .wsp-trace-row { display: grid; grid-template-columns: 82px 13px minmax(0, 1fr) auto; align-items: start; gap: 12px; padding: 15px 16px; border-top: 1px solid var(--border); }
 .wsp-trace-row:first-child { border-top: 0; }
+.wsp-trace-link { color: inherit; text-decoration: none; cursor: pointer; }
+.wsp-trace-link:hover, .wsp-trace-link:focus-visible { background: var(--accent-soft); }
+.wsp-content.wsp-content-trajectory { width: calc(100% - 48px); }
 .wsp-trace-time, .wsp-trace-duration { color: var(--text-faint); font: 10px var(--mono); padding-top: 3px; white-space: nowrap; }
 .wsp-trace-dot { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
 .wsp-trace-dot.green { background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); }
@@ -605,7 +609,7 @@
 .wsp-action-menu.wsp-action-menu-floating { position: fixed; z-index: 60; right: auto; bottom: auto; box-sizing: border-box; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto; }
 
 .wsp-input[contenteditable] { box-sizing: border-box; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; }
-.wsp-input[contenteditable]:empty::before, .wsp-input[data-empty="true"]::before { content: attr(data-placeholder); color: var(--text-faint); pointer-events: none; }
+.wsp-input[data-empty="true"]::before { content: attr(data-placeholder); color: var(--text-faint); pointer-events: none; }
 .wsp-skill-error { padding: 0 16px 6px; color: #b84f4b; font-size: 12px; }
 .wsp-skill-error[hidden] { display: none; }
 .wsp-skill-mention, .wsp-file-mention { display: inline-flex; align-items: center; gap: 4px; color: #245abb; font-weight: 500; vertical-align: baseline; white-space: nowrap; }

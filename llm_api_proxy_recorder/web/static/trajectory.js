@@ -144,17 +144,20 @@ async function renderTrajectoryList(view) {
 }
 
 /* ============================================================ 会话轨迹 */
-async function renderTrajectorySession(view, key) {
+async function renderTrajectorySession(view, key, options = {}) {
+  const retry = options.retry || (() => route());
   let data;
   try {
-    data = await api("trajectory/sessions/" + encodeURIComponent(key));
+    data = options.data || await api("trajectory/sessions/" + encodeURIComponent(key));
+    if (options.alive && !options.alive()) return;
   } catch (e) {
-    view.replaceChildren(errorCard(e.status === 404 ? "会话不存在" : "加载轨迹失败：" + e.message, () => route()));
+    if (options.alive && !options.alive()) return;
+    view.replaceChildren(errorCard(e.status === 404 ? "会话不存在" : "加载轨迹失败：" + e.message, retry));
     return;
   }
   const turns = data.turns || [];
   if (!turns.length) {
-    view.replaceChildren(errorCard("该会话暂无已定稿的调用记录（后台解析可能尚未完成，稍后刷新试试）", () => route()));
+    view.replaceChildren(errorCard("该会话暂无已定稿的调用记录（后台解析可能尚未完成，稍后刷新试试）", retry));
     return;
   }
 
@@ -167,7 +170,7 @@ async function renderTrajectorySession(view, key) {
   const cum = data.cumulative_usage || {};
   view.replaceChildren(
     el("div", { class: "detail-top" },
-      el("a", { class: "btn btn-ghost", href: "#/trajectory", text: "← 返回会话列表" }),
+      ...(options.embedded ? [] : [el("a", { class: "btn btn-ghost", href: "#/trajectory", text: "← 返回会话列表" })]),
       el("span", { class: "mono dim", text: data.session_key })),
     el("div", { class: "sum-bar" },
       sumItem("模型", data.model || "—"),

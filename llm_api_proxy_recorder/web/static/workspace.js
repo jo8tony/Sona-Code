@@ -1,7 +1,23 @@
 "use strict";
 /* Headless OpenCode workspace. The existing proxy record pages remain separate. */
 
-let workspaceSelection = { projectId: null, sessionId: null };
+let workspaceSelection = { projectId: null, sessionId: null, tab: "chat" };
+
+// Link only calls inside a single native assistant lifetime. Ambiguous calls
+// remain independent activity rows rather than pointing at the wrong message.
+function workspaceCallOwners(assistants, turns) {
+  const owners = new Map();
+  for (const turn of turns) {
+    const time = new Date(turn.started_at).getTime();
+    const candidates = assistants.filter((message, index) => {
+      const start = message.info?.time?.created;
+      const end = message.info?.time?.completed || assistants[index + 1]?.info?.time?.created || Infinity;
+      return start != null && time >= start && time < end;
+    });
+    if (candidates.length === 1) owners.set(turn.call_id, candidates[0].info.id);
+  }
+  return owners;
+}
 
 function renderWorkspace(view) {
   let disposed = false;
@@ -21,12 +37,14 @@ function renderWorkspace(view) {
   let activeRowMenu = null;
   let followLatest = true;
   let scrollToLatestOnLoad = true;
+  let trajectoryView = null;
+  let trajectorySignature = "";
   const state = {
     projects: [], sessions: new Map(), sessionDetails: new Map(), errors: new Map(),
     projectId: workspaceSelection.projectId, sessionId: workspaceSelection.sessionId,
     messages: [], permissions: [], questions: [], questionDrafts: new Map(), questionPages: new Map(),
     questionErrors: new Map(), diffs: [], todos: [], children: [], statuses: {},
-    check: null, tab: "chat", search: "", sending: false, chosenModels: new Map(), defaultModel: null,
+    recordingData: null, recordingError: "", check: null, tab: workspaceSelection.tab || "chat", search: "", sending: false, chosenModels: new Map(), defaultModel: null,
     chosenAgents: new Map(), chosenVariants: new Map(), providers: [], connectedProviders: new Set(), agents: [], commands: [], skills: [], modelLoadError: "",
     collapsedProjects: new Set(), expandedTools: new Map(), pendingAction: "", actionError: "", compactingSessionId: null,
     attachments: [], fileReferences: [], pendingImageCount: 0, pendingImageBytes: 0, commandSelectedIndex: 0,
@@ -47,7 +65,7 @@ function renderWorkspace(view) {
       <div class="wsp-main">
         <nav class="wsp-global-nav" aria-label="主导航"><a class="active" href="#/workspace">工作区</a><a href="#/models">模型</a><a href="#/skills">技能</a><a href="#/terminal">OpenCode 终端</a><a href="#/trajectory">轨迹</a><a href="#/calls">调用列表</a><a href="#/dashboard">仪表盘</a><a href="#/settings">设置</a><span class="wsp-nav-spacer"></span><span class="wsp-nav-note">代理观测与开发对话</span></nav>
         <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="5" width="10" height="10" rx="2" fill="currentColor"/></svg></button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span></header>
-        <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button><button class="wsp-tab" type="button" data-wsp-tab="tasks">任务</button></nav>
+        <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动<span class="wsp-tab-count" id="wsp-change-count" aria-label="修改文件数量">0</span></button><button class="wsp-tab" type="button" data-wsp-tab="trajectory">轨迹</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button><button class="wsp-tab" type="button" data-wsp-tab="tasks">任务</button></nav>
         <div class="wsp-scroll" id="wsp-scroll"><div class="wsp-content" id="wsp-content"></div></div>
         <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" role="listbox" aria-label="命令与项目文件" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-close" aria-label="关闭模型选择">×</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><div class="wsp-attachment-list" id="wsp-attachment-list" aria-label="待发送附件" hidden></div><div class="wsp-input" id="wsp-input" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" aria-describedby="wsp-skill-error"></div><div id="wsp-skill-error" class="wsp-skill-error" role="status" aria-live="polite" hidden></div><div class="wsp-composer-bottom"><button class="wsp-attach" id="wsp-attach" type="button" title="选择 OpenCode 命令，也可输入 /" aria-label="选择 OpenCode 命令" aria-haspopup="listbox" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent" hidden><option value="build">Build · 执行</option></select><button class="wsp-agent-trigger" id="wsp-agent-trigger" type="button" aria-haspopup="menu" aria-expanded="false"><span id="wsp-agent-label">Build · 执行</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div class="wsp-agent-picker" id="wsp-agent-picker" role="menu" aria-label="选择 Agent" hidden></div><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">自动</button><select class="wsp-variant" id="wsp-variant" aria-label="选择模型强度" title="模型推理强度" hidden></select><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div></form><div class="wsp-stats" id="wsp-stats" aria-live="polite"></div></div>
       </div>
@@ -760,9 +778,9 @@ function renderWorkspace(view) {
 
   function updateSkillInput() {
     state.fileReferences = composer.fileReferences;
+    input.dataset.empty = String(!composingInput && !composer.value);
     if (composingInput) return;
     const errorLine = view.querySelector("#wsp-skill-error");
-    input.dataset.empty = String(!composer.value);
     const draft = composer.value.trimStart();
     const match = draft.match(/^\/([A-Za-z0-9_-]+)(?:\s|$)/);
     const name = match?.[1] || (draft.startsWith("/") ? draft.slice(1).split(/\s/)[0] : "");
@@ -1155,8 +1173,7 @@ function renderWorkspace(view) {
     return null;
   }
 
-  function renderChanges() {
-    content.append(panelIntro("文件改动", "在同一处查看当前对话涉及的文件与代码差异。"));
+  function changedFiles() {
     const writtenFiles = new Map();
     if (state.sessionId && !state.diffs.length) {
       for (const message of state.messages) for (const part of message.parts || []) {
@@ -1167,6 +1184,12 @@ function renderWorkspace(view) {
       }
     }
     const diffs = state.diffs.length ? state.diffs : [...writtenFiles.values()];
+    return [...new Map(diffs.map((diff, index) => [diff.file || diff.path || index, diff])).values()];
+  }
+
+  function renderChanges() {
+    content.append(panelIntro("文件改动", "在同一处查看当前对话涉及的文件与代码差异。"));
+    const diffs = changedFiles();
     if (!state.sessionId || !diffs.length) {
       content.append(empty("暂无文件改动", "OpenCode 修改文件后，这里会显示改动摘要。"));
       return;
@@ -1204,26 +1227,69 @@ function renderWorkspace(view) {
     }
   }
 
+  function renderSessionTrajectory() {
+    content.classList.add("wsp-content-trajectory");
+    if (!state.sessionId) {
+      content.append(empty("请选择对话", "选择对话后查看其代理调用轨迹。"));
+      return;
+    }
+    if (state.recordingError) {
+      content.append(errorCard("加载轨迹失败：" + state.recordingError, refreshSelected));
+      return;
+    }
+    if (!state.recordingData) {
+      content.append(empty("正在加载轨迹", "读取当前对话的代理调用记录。"));
+      return;
+    }
+    if (!state.recordingData.turns?.length) {
+      content.append(empty("暂无对话轨迹", "经过代理录制的模型请求完成后会显示在这里；直连请求没有代理记录。"));
+      return;
+    }
+    const signature = JSON.stringify(state.recordingData);
+    if (!trajectoryView || trajectorySignature !== signature) {
+      trajectoryView = el("div", { class: "wsp-trajectory" });
+      trajectorySignature = signature;
+      renderTrajectorySession(trajectoryView, state.recordingData.session_key, {
+        data: state.recordingData, embedded: true, retry: refreshSelected,
+      });
+    }
+    if (trajectoryView.parentNode !== content) content.append(trajectoryView);
+  }
+
   function renderActivity() {
-    content.append(panelIntro("对话活动", "这里汇总当前对话的模型请求和工具步骤；顶部“轨迹”查看代理记录的全局会话。"));
+    content.append(panelIntro("对话活动", "这里汇总当前对话的模型请求和工具步骤；点击已录制的模型请求查看调用详情。"));
     const timeline = el("div", { class: "wsp-trace-list" });
     let count = 0;
-    const addEvent = (time, title, description, duration, color) => {
-      timeline.append(el("div", { class: "wsp-trace-row" },
+    const addEvent = (time, title, description, duration, color, callId) => {
+      timeline.append(el(callId ? "a" : "div", {
+        class: "wsp-trace-row" + (callId ? " wsp-trace-link" : ""),
+        ...(callId ? { href: "#/calls/" + encodeURIComponent(callId), title: "查看模型请求详情" } : {}),
+      },
         el("span", { class: "wsp-trace-time", text: eventTime(time) }),
         el("span", { class: `wsp-trace-dot ${color}` }),
         el("span", { class: "wsp-trace-content" }, el("strong", { text: title }), el("span", { text: description })),
         el("span", { class: "wsp-trace-duration", text: duration })));
       count++;
     };
-    for (const message of state.messages) {
-      if (message.info?.role !== "assistant") continue;
+    const turns = state.recordingData?.turns || [];
+    const linkedCalls = new Set();
+    const assistants = state.messages.filter((message) => message.info?.role === "assistant");
+    const callOwners = workspaceCallOwners(assistants, turns);
+    const addCall = (turn) => {
+      linkedCalls.add(turn.call_id);
+      addEvent(turn.started_at, "模型请求", turn.model || "OpenCode 回复",
+        turn.duration_ms != null ? `${(turn.duration_ms / 1000).toFixed(1)} 秒` : "",
+        turn.status === "error" || turn.status_code >= 400 ? "red" : "", turn.call_id);
+    };
+    for (const message of assistants) {
       const info = message.info;
       const start = info.time?.created;
       const end = info.time?.completed;
       const seconds = start && end ? (new Date(end) - new Date(start)) / 1000 : NaN;
-      addEvent(start, "模型请求", [info.providerID, info.modelID].filter(Boolean).join(" / ") || "OpenCode 回复",
-        Number.isFinite(seconds) && seconds >= 0 ? `${seconds.toFixed(1)} 秒` : "", info.error ? "red" : "");
+      const calls = turns.filter((turn) => callOwners.get(turn.call_id) === info.id);
+      if (calls.length) calls.forEach(addCall);
+      else addEvent(start, "模型请求", [info.providerID, info.modelID].filter(Boolean).join(" / ") || "OpenCode 回复",
+        Number.isFinite(seconds) && seconds >= 0 ? `${seconds.toFixed(1)} 秒 · 暂无调用记录` : "暂无调用记录", info.error ? "red" : "");
       for (const part of message.parts || []) {
         if (part.type !== "tool") continue;
         const detail = part.state?.input || {};
@@ -1234,6 +1300,8 @@ function renderWorkspace(view) {
           status === "error" ? "red" : status === "completed" ? "green" : "amber");
       }
     }
+    for (const turn of turns) if (!linkedCalls.has(turn.call_id)) addCall(turn);
+    if (state.recordingError) content.append(el("p", { class: "wsp-error", text: "调用记录加载失败：" + state.recordingError }));
     for (const request of [...state.permissions, ...state.questions].filter((item) => item.sessionID === state.sessionId))
       addEvent(request.time?.created, "等待确认", request.permission || "需要你的回答", "待确认", "amber");
     if (count) content.append(timeline);
@@ -1270,7 +1338,14 @@ function renderWorkspace(view) {
     const editingQuestion = active?.classList?.contains("wsp-question-custom")
       ? { id: active.dataset.requestId, index: active.dataset.questionIndex,
           start: active.selectionStart, end: active.selectionEnd } : null;
-    content.replaceChildren();
+    const keepTrajectory = state.tab === "trajectory" && !state.recordingError &&
+      trajectoryView?.parentNode === content && trajectorySignature === JSON.stringify(state.recordingData);
+    if (!keepTrajectory) content.replaceChildren();
+    content.classList.remove("wsp-content-trajectory");
+    const changeCount = view.querySelector("#wsp-change-count");
+    changeCount.textContent = String(state.sessionId ? changedFiles().length : 0);
+    changeCount.title = `修改了 ${changeCount.textContent} 个文件`;
+    if (state.tab === "trajectory") renderSessionTrajectory();
     if (state.tab === "chat") renderMessages();
     if (state.tab === "changes") renderChanges();
     if (state.tab === "activity") renderActivity();
@@ -1836,17 +1911,20 @@ function renderWorkspace(view) {
     const sessionId = state.sessionId;
     const base = sessionPath(projectId, sessionId);
     try {
-      const [messages, statuses, permissions, questions, diffs, todos, children, session] = await Promise.allSettled([
+      const [messages, statuses, permissions, questions, diffs, todos, children, session, recording] = await Promise.allSettled([
         api(`${base}/messages`, { silent: true }),
         api(`workspace/projects/${encodeURIComponent(projectId)}/status`, { silent: true }),
         api(`workspace/projects/${encodeURIComponent(projectId)}/permissions`, { silent: true }),
         api(`workspace/projects/${encodeURIComponent(projectId)}/questions`, { silent: true }),
-        state.tab === "changes" ? api(`${base}/diff`, { silent: true }) : Promise.resolve(state.diffs),
+        api(`${base}/diff`, { silent: true }),
         state.tab === "tasks" ? api(`${base}/todo`, { silent: true }) : Promise.resolve(state.todos),
         state.tab === "tasks" ? api(`${base}/children`, { silent: true }) : Promise.resolve(state.children),
         api(base, { silent: true }),
+        ["trajectory", "activity"].includes(state.tab) ? api(`${base}/trajectory`, { silent: true }) : Promise.resolve(state.recordingData),
       ]);
       if (!alive() || state.projectId !== projectId || state.sessionId !== sessionId) return;
+      if (recording.status === "fulfilled") { state.recordingData = recording.value; state.recordingError = ""; }
+      else state.recordingError = detail(recording.reason);
       if (messages.status === "fulfilled") state.messages = Array.isArray(messages.value) ? messages.value : [];
       if (statuses.status === "fulfilled") state.statuses = statuses.value || {};
       if (permissions.status === "fulfilled") state.permissions = Array.isArray(permissions.value) ? permissions.value : [];
@@ -1886,8 +1964,9 @@ function renderWorkspace(view) {
     const remembered = workspaceSelection.projectId === projectId ? workspaceSelection.sessionId : null;
     state.sessionId = remembered || (state.sessions.get(projectId) || [])[0]?.id || null;
     state.messages = []; state.permissions = []; state.questions = []; state.questionDrafts.clear(); state.diffs = []; state.todos = []; state.children = [];
-    state.tab = "chat";
-    workspaceSelection = { projectId, sessionId: state.sessionId };
+    state.recordingData = null; state.recordingError = ""; trajectoryView = null; trajectorySignature = "";
+    state.tab = remembered ? workspaceSelection.tab || "chat" : "chat";
+    workspaceSelection = { projectId, sessionId: state.sessionId, tab: state.tab };
     root.classList.remove("show-side");
     updateSidebarButton();
     renderSidebar(); renderHeader(); renderMain();
@@ -1916,8 +1995,9 @@ function renderWorkspace(view) {
     }
     state.sessionId = sessionId;
     state.messages = []; state.permissions = []; state.questions = []; state.questionDrafts.clear(); state.diffs = []; state.todos = []; state.children = [];
+    state.recordingData = null; state.recordingError = ""; trajectoryView = null; trajectorySignature = "";
     state.tab = "chat";
-    workspaceSelection = { projectId, sessionId };
+    workspaceSelection = { projectId, sessionId, tab: state.tab };
     root.classList.remove("show-side");
     updateSidebarButton();
     renderSidebar(); renderHeader(); renderMain();
@@ -2152,9 +2232,10 @@ function renderWorkspace(view) {
   });
   view.querySelectorAll(".wsp-tab").forEach((button) => button.addEventListener("click", () => {
     state.tab = button.dataset.wspTab;
+    workspaceSelection.tab = state.tab;
     scroll.scrollTop = 0;
     renderHeader(); renderMain(state.tab === "chat");
-    if (state.tab === "changes" || state.tab === "tasks") refreshSelected();
+    if (state.tab !== "chat") refreshSelected();
   }));
   view.querySelector("#wsp-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2240,7 +2321,7 @@ function renderWorkspace(view) {
     if (text) document.execCommand("insertText", false, text);
     if (files.length) void addImageFiles(files);
   });
-  input.addEventListener("compositionstart", () => { composingInput = true; });
+  input.addEventListener("compositionstart", () => { composingInput = true; updateSkillInput(); });
   input.addEventListener("compositionend", () => { composingInput = false; updateSkillInput(); renderCommandMenu(); });
   input.addEventListener("keydown", (event) => {
     if (event.key === "Escape") { hideAutocomplete(); return; }

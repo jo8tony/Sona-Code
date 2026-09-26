@@ -271,3 +271,119 @@ def test_withdraw_last_turn_deletes_all_replies_only(tmp_path, failed):
         assert client.post(url, json={"message_id": "msg_last"}).json() == {"ok": True}
         assert deleted == ["msg_reply", "msg_tool", "msg_last"]
         assert [m["info"]["id"] for m in messages] == ["msg_old", "msg_old_reply"]
+
+
+def test_workspace_trajectory_reuses_recorded_session_ledger(tmp_path):
+    from llm_api_proxy_recorder.config import RecordingConfig
+    from llm_api_proxy_recorder.recording.parse import session_key_from_header
+
+    config = AppConfig(
+        upstreams=[UpstreamConfig(name="main", base_url="http://127.0.0.1:9001")],
+        default_upstream="main",
+        recording=RecordingConfig(dir=str(tmp_path / "records"), record_request_headers=False),
+    )
+    app = create_app(config, config_path=str(tmp_path / "config.json"))
+    project = tmp_path / "project"
+    project.mkdir()
+    app.state.runtime.terminal_projects.add(str(project), "opencode")
+    store = app.state.runtime.store
+    key = session_key_from_header("ses_current")
+    for number, session in enumerate(["ses_current", "ses_other", "ses_current"]):
+        store.finalize({
+            "id": f"c20260927_12000{number}_abcdef",
+            "started_at": f"2026-09-27T12:00:0{number}+08:00",
+            "session_key": session_key_from_header(session),
+            "model": "model-test", "status": "ok",
+            "request": {"parsed": {"messages": [{"role": "user", "content": "hello"}]}},
+            "response": {"status_code": 200, "parsed": {"message": {"role": "assistant", "content": "hi"}}},
+            "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+        })
+    with TestClient(app) as client:
+        pid = client.get("/__recorder/api/workspace/projects").json()["items"][0]["id"]
+        base = f"/__recorder/api/workspace/projects/{pid}/sessions"
+        result = client.get(f"{base}/ses_current/trajectory")
+        assert result.status_code == 200
+        assert result.json() == client.get(f"/__recorder/api/trajectory/sessions/{key}").json()
+        assert [turn["call_id"] for turn in result.json()["turns"]] == [
+            "c20260927_120000_abcdef", "c20260927_120002_abcdef",
+        ]
+        assert result.json()["cumulative_usage"]["total_tokens"] == 24
+        assert client.get(f"{base}/ses_empty/trajectory").json()["turns"] == []
+        assert client.get(f"{base}/bad.id/trajectory").status_code == 400
+        assert client.get("/__recorder/api/workspace/projects/missing/sessions/ses_current/trajectory").status_code == 404
+
+
+def test_workspace_activity_call_ownership_handles_retries_and_ambiguity():
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for workspace activity regression coverage")
+    script = r'''
+const fs = require("node:fs");
+const vm = require("node:vm");
+const assert = require("node:assert/strict");
+vm.runInThisContext(fs.readFileSync("llm_api_proxy_recorder/web/static/workspace.js", "utf8"));
+const assistant = (id, created, completed) => ({info: {id, time: {created, completed}}});
+const call = (id, time) => ({call_id: id, started_at: new Date(time).toISOString()});
+const messages = [assistant("first", 1000, 3000), assistant("second", 4000, 5000), assistant("pending", 6000)];
+const turns = [call("retry1", 1500), call("retry2", 2500), call("second-call", 4500), call("pending-call", 6500), call("unmatched", 3500)];
+assert.deepEqual([...workspaceCallOwners(messages, turns)], [
+  ["retry1", "first"], ["retry2", "first"], ["second-call", "second"], ["pending-call", "pending"],
+]);
+assert.equal(workspaceCallOwners([assistant("a", 1000, 4000), assistant("b", 2000, 5000)], [call("ambiguous", 2500)]).size, 0);
+assert.equal(workspaceCallOwners([assistant("a", undefined, undefined)], turns).size, 0);
+assert.equal(workspaceCallOwners(messages, [{call_id: "invalid", started_at: "invalid"}]).size, 0);
+'''
+    subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
+
+
+def test_workspace_placeholder_hides_during_ime_composition():
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for composer regression coverage")
+    script = r'''
+const fs = require("node:fs");
+const vm = require("node:vm");
+const assert = require("node:assert/strict");
+const source = fs.readFileSync("llm_api_proxy_recorder/web/static/workspace.js", "utf8");
+const update = source.slice(source.indexOf("  function updateSkillInput() {"), source.indexOf("  function skillForTool("));
+const input = {dataset: {}, setAttribute() {}};
+let highlights = 0;
+const context = {
+  input, composingInput: false, state: {skills: [], commands: []}, builtInCommands: [],
+  composer: {value: "", fileReferences: [], highlightSkill() {highlights++;}},
+  view: {querySelector() {return {};}}
+};
+vm.createContext(context);
+vm.runInContext(update, context);
+const refresh = () => vm.runInContext("updateSkillInput()", context);
+refresh();
+assert.equal(input.dataset.empty, "true");
+context.composingInput = true;
+refresh();
+assert.equal(input.dataset.empty, "false"); // Composition starts before any DOM text exists.
+assert.equal(highlights, 1); // Do not rewrite mentions while the IME owns the edit.
+context.composer.value = "ni";
+refresh();
+assert.equal(input.dataset.empty, "false");
+context.composingInput = false;
+context.composer.value = "你好";
+refresh();
+assert.equal(input.dataset.empty, "false");
+context.composer.value = "";
+refresh();
+assert.equal(input.dataset.empty, "true");
+context.composer.value = "a";
+refresh();
+assert.equal(input.dataset.empty, "false");
+const css = fs.readFileSync("llm_api_proxy_recorder/web/static/workspace.css", "utf8");
+assert.equal(css.includes(":empty::before"), false);
+'''
+    subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
