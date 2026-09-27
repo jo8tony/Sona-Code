@@ -65,12 +65,25 @@ function workspaceRelativeFile(path, projectPath = "") {
   return base && file.startsWith(`${base}/`) ? file.slice(base.length + 1) : file;
 }
 
+function workspaceMessageTurns(messages) {
+  const turns = new Map();
+  for (const message of messages) {
+    const id = message.info?.role === "user" ? message.info.id : message.info?.parentID;
+    if (!id) continue;
+    if (!turns.has(id)) turns.set(id, { user: null, replies: [] });
+    const turn = turns.get(id);
+    if (message.info.role === "user") turn.user = message;
+    else if (message.info.role === "assistant") turn.replies.push(message);
+  }
+  return turns;
+}
+
 // Native user summaries describe one turn, including all of its assistant steps.
 // Never substitute the cumulative session diff for a missing turn summary.
-function workspaceTurnDiffs(messages, message, projectPath = "") {
+function workspaceTurnDiffs(messages, message, projectPath = "", turn = null) {
   const userId = message.info?.parentID;
   if (!userId) return [];
-  const user = messages.find(item => item.info?.role === "user" && item.info.id === userId);
+  const user = turn ? turn.user : messages.find(item => item.info?.role === "user" && item.info.id === userId);
   const native = user?.info?.summary?.diffs;
   const files = new Map();
   const add = (diff) => {
@@ -81,7 +94,8 @@ function workspaceTurnDiffs(messages, message, projectPath = "") {
     native.forEach(add);
     return [...files.values()];
   }
-  for (const reply of messages.filter(item => item.info?.role === "assistant" && item.info.parentID === userId)) {
+  const replies = turn ? turn.replies : messages.filter(item => item.info?.role === "assistant" && item.info.parentID === userId);
+  for (const reply of replies) {
     for (const part of reply.parts || []) {
       if (part.type !== "tool" || part.state?.status !== "completed" ||
           !["write", "edit", "apply_patch", "multiedit"].includes(part.tool)) continue;
@@ -90,6 +104,10 @@ function workspaceTurnDiffs(messages, message, projectPath = "") {
         ...file, file: file.relativePath || file.filePath, patch: file.diff,
       })) : metadata.filediff ? [metadata.filediff] : [{
         file: input.filePath || input.path || metadata.filepath, patch: metadata.diff, derived: true, input,
+        countsPartial: input.replaceAll === true,
+        ...(part.tool === "write" && typeof input.content === "string" ? {
+          writtenLines: input.content ? input.content.replace(/\n$/, "").split("\n").length : 0,
+        } : {}),
         ...(part.tool === "write" && metadata.exists === false ? {
           before: "", after: input.content || "", derived: false,
           additions: input.content ? input.content.replace(/\n$/, "").split("\n").length : 0, deletions: 0,
@@ -109,24 +127,39 @@ function workspaceTurnDiffs(messages, message, projectPath = "") {
 }
 
 function workspaceCombineFileEdits(previous, diff, file) {
-  const edits = [...(previous.toolEdits || [previous]), diff];
-  const counts = edits.map(edit => {
-    if (edit.countsUnknown) return null;
-    if (Number.isFinite(edit.additions) && Number.isFinite(edit.deletions))
-      return { additions: edit.additions, deletions: edit.deletions };
-    if (edit.patch) {
-      const lines = edit.patch.split("\n");
-      return { additions: lines.filter(line => line.startsWith("+") && !line.startsWith("+++ ")).length,
-        deletions: lines.filter(line => line.startsWith("-") && !line.startsWith("--- ")).length };
-    }
-    return null;
-  }).filter(Boolean);
+  const edits = [...(previous.toolEdits || [previous]), ...(diff.toolEdits || [diff])];
+  const counts = edits.map(workspaceDiffLineCounts).filter(Boolean);
   const patch = edits.map(edit => edit.patch || "").filter(Boolean).join("\n");
   return { ...diff, file, toolEdits: edits, cumulative: true, patch,
     derived: !patch, input: diff.input || previous.input, countsUnknown: !counts.length,
     countsPartial: counts.length < edits.length || edits.some(edit => edit.countsPartial),
+    writtenLines: edits.some(edit => Number.isFinite(edit.writtenLines))
+      ? edits.reduce((sum, edit) => sum + (edit.writtenLines || 0), 0) : undefined,
     additions: counts.reduce((sum, count) => sum + count.additions, 0),
     deletions: counts.reduce((sum, count) => sum + count.deletions, 0) };
+}
+
+function workspaceDiffLineCounts(diff) {
+  if (diff.countsUnknown) return null;
+  const additions = Number(diff.additions);
+  const deletions = Number(diff.deletions);
+  if (diff.additions != null && diff.deletions != null && Number.isFinite(additions) && Number.isFinite(deletions))
+    return { additions, deletions };
+  if (typeof diff.patch === "string" && diff.patch) {
+    const lines = diff.patch.split("\n");
+    return { additions: lines.filter(line => line.startsWith("+") && !line.startsWith("+++ ")).length,
+      deletions: lines.filter(line => line.startsWith("-") && !line.startsWith("--- ")).length };
+  }
+  const input = diff.input || diff;
+  const count = value => value ? value.replace(/\n$/, "").split("\n").length : 0;
+  if (typeof input.oldString === "string" && typeof input.newString === "string")
+    return { additions: count(input.newString), deletions: count(input.oldString) };
+  if (typeof diff.before === "string" && typeof diff.after === "string") {
+    // Without a native patch, only an entirely new/deleted file has exact totals.
+    if (!diff.before) return { additions: count(diff.after), deletions: 0 };
+    if (!diff.after) return { additions: 0, deletions: count(diff.before) };
+  }
+  return null;
 }
 
 // Keep unchanged nodes attached so polling preserves animations, focus and selection.
@@ -147,8 +180,8 @@ function renderWorkspace(view) {
   let events = null;
   let eventProjectId = null;
   let refreshTimer = null;
-  let refreshing = false;
-  let refreshRequested = false;
+  let selectedRefresh = null;
+  let renderTimer = null;
   let composingInput = false;
   let autocompleteKind = null;
   let fileSearchTimer = null;
@@ -171,13 +204,15 @@ function renderWorkspace(view) {
   const pendingImages = new Map();
   const statusVersions = new Map();
   let messageVersion = 0;
+  const messageInfoVersions = new Map();
+  const conversationViews = new Map();
   const sidebarSections = new Map();
   const sidebarRows = new Map();
   const changeTriggers = new Map();
   const state = {
     projects: [], sessions: new Map(), sessionDetails: new Map(), errors: new Map(), projectStatuses: new Map(),
     projectId: workspaceSelection.projectId, sessionId: workspaceSelection.sessionId,
-    messages: [], permissions: [], questions: [], questionDrafts: new Map(), questionPages: new Map(),
+    messages: [], messagesLoaded: false, messageLoadError: "", permissions: [], questions: [], questionDrafts: new Map(), questionPages: new Map(),
     questionErrors: new Map(), diffs: [], selectedChange: null, todos: [], children: [], statuses: {},
     recordingData: null, recordingError: "", check: null, tab: workspaceSelection.tab || "chat", search: "", chosenModels: new Map(), defaultModel: null,
     get sending() { return sendingConversations.has(workspaceConversationKey(this.projectId, this.sessionId)); },
@@ -370,7 +405,8 @@ function renderWorkspace(view) {
     saveDraft();
     disposed = true;
     if (events) events.close();
-    if (refreshTimer) clearTimeout(refreshTimer);
+    cancelSelectedRefresh();
+    conversationViews.clear();
     if (fileSearchTimer) clearTimeout(fileSearchTimer);
     clearInterval(poll);
   });
@@ -858,8 +894,10 @@ function renderWorkspace(view) {
       if (action === "delete") {
         await api(base, { method: "DELETE", silent: true });
         workspaceWriteDraft(workspaceConversationKey(projectId, session.id), null);
+        conversationViews.delete(workspaceConversationKey(projectId, session.id));
         state.sessionDetails.delete(workspaceConversationKey(projectId, session.id));
         if (state.projectId === projectId && state.sessionId === session.id) {
+          cancelSelectedRefresh();
           state.sessionId = null;
           restoreDraft();
           state.queue = { items: [], paused: false, error: "" }; state.queueLoaded = false;
@@ -1312,6 +1350,7 @@ function renderWorkspace(view) {
   }
 
   function renderMessages(target) {
+    const turns = workspaceMessageTurns(state.messages);
     const existing = new Map(Array.from(content.children)
       .filter(row => row.workspaceMessageKey)
       .map(row => [row.workspaceMessageKey, row]));
@@ -1322,6 +1361,14 @@ function renderWorkspace(view) {
     }
     if (!state.messages.length && !state.permissions.some((item) => item.sessionID === state.sessionId) &&
       !state.questions.some((item) => item.sessionID === state.sessionId)) {
+      if (state.messageLoadError) {
+        target.append(el("div", { class: "wsp-error", text: state.messageLoadError }));
+        return;
+      }
+      if (!state.messagesLoaded) {
+        target.append(el("div", { class: "wsp-action-progress", role: "status", text: "正在加载对话…" }));
+        return;
+      }
       target.append(empty("输入你的开发需求", "发送第一条消息后，这里会实时显示回复和工具操作。"));
       if (state.compactingSessionId === state.sessionId) target.append(compactionCard("busy"));
       if (state.pendingAction) target.append(el("div", { class: "wsp-action-progress", text: `正在执行 ${state.pendingAction}…` }));
@@ -1349,6 +1396,11 @@ function renderWorkspace(view) {
         time: user.info.time }, parts: [], awaitingReply: true });
     }
     let previousDay = "";
+    const lastReplies = new Map();
+    displayMessages.forEach((message, index) => {
+      if (message.info?.role === "assistant") lastReplies.set(message.info.parentID, index);
+    });
+    const lastUserId = lastUserMessage()?.info.id;
     for (const [messageIndex, message] of displayMessages.entries()) {
       const day = messageDay(message);
       if (day !== previousDay) {
@@ -1356,8 +1408,7 @@ function renderWorkspace(view) {
         previousDay = day;
       }
       if (message.info?.role === "user" && message.parts.some((part) => part.type === "compaction")) {
-        const replies = state.messages.filter((item) => item.info?.role === "assistant" &&
-          item.info.parentID === message.info.id);
+        const replies = turns.get(message.info.id)?.replies || [];
         const complete = replies.some((item) => item.info.summary && item.info.finish && !item.info.error);
         const failed = replies.some((item) => item.info.error);
         target.append(compactionCard(complete ? "ready" : failed ? "error" :
@@ -1367,10 +1418,9 @@ function renderWorkspace(view) {
       const role = message?.info?.role || "assistant";
       const modelInfo = message.modelInfo || message.info;
       const modelLabel = modelInfo?.modelID ? modelDisplayName(modelInfo.providerID, modelInfo.modelID) : "";
-      const laterReply = displayMessages.slice(messageIndex + 1).some(item =>
-        item.info?.role === "assistant" && item.info.parentID === message.info?.parentID);
+      const laterReply = lastReplies.get(message.info?.parentID) > messageIndex;
       const diffs = role === "assistant" && !laterReply
-        ? workspaceTurnDiffs(state.messages, message, activeProject()?.path) : [];
+        ? workspaceTurnDiffs(state.messages, message, activeProject()?.path, turns.get(message.info?.parentID)) : [];
       let progressLabel = "";
       if (running && role === "assistant" && messageIndex === displayMessages.length - 1 && !message.errorInfo) {
         const activeTool = message.parts.some(part => part.type === "tool" &&
@@ -1382,7 +1432,7 @@ function renderWorkspace(view) {
       }
       const key = JSON.stringify([state.projectId, state.sessionId, message.info?.id || messageIndex]);
       const signature = JSON.stringify([message, modelLabel, diffs, progressLabel,
-        role === "user" ? [message.info?.id === lastUserMessage()?.info.id, state.sending,
+        role === "user" ? [message.info?.id === lastUserId, state.sending,
           state.statuses?.[state.sessionId]?.type] : null,
         !message.parts.length ? state.statuses?.[state.sessionId]?.type : null,
         message.parts.filter(part => part.type === "tool").map(skillForTool)]);
@@ -1534,22 +1584,7 @@ function renderWorkspace(view) {
   }
 
   function diffLineCounts(diff) {
-    if (diff.countsUnknown) return null;
-    const additions = Number(diff.additions);
-    const deletions = Number(diff.deletions);
-    if (diff.additions != null && diff.deletions != null && Number.isFinite(additions) && Number.isFinite(deletions))
-      return { additions, deletions };
-    const input = diff.derived ? diff.input || {} : diff;
-    if (typeof input.oldString === "string" && typeof input.newString === "string") {
-      const count = (value) => value ? value.split("\n").length : 0;
-      return { additions: count(input.newString), deletions: count(input.oldString) };
-    }
-    if (typeof diff.patch === "string" && diff.patch) {
-      const lines = diff.patch.split("\n");
-      return { additions: lines.filter((line) => line.startsWith("+") && !line.startsWith("+++ ")).length,
-        deletions: lines.filter((line) => line.startsWith("-") && !line.startsWith("--- ")).length };
-    }
-    return null;
+    return workspaceDiffLineCounts(diff);
   }
 
   function changeTotals(diffs) {
@@ -1561,6 +1596,13 @@ function renderWorkspace(view) {
 
   function changeStats(diffs) {
     const totals = changeTotals(diffs);
+    const unknownWrites = diffs.filter(diff => !diffLineCounts(diff) && Number.isFinite(diff.writtenLines));
+    if (unknownWrites.length && totals.additions === "—") {
+      return el("span", { class: "wsp-change-stats" },
+        el("span", { class: "add", text: `写入 ${unknownWrites.reduce((sum, diff) => sum + diff.writtenLines, 0)} 行`,
+          title: "成功写入的内容行数，可能包含对同一文件的多次覆盖" }),
+        el("small", { class: "wsp-change-count-kind", text: "增删待确认", title: "OpenCode 未返回原文件内容或增删行数" }));
+    }
     return el("span", { class: "wsp-change-stats" },
       el("span", { class: "add", text: totals.additions, title: "新增行" }),
       el("span", { class: "remove", text: totals.deletions, title: "删除行" }),
@@ -1698,11 +1740,10 @@ function renderWorkspace(view) {
   function changedFiles() {
     const writtenFiles = new Map();
     if (state.sessionId && !state.diffs.length) {
-      const turns = new Set();
-      for (const message of state.messages) {
-        if (message.info?.role !== "assistant" || !message.info.parentID || turns.has(message.info.parentID)) continue;
-        turns.add(message.info.parentID);
-        for (const diff of workspaceTurnDiffs(state.messages, message, activeProject()?.path)) {
+      for (const turn of workspaceMessageTurns(state.messages).values()) {
+        const message = turn.replies[0];
+        if (!message) continue;
+        for (const diff of workspaceTurnDiffs(state.messages, message, activeProject()?.path, turn)) {
           const previous = writtenFiles.get(diff.file);
           writtenFiles.set(diff.file, previous ? workspaceCombineFileEdits(previous, diff, diff.file) : diff);
         }
@@ -2461,7 +2502,7 @@ function renderWorkspace(view) {
     if (message) message.info = {...message.info, ...info};
     else state.messages.push({info, parts: []});
     messageVersion++;
-    renderStatsLine();
+    messageInfoVersions.set(info.id, messageVersion);
   }
 
   function connectEvents(projectId) {
@@ -2473,9 +2514,12 @@ function renderWorkspace(view) {
     events = new EventSource(`api/workspace/projects/${encodeURIComponent(projectId)}/events`);
     events.onmessage = (event) => {
       if (!alive() || state.projectId !== projectId) return;
-      scheduleRefresh();
       try {
         const update = JSON.parse(event.data);
+        const properties = update.properties || {};
+        const sessionId = properties.sessionID || properties.info?.sessionID || properties.part?.sessionID ||
+          (update.type === "session.updated" ? properties.info?.id : null);
+        if ((!sessionId || sessionId === state.sessionId) && !["server.heartbeat", "server.connected"].includes(update.type)) scheduleRefresh();
         applyMessageEvent(projectId, update);
         if (update.type === "session.status" && update.properties?.sessionID && update.properties?.status) {
           const previous = state.statuses?.[update.properties.sessionID]?.type;
@@ -2501,7 +2545,27 @@ function renderWorkspace(view) {
 
   function scheduleRefresh() {
     if (refreshTimer) return;
-    refreshTimer = setTimeout(() => { refreshTimer = null; refreshSelected(); }, 300);
+    refreshTimer = setTimeout(() => { refreshTimer = null; refreshSelected(); }, 600);
+  }
+
+  function scheduleSelectedRender() {
+    if (renderTimer) return;
+    renderTimer = setTimeout(() => {
+      renderTimer = null;
+      if (!alive()) return;
+      renderMain(scrollToLatestOnLoad);
+      if (state.messagesLoaded) scrollToLatestOnLoad = false;
+      renderHeader();
+    }, 16);
+  }
+
+  function cancelSelectedRefresh() {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    if (renderTimer) clearTimeout(renderTimer);
+    refreshTimer = null;
+    renderTimer = null;
+    selectedRefresh?.controller.abort();
+    selectedRefresh = null;
   }
 
   async function refreshWorkspaceStatuses() {
@@ -2519,7 +2583,8 @@ function renderWorkspace(view) {
         const statuses = entry.statuses || {};
         if (JSON.stringify(state.projectStatuses.get(projectId)) !== JSON.stringify(statuses)) {
           changed = true;
-          if (projectId === state.projectId) selectedChanged = true;
+          if (projectId === state.projectId) selectedChanged =
+            JSON.stringify(state.statuses?.[state.sessionId]) !== JSON.stringify(statuses[state.sessionId]);
         }
         state.projectStatuses.set(projectId, statuses);
         if (projectId === state.projectId) state.statuses = statuses;
@@ -2533,62 +2598,139 @@ function renderWorkspace(view) {
 
   async function refreshSelected() {
     if (!alive() || !state.projectId || !state.sessionId) return;
-    if (refreshing) { refreshRequested = true; return; }
-    refreshing = true;
+    if (selectedRefresh) { selectedRefresh.pending = true; return; }
+    const refresh = { controller: new AbortController(), pending: false };
+    selectedRefresh = refresh;
     const projectId = state.projectId;
     const sessionId = state.sessionId;
     const base = sessionPath(projectId, sessionId);
     const queueVersion = queueUpdateVersion;
     const statusVersion = statusVersions.get(projectId);
     const messagesVersion = messageVersion;
+    const current = () => alive() && selectedRefresh === refresh && state.projectId === projectId && state.sessionId === sessionId;
+    // Apply each response independently so a slow diff/queue cannot delay messages.
+    const read = async (path, apply, failed = null) => {
+      try {
+        const value = await api(path, { silent: true, signal: refresh.controller.signal });
+        if (!current()) return;
+        if (apply(value) !== false) scheduleSelectedRender();
+      } catch (error) {
+        if (current() && error.name !== "AbortError" && failed) {
+          failed(error);
+          scheduleSelectedRender();
+        }
+      }
+    };
     try {
-      const [messages, statuses, permissions, questions, diffs, todos, children, session, recording, queue] = await Promise.allSettled([
-        api(`${base}/messages`, { silent: true }),
-        api(`workspace/projects/${encodeURIComponent(projectId)}/status`, { silent: true }),
-        api(`workspace/projects/${encodeURIComponent(projectId)}/permissions`, { silent: true }),
-        api(`workspace/projects/${encodeURIComponent(projectId)}/questions`, { silent: true }),
-        api(`${base}/diff`, { silent: true }),
-        state.tab === "tasks" ? api(`${base}/todo`, { silent: true }) : Promise.resolve(state.todos),
-        state.tab === "tasks" ? api(`${base}/children`, { silent: true }) : Promise.resolve(state.children),
-        api(base, { silent: true }),
-        ["trajectory", "activity"].includes(state.tab) ? api(`${base}/trajectory`, { silent: true }) : Promise.resolve(state.recordingData),
-        api(`${base}/queue`, { silent: true }),
+      await Promise.allSettled([
+        read(`${base}/messages`, value => {
+          const messages = Array.isArray(value) ? value : [];
+          if (messagesVersion !== messageVersion) {
+            const live = new Map(state.messages.map(message => [message.info?.id, message]));
+            const received = new Set(messages.map(message => message.info?.id));
+            for (const message of messages) {
+              if ((messageInfoVersions.get(message.info?.id) || 0) > messagesVersion && live.has(message.info?.id))
+                message.info = { ...message.info, ...live.get(message.info.id).info };
+            }
+            for (const message of state.messages) {
+              if (!received.has(message.info?.id) && (messageInfoVersions.get(message.info?.id) || 0) > messagesVersion) messages.push(message);
+            }
+          }
+          state.messages = messages;
+          state.messagesLoaded = true;
+          state.messageLoadError = "";
+        }, error => { state.messageLoadError = detail(error); state.messagesLoaded = true; }),
+        read(`workspace/projects/${encodeURIComponent(projectId)}/status`, value => {
+          if (statusVersion !== statusVersions.get(projectId)) return false;
+          const selectedChanged = JSON.stringify(state.statuses?.[sessionId]) !== JSON.stringify(value?.[sessionId]);
+          state.statuses = value || {};
+          const changed = JSON.stringify(state.projectStatuses.get(projectId)) !== JSON.stringify(state.statuses);
+          state.projectStatuses.set(projectId, state.statuses);
+          statusVersions.set(projectId, (statusVersions.get(projectId) || 0) + 1);
+          if (changed) renderSidebar();
+          return selectedChanged;
+        }),
+        read(`workspace/projects/${encodeURIComponent(projectId)}/permissions`, value => {
+          const permissions = Array.isArray(value) ? value : [];
+          const changed = JSON.stringify(state.permissions) !== JSON.stringify(permissions);
+          state.permissions = permissions;
+          return changed;
+        }),
+        read(`workspace/projects/${encodeURIComponent(projectId)}/questions`, value => {
+          const questions = Array.isArray(value) ? value : [];
+          const changed = JSON.stringify(state.questions) !== JSON.stringify(questions);
+          state.questions = questions;
+          return changed;
+        }),
+        read(`${base}/diff`, value => {
+          const diffs = Array.isArray(value) ? value : [];
+          const changed = JSON.stringify(state.diffs) !== JSON.stringify(diffs);
+          state.diffs = diffs;
+          return changed;
+        }),
+        state.tab === "tasks" ? read(`${base}/todo`, value => { state.todos = Array.isArray(value) ? value : []; }) : null,
+        state.tab === "tasks" ? read(`${base}/children`, value => {
+          state.children = Array.isArray(value) ? value : [];
+          for (const child of state.children) state.sessionDetails.set(workspaceConversationKey(projectId, child.id), child);
+        }) : null,
+        read(base, value => {
+          if (value?.id) state.sessionDetails.set(workspaceConversationKey(projectId, value.id), value);
+          renderHeader();
+          return false;
+        }),
+        ["trajectory", "activity"].includes(state.tab) ? read(`${base}/trajectory`, value => {
+          state.recordingData = value; state.recordingError = "";
+        }, error => { state.recordingError = detail(error); }) : null,
+        read(`${base}/queue`, value => {
+          if (queueVersion === queueUpdateVersion) { state.queue = value; state.queueLoaded = true; }
+          renderHeader();
+          return false;
+        }),
       ]);
-      if (!alive() || state.projectId !== projectId || state.sessionId !== sessionId) return;
-      if (queue.status === "fulfilled" && queueVersion === queueUpdateVersion) { state.queue = queue.value; state.queueLoaded = true; }
-      if (recording.status === "fulfilled") { state.recordingData = recording.value; state.recordingError = ""; }
-      else state.recordingError = detail(recording.reason);
-      if (messages.status === "fulfilled" && messagesVersion === messageVersion) state.messages = Array.isArray(messages.value) ? messages.value : [];
-      if (statuses.status === "fulfilled" && statusVersion === statusVersions.get(projectId)) {
-        state.statuses = statuses.value || {};
-        const changed = JSON.stringify(state.projectStatuses.get(projectId)) !== JSON.stringify(state.statuses);
-        state.projectStatuses.set(projectId, state.statuses);
-        statusVersions.set(projectId, (statusVersions.get(projectId) || 0) + 1);
-        if (changed) renderSidebar();
-      }
-      if (permissions.status === "fulfilled") state.permissions = Array.isArray(permissions.value) ? permissions.value : [];
-      if (questions.status === "fulfilled") state.questions = Array.isArray(questions.value) ? questions.value : [];
-      if (diffs.status === "fulfilled") state.diffs = Array.isArray(diffs.value) ? diffs.value : [];
-      if (todos.status === "fulfilled") state.todos = Array.isArray(todos.value) ? todos.value : [];
-      if (children.status === "fulfilled") {
-        state.children = Array.isArray(children.value) ? children.value : [];
-        for (const child of state.children) state.sessionDetails.set(workspaceConversationKey(projectId, child.id), child);
-      }
-      if (session.status === "fulfilled" && session.value?.id) state.sessionDetails.set(workspaceConversationKey(projectId, session.value.id), session.value);
-      if (messages.status === "rejected") content.replaceChildren(el("div", { class: "wsp-error", text: detail(messages.reason) }));
-      else {
-        renderMain(scrollToLatestOnLoad);
-        scrollToLatestOnLoad = false;
-      }
-      renderHeader();
     } finally {
-      refreshing = false;
-      if (refreshRequested) { refreshRequested = false; scheduleRefresh(); }
+      if (selectedRefresh === refresh) {
+        selectedRefresh = null;
+        if (refresh.pending) scheduleRefresh();
+      }
+    }
+  }
+
+  function saveConversationView() {
+    if (!state.projectId || !state.sessionId || !state.messagesLoaded) return;
+    const key = workspaceConversationKey(state.projectId, state.sessionId);
+    conversationViews.delete(key);
+    conversationViews.set(key, {
+      messages: state.messages, diffs: state.diffs, todos: state.todos, children: state.children,
+      permissions: state.permissions, questions: state.questions, queue: state.queue, queueLoaded: state.queueLoaded,
+      nodes: state.tab === "chat" ? Array.from(content.childNodes) : [],
+      scrollTop: state.tab === "chat" ? scroll.scrollTop : null,
+    });
+    while (conversationViews.size > 6) conversationViews.delete(conversationViews.keys().next().value);
+  }
+
+  function restoreConversationView() {
+    const cached = conversationViews.get(workspaceConversationKey(state.projectId, state.sessionId));
+    state.messages = cached?.messages || [];
+    state.messagesLoaded = !!cached;
+    state.messageLoadError = "";
+    state.permissions = cached?.permissions || []; state.questions = cached?.questions || [];
+    state.diffs = cached?.diffs || []; state.todos = cached?.todos || []; state.children = cached?.children || [];
+    state.queue = cached?.queue || { items: [], paused: false, error: "" }; state.queueLoaded = cached?.queueLoaded || false;
+    state.questionDrafts.clear(); state.questionPages.clear(); state.questionErrors.clear();
+    state.actionError = "";
+    messageInfoVersions.clear();
+    messageVersion++;
+    workspaceSyncChildren(content, state.tab === "chat" ? cached?.nodes || [] : []);
+    if (state.tab === "chat" && cached?.scrollTop != null) {
+      scroll.scrollTop = cached.scrollTop;
+      scrollToLatestOnLoad = false;
     }
   }
 
   function selectProject(projectId) {
     saveDraft();
+    saveConversationView();
+    cancelSelectedRefresh();
     hideAutocomplete();
     scrollToLatestOnLoad = true;
     state.projectId = projectId;
@@ -2604,9 +2746,9 @@ function renderWorkspace(view) {
     restoreDraft();
     closeChangePopover();
     state.selectedChange = null;
-    state.messages = []; state.permissions = []; state.questions = []; state.questionDrafts.clear(); state.diffs = []; state.todos = []; state.children = [];
     state.recordingData = null; state.recordingError = ""; trajectoryView = null; trajectorySignature = "";
     state.tab = remembered ? workspaceSelection.tab || "chat" : "chat";
+    restoreConversationView();
     workspaceSelection = { projectId, sessionId: state.sessionId, tab: state.tab };
     persistWorkspaceSelection();
     state.collapsedProjects.delete(projectId);
@@ -2626,11 +2768,14 @@ function renderWorkspace(view) {
   function selectSession(projectId, sessionId) {
     if (draftContextReady && state.projectId === projectId && state.sessionId === sessionId) return;
     saveDraft();
+    saveConversationView();
+    cancelSelectedRefresh();
     hideAutocomplete();
     scrollToLatestOnLoad = true;
+    const projectChanged = state.projectId !== projectId;
     state.projectId = projectId;
     state.queue = { items: [], paused: false, error: "" }; state.queueLoaded = false;
-    state.skills = []; state.commands = []; updateSkillInput();
+    if (projectChanged) { state.skills = []; state.commands = []; updateSkillInput(); }
     if (!state.chosenModels.has(projectId)) {
       try { state.chosenModels.set(projectId, localStorage.getItem(`sona-code:model:${projectId}`) || ""); }
       catch (_) { state.chosenModels.set(projectId, ""); }
@@ -2640,9 +2785,9 @@ function renderWorkspace(view) {
     restoreDraft();
     closeChangePopover();
     state.selectedChange = null;
-    state.messages = []; state.permissions = []; state.questions = []; state.questionDrafts.clear(); state.diffs = []; state.todos = []; state.children = [];
     state.recordingData = null; state.recordingError = ""; trajectoryView = null; trajectorySignature = "";
     state.tab = "chat";
+    restoreConversationView();
     workspaceSelection = { projectId, sessionId, tab: state.tab };
     persistWorkspaceSelection();
     state.collapsedProjects.delete(projectId);
@@ -2650,9 +2795,11 @@ function renderWorkspace(view) {
     updateSidebarButton();
     renderSidebar(); renderHeader(); renderMain();
     connectEvents(projectId);
-    loadModels(projectId);
-    loadAgents(projectId);
-    loadCommands(projectId);
+    if (projectChanged) {
+      loadModels(projectId);
+      loadAgents(projectId);
+      loadCommands(projectId);
+    }
     refreshSelected();
   }
 
@@ -2822,7 +2969,11 @@ function renderWorkspace(view) {
       state.projects = state.projects.filter((item) => item.id !== project.id);
       state.sessions.delete(project.id);
       state.errors.delete(project.id);
+      for (const key of conversationViews.keys()) {
+        if (JSON.parse(key)[0] === project.id) conversationViews.delete(key);
+      }
       if (state.projectId === project.id) {
+        cancelSelectedRefresh();
         saveDraft();
         state.projectId = null; state.sessionId = null; state.messages = [];
         draftContextReady = false;

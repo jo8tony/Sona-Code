@@ -417,7 +417,18 @@ const patch = reply("patch", "u3", [{type: "tool", tool: "apply_patch", state: {
   metadata: {files: [{relativePath: "new.py", diff: "+new", additions: 1, deletions: 0},
     {filePath: "/project/gone.py", diff: "-old", additions: 0, deletions: 1}]}}}]);
 assert.deepEqual(workspaceTurnDiffs([user("u3"), patch], patch, "/project").map(diff => diff.file), ["new.py", "gone.py"]);
-assert.equal(workspaceTurnDiffs([user("u3"), working, reply("repeat", "u3", [tool("/project/src/app.py")])], working, "/project")[0].countsUnknown, true);
+const inputCounts = workspaceTurnDiffs([user("u3"), working, reply("repeat", "u3", [tool("/project/src/app.py")])], working, "/project")[0];
+assert.equal(inputCounts.countsUnknown, false);
+assert.equal(inputCounts.additions, 2);
+assert.equal(inputCounts.deletions, 2);
+assert.deepEqual(workspaceDiffLineCounts({derived: true, input: {oldString: "old\n", newString: "first\nsecond\n"}}),
+  {additions: 2, deletions: 1});
+assert.deepEqual(workspaceDiffLineCounts({patch: "--- old\n+++ new\n@@ -1 +1 @@\n-old\n+new"}), {additions: 1, deletions: 1});
+const overwrite = reply("overwrite", "u6", [{type: "tool", tool: "write", state: {status: "completed",
+  input: {filePath: "/project/game.html", content: "first\nsecond\n"}, metadata: {exists: true}}}]);
+const overwriteDiff = workspaceTurnDiffs([user("u6"), overwrite], overwrite, "/project")[0];
+assert.equal(overwriteDiff.writtenLines, 2);
+assert.equal(workspaceDiffLineCounts(overwriteDiff), null);
 const nativeEdit = (additions, deletions, patch) => ({type: "tool", tool: "edit", state: {status: "completed",
   metadata: {filediff: {file: "/project/game.html", additions, deletions, patch}}}});
 const repeated = reply("repeated", "u5", [nativeEdit(5, 5, "-old\n+new"), nativeEdit(3, 3, "-new\n+newer")]);
@@ -427,6 +438,9 @@ assert.equal(cumulative.deletions, 8);
 assert.equal(cumulative.cumulative, true);
 assert.equal(cumulative.countsUnknown, false);
 assert.equal(cumulative.toolEdits.length, 2);
+const combined = workspaceCombineFileEdits(cumulative, cumulative, "game.html");
+assert.equal(combined.toolEdits.length, 4);
+assert.equal(combined.additions, 16);
 assert(cumulative.patch.includes("+newer"));
 assert.deepEqual(workspaceTurnDiffs([user("u5", [firstDiff]), repeated], repeated), [firstDiff]);
 assert.equal(workspaceRelativeFile("C:\\project\\src\\app.js", "C:\\project"), "src/app.js");

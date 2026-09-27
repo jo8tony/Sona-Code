@@ -54,7 +54,7 @@ assert.equal(workspaceReadDraft(firstKey), undefined);
 assert.equal(workspaceReadDraft(workspaceConversationKey('p2','same')).text, 'other project, same native session ID');
 // A history request started for A must never update the current B conversation.
 (async () => {
-  let refreshing = false, refreshRequested = false, scrollToLatestOnLoad = true;
+  let selectedRefresh = null;
   let resolveMessages;
   const pending = new Promise(resolve => {resolveMessages = resolve;});
   const api = path => path.endsWith('/messages') ? pending : Promise.resolve({});
@@ -62,6 +62,7 @@ assert.equal(workspaceReadDraft(workspaceConversationKey('p2','same')).text, 'ot
   const queueUpdateVersion = 0, statusVersions = new Map(), messageVersion = 0;
   const scheduleRefresh = () => {}, renderSidebar = () => {}, renderHeader = () => {};
   let rendered = 0; const renderMain = () => {rendered++;};
+  const scheduleSelectedRender = renderMain;
   const content = {replaceChildren: () => {throw new Error('wrong conversation');}};
   state.tab='chat'; state.messages=[];
   const refreshSource = source.slice(source.indexOf('  async function refreshSelected()'), source.indexOf('  function selectProject('));

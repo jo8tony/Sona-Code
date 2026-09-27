@@ -64,22 +64,26 @@ const statsLine = el('div');
 const selectedModel = () => ({provider_id:'p',model_id:'m'});
 const state = {projectId:'project',sessionId:'session',messages:[],statuses:{},providers:[{id:'p',models:{m:{limit:{context:10000}}}}]};
 let messageVersion=0;
+const messageInfoVersions=new Map();
 eval(source.slice(source.indexOf('  function numeric('), source.indexOf('  function renderAttachments(')));
 eval(source.slice(source.indexOf('  function applyMessageEvent('), source.indexOf('  function connectEvents(')));
 const info = {id:'first',sessionID:'session',role:'assistant',providerID:'p',modelID:'m',time:{created:1},
   tokens:{input:1000,output:100,reasoning:50,cache:{read:200,write:50}}};
 const event = info => ({type:'message.updated',properties:{info}});
 applyMessageEvent('project',event(info));
+renderStatsLine();
 assert.match(statsLine.textContent,/上下文 1.4K \/ 10K · 14%/);
 // OpenCode initializes the next assistant's tokens to zero while streaming.
 const next = {...info,id:'next',time:{created:2},tokens:{input:0,output:0,reasoning:0,cache:{read:0,write:0}}};
 applyMessageEvent('project',event(next));
+renderStatsLine();
 assert.match(statsLine.textContent,/上下文 1.4K/);
 const version = messageVersion;
 applyMessageEvent('other-project',event({...next,tokens:{input:9999}}));
 applyMessageEvent('project',event({...next,sessionID:'other-session',tokens:{input:9999}}));
 assert.equal(messageVersion,version); assert.match(statsLine.textContent,/14%/);
 applyMessageEvent('project',event({...next,tokens:{input:2000,output:200,reasoning:100,cache:{read:500,write:200}}}));
+renderStatsLine();
 assert.match(statsLine.textContent,/上下文 3K \/ 10K · 30%/);
 // Slow history fetched before the event must not roll back the fresh native usage.
 (async () => {
@@ -88,8 +92,9 @@ assert.match(statsLine.textContent,/上下文 3K \/ 10K · 30%/);
   const api = path => path.endsWith('/messages') ? pending : Promise.resolve({});
   const alive=()=>true, sessionPath=(p,s)=>`${p}/${s}`, queueUpdateVersion=0;
   const statusVersions=new Map(), workspaceConversationKey=(p,s)=>JSON.stringify([p,s]);
-  let refreshing=false, refreshRequested=false, scrollToLatestOnLoad=false;
+  let selectedRefresh=null;
   const scheduleRefresh=()=>{}, renderSidebar=()=>{}, renderHeader=()=>{}, renderMain=()=>renderStatsLine();
+  const scheduleSelectedRender=renderMain;
   const detail=()=>'', content={replaceChildren(){}};
   state.tab='chat'; state.sessionDetails=new Map(); state.projectStatuses=new Map();
   const refreshSelected=eval('(() => {' + source.slice(source.indexOf('  async function refreshSelected('),source.indexOf('  function selectProject(')) + ';return refreshSelected;})()');

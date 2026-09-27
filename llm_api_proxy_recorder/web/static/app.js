@@ -83,6 +83,7 @@ function lastNDates(n) {
 /* ============================================================ fetch 封装 */
 async function api(path, opts = {}) {
   const init = { method: opts.method || "GET" };
+  if (opts.signal) init.signal = opts.signal;
   if (opts.body !== undefined) {
     init.body = JSON.stringify(opts.body);
     init.headers = { "Content-Type": "application/json" };
@@ -91,6 +92,7 @@ async function api(path, opts = {}) {
   try {
     resp = await fetch("api/" + path, init);
   } catch (e) {
+    if (e.name === "AbortError") throw e;
     if (!opts.silent) toast("网络请求失败：" + e.message, "error");
     const err = new Error(e.message);
     err.network = true;
