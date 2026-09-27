@@ -303,3 +303,11 @@ llm_api_proxy_recorder/
 │   └── routes.py       # 会话 CRUD + 目录浏览 + WebSocket
 └── web/static/         # Web UI（原生 JS：app/calls/trajectory/settings/terminal 等）
 ```
+
+### Windows 桌面运行行为（2.0.1）
+
+- 点击窗口关闭按钮或按 `Alt+F4`，应用隐藏到系统托盘，代理、工作区任务和终端继续运行。
+- 左键点击托盘图标，或右键选择「打开 Sona Code」，恢复主窗口；再次打开桌面快捷方式也会恢复已有窗口，不会启动第二个后端。
+- 完全退出请右键托盘图标选择「退出」，应用会清理后端及其子进程。
+- Windows 流水线安装实际 NSIS 产物后，检查窗口关闭/再次启动、中文及空格项目路径、随包 OpenCode V1 会话持久化，以及 ConPTY 命令执行。
+- 当前 Windows 安装包支持 x64；原生终端需要支持 ConPTY 的 Windows 10 1809 或更新系统。AI shell 命令建议安装 Git for Windows，应用会自动检测 Git Bash。

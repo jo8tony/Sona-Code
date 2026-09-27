@@ -12,6 +12,53 @@ use std::os::windows::process::CommandExt;
 
 struct SidecarState(Mutex<Option<CommandChild>>);
 
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+#[cfg(windows)]
+fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+    let show = MenuItem::with_id(app, "show", "打开 Sona Code", true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &separator, &quit])?;
+    let icon = app.default_window_icon().cloned().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "missing application tray icon",
+        )
+    })?;
+    TrayIconBuilder::with_id("main")
+        .icon(icon)
+        .tooltip("Sona Code · 右键菜单退出")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => show_main_window(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
 fn recorder_is_ready(instance_id: &str) -> bool {
     let address = SocketAddr::from(([127, 0, 0, 1], 8117));
     let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(300)) else {
@@ -44,7 +91,9 @@ fn wait_for_recorder(instance_id: &str, timeout: Duration) -> bool {
 }
 
 fn stop_sidecar(app: &tauri::AppHandle) {
-    let state = app.state::<SidecarState>();
+    let Some(state) = app.try_state::<SidecarState>() else {
+        return;
+    };
     if let Ok(mut guard) = state.0.lock() {
         if let Some(child) = guard.take() {
             #[cfg(target_os = "macos")]
@@ -72,17 +121,27 @@ fn stop_sidecar(app: &tauri::AppHandle) {
 }
 
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Register before spawning the sidecar: a second launch restores the first window.
+    #[cfg(windows)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        show_main_window(app);
+    }));
+    let app = builder
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+                if window.label() == "main" && window.hide().is_ok() {
+                    api.prevent_close();
+                }
             }
         })
         .setup(|app| {
+            // Fail before launching the backend if the tray cannot be created.
+            #[cfg(windows)]
+            setup_tray(app)?;
             let config_dir = app.path().app_config_dir()?;
             let data_dir = app.path().app_data_dir()?;
             let cache_dir = app.path().app_cache_dir()?;
@@ -136,6 +195,7 @@ pub fn run() {
                 );
             }
             sidecar = sidecar
+                .env("PYTHONIOENCODING", "utf-8")
                 .env("LLMPR_DESKTOP_INSTANCE_ID", &instance_id)
                 .env("LLMPR_BUNDLED_OPENCODE", bundled_opencode)
                 .env("XDG_CONFIG_HOME", &config_dir)
@@ -196,10 +256,7 @@ pub fn run() {
         RunEvent::Exit | RunEvent::ExitRequested { .. } => stop_sidecar(app_handle),
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => {
-            if let Some(window) = app_handle.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            show_main_window(app_handle);
         }
         _ => {}
     });

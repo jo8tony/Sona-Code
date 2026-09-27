@@ -1,4 +1,4 @@
-"""Verify an installed Windows package without opening its desktop window."""
+"""Verify installed Windows sidecars and desktop close/restore behavior."""
 
 from __future__ import annotations
 
@@ -84,7 +84,10 @@ async def _verify_terminal_input(base_url: str, session_id: str) -> None:
             if not attached:
                 raise RuntimeError("terminal websocket never reported attached")
 
-            await websocket.send(json.dumps({"type": "input", "data": f"Write-Output {MARKER}\r"}))
+            # The expected marker must not appear in echoed input: require actual execution.
+            await websocket.send(json.dumps({
+                "type": "input", "data": "Write-Output ('llmpr_' + 'packaged_pty_input_ok')\r",
+            }))
             while asyncio.get_running_loop().time() < deadline:
                 message = await asyncio.wait_for(websocket.recv(), timeout=5)
                 if isinstance(message, bytes):
@@ -105,6 +108,78 @@ async def _verify_terminal_input(base_url: str, session_id: str) -> None:
             file=sys.stderr,
         )
         raise
+
+
+def _verify_desktop_lifecycle(desktop: Path) -> None:
+    """Exercise WM_CLOSE and a second launch against the installed GUI executable."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user32.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+
+    def find_window(pid: int) -> int | None:
+        handles = []
+
+        @callback_type
+        def visit(hwnd, _):
+            owner = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+            title = ctypes.create_unicode_buffer(256)
+            user32.GetWindowTextW(hwnd, title, len(title))
+            if owner.value == pid and title.value == "Sona Code":
+                handles.append(hwnd)
+            return True
+
+        user32.EnumWindows(visit, 0)
+        return handles[0] if handles else None
+
+    def wait_for(predicate, description: str) -> None:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError(f"desktop exited during {description}: {process.returncode}")
+            if predicate():
+                return
+            time.sleep(0.1)
+        raise RuntimeError(f"desktop timed out: {description}")
+
+    process = subprocess.Popen([str(desktop)])
+    second = None
+    base_url = "http://127.0.0.1:8117"
+    try:
+        _wait_until_ready(base_url, process)
+        original = _request_json(base_url, "GET", "/__recorder/api/ping")
+        if not original.get("instance_id", "").startswith(f"{process.pid}-"):
+            raise RuntimeError("desktop did not start its own backend instance")
+        wait_for(lambda: find_window(process.pid), "create main window")
+        hwnd = find_window(process.pid)
+        wait_for(lambda: user32.IsWindowVisible(hwnd), "show main window")
+        if not user32.PostMessageW(hwnd, 0x0010, 0, 0):  # WM_CLOSE
+            raise ctypes.WinError(ctypes.get_last_error())
+        wait_for(lambda: not user32.IsWindowVisible(hwnd), "hide main window on close")
+        if _request_json(base_url, "GET", "/__recorder/api/ping") != original:
+            raise RuntimeError("closing the desktop replaced/stopped its backend")
+        second = subprocess.Popen([str(desktop)])
+        if second.wait(timeout=15) != 0:
+            raise RuntimeError("second desktop launch failed")
+        wait_for(lambda: user32.IsWindowVisible(hwnd), "second launch restores hidden window")
+        if _request_json(base_url, "GET", "/__recorder/api/ping") != original:
+            raise RuntimeError("second launch replaced the backend instance")
+    finally:
+        for child in (second, process):
+            if child is not None and child.poll() is None:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(child.pid)],
+                    capture_output=True, check=False, timeout=10,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+                child.wait(timeout=10)
 
 
 def main() -> None:
@@ -160,7 +235,7 @@ def main() -> None:
                 check = _request_json(base_url, "GET", "/__recorder/api/terminal/check")
                 if check.get("opencode_source") != "bundled" or not check.get("opencode_version"):
                     raise RuntimeError(f"bundled OpenCode check failed: {check}")
-                workspace_dir = temp / "workspace-project"
+                workspace_dir = temp / "中文 project with spaces"
                 workspace_dir.mkdir()
                 workspace_prefix = "/__recorder/api/workspace"
                 workspace_check = _request_json(base_url, "GET", f"{workspace_prefix}/check")
@@ -208,13 +283,20 @@ def main() -> None:
                         )
                     except Exception:
                         pass
-                process.terminate()
+                # A one-file PyInstaller executable has a worker child. Terminating
+                # only the bootloader leaks the worker and can leave its port bound.
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                    capture_output=True, check=False, creationflags=creationflags,
+                    timeout=10,
+                )
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     process.kill()
 
-    print("Windows GUI, packaged OpenCode workspace, and ConPTY input smoke tests passed")
+    _verify_desktop_lifecycle(args.desktop)
+    print("Windows close/restore, packaged OpenCode workspace, and ConPTY execution smoke tests passed")
 
 
 if __name__ == "__main__":

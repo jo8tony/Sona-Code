@@ -1,6 +1,6 @@
 [package]
 name = "llm-api-proxy-recorder-desktop"
-version = "1.3.0"
+version = "2.0.1"
 description = "LLM API Proxy Recorder desktop application"
 authors = ["LLM Proxy Recorder contributors"]
 edition = "2021"
@@ -17,3 +17,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 url = "2"
+
+[target.'cfg(windows)'.dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2"

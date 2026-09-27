@@ -243,11 +243,18 @@ class WorkspaceManager:
         if process.poll() is not None:
             return
         if os.name == "nt":
-            await asyncio.to_thread(
-                subprocess.run, ["taskkill", "/F", "/T", "/PID", str(process.pid)],
-                capture_output=True, check=False,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
+            try:
+                await asyncio.to_thread(
+                    subprocess.run, ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                    capture_output=True, check=False, timeout=5,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            except (OSError, subprocess.SubprocessError):
+                # Restricted Windows installations may block taskkill. Still reap
+                # the owned server rather than aborting shutdown of all projects.
+                logger.warning("Windows process-tree cleanup failed for PID %s", process.pid)
+            if process.poll() is None:
+                process.kill()
         else:
             try:
                 os.killpg(process.pid, signal.SIGTERM)
