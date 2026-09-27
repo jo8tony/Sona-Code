@@ -1,6 +1,6 @@
 [package]
 name = "llm-api-proxy-recorder-desktop"
-version = "2.0.1"
+version = "2.1.1"
 description = "LLM API Proxy Recorder desktop application"
 authors = ["LLM Proxy Recorder contributors"]
 edition = "2021"
