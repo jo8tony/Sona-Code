@@ -2,6 +2,24 @@
 /* Headless OpenCode workspace. The existing proxy record pages remain separate. */
 
 let workspaceSelection = { projectId: null, sessionId: null, tab: "chat" };
+try {
+  const saved = JSON.parse(localStorage.getItem("sona-code:workspace-selection") || "null");
+  if (saved && typeof saved.projectId === "string") {
+    workspaceSelection = {
+      projectId: saved.projectId,
+      sessionId: typeof saved.sessionId === "string" ? saved.sessionId : null,
+      tab: "chat",
+    };
+  }
+} catch (_) { /* Storage may be unavailable or contain invalid data. */ }
+
+function persistWorkspaceSelection() {
+  try {
+    localStorage.setItem("sona-code:workspace-selection", JSON.stringify({
+      projectId: workspaceSelection.projectId, sessionId: workspaceSelection.sessionId,
+    }));
+  } catch (_) { /* Keep selection usable when storage is unavailable. */ }
+}
 
 // Link only calls inside a single native assistant lifetime. Ambiguous calls
 // remain independent activity rows rather than pointing at the wrong message.
@@ -46,7 +64,7 @@ function renderWorkspace(view) {
     questionErrors: new Map(), diffs: [], todos: [], children: [], statuses: {},
     recordingData: null, recordingError: "", check: null, tab: workspaceSelection.tab || "chat", search: "", sending: false, chosenModels: new Map(), defaultModel: null,
     chosenAgents: new Map(), chosenVariants: new Map(), providers: [], connectedProviders: new Set(), agents: [], commands: [], skills: [], modelLoadError: "",
-    collapsedProjects: new Set(), expandedTools: new Map(), pendingAction: "", actionError: "", compactingSessionId: null,
+    collapsedProjects: new Set(), sessionLimits: new Map(), expandedTools: new Map(), pendingAction: "", actionError: "", compactingSessionId: null,
     attachments: [], fileReferences: [], pendingImageCount: 0, pendingImageBytes: 0, commandSelectedIndex: 0,
   };
 
@@ -59,11 +77,10 @@ function renderWorkspace(view) {
           <label class="wsp-search-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg><input class="wsp-search" id="wsp-search" type="search" placeholder="搜索项目和对话" aria-label="搜索项目和对话"><kbd>⌘K</kbd></label>
         </div>
         <div class="wsp-side-list"><div class="wsp-side-label"><span>项目与对话</span><span class="wsp-side-label-actions"><span id="wsp-project-count"></span></span></div><div id="wsp-projects"></div></div>
-        <div class="wsp-side-bottom" id="wsp-connection">正在检查 Sona Code…</div>
+        <div class="wsp-side-bottom"><a class="wsp-settings" href="#/preferences" title="打开设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 3-.6 2.4-2 .9L4.2 5.6l-2 3.5 1.8 1.7v2.4l-1.8 1.7 2 3.5 2.2-.7 2 .9L9 21h6l.6-2.4 2-.9 2.2.7 2-3.5-1.8-1.7v-2.4l1.8-1.7-2-3.5-2.2.7-2-.9L15 3Z"/><circle cx="12" cy="12" r="3"/></svg><span>设置</span></a></div>
       </aside>
       <div class="wsp-side-scrim" id="wsp-side-scrim"></div>
       <div class="wsp-main">
-        <nav class="wsp-global-nav" aria-label="主导航"><a class="active" href="#/workspace">工作区</a><a href="#/models" data-admin-menu hidden>模型</a><a href="#/skills">技能</a><a href="#/terminal" data-admin-menu hidden>终端</a><a href="#/dashboard">仪表盘</a><a href="#/calls">调用列表</a><a href="#/trajectory">轨迹</a><a href="#/settings" data-admin-menu hidden>设置</a><span class="wsp-nav-spacer"></span><span class="wsp-nav-note">代理观测与开发对话</span></nav>
         <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="5" width="10" height="10" rx="2" fill="currentColor"/></svg></button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span></header>
         <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动<span class="wsp-tab-count" id="wsp-change-count" aria-label="修改文件数量">0</span></button><button class="wsp-tab" type="button" data-wsp-tab="trajectory">轨迹</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button><button class="wsp-tab" type="button" data-wsp-tab="tasks">任务</button></nav>
         <div class="wsp-scroll" id="wsp-scroll"><div class="wsp-content" id="wsp-content"></div></div>
@@ -599,6 +616,7 @@ function renderWorkspace(view) {
         if (state.projectId === projectId && state.sessionId === session.id) {
           state.sessionId = null;
           workspaceSelection.sessionId = null;
+          persistWorkspaceSelection();
           state.messages = [];
           renderHeader(); renderMain();
         }
@@ -643,6 +661,7 @@ function renderWorkspace(view) {
       const section = el("section", { class: "wsp-project" + (collapsed ? " collapsed" : "") });
       const heading = el("button", { class: "wsp-project-head", type: "button", title: project.path,
         "aria-expanded": String(!collapsed), onclick: () => {
+          state.sessionLimits.delete(project.id);
           if (collapsed) {
             state.collapsedProjects.delete(project.id);
             if (!all) loadSessions(project);
@@ -667,7 +686,8 @@ function renderWorkspace(view) {
       } else if (all && !sessions.length) {
         threads.append(el("div", { class: "wsp-thread-time", text: query ? "无匹配对话" : "暂无对话" }));
       }
-      for (const session of sessions) {
+      const limit = state.sessionLimits.get(project.id) || 6;
+      for (const session of sessions.slice(0, limit)) {
         const threadButton = el("button", {
           class: "wsp-thread" + (session.parentID ? " child" : "") +
             (project.id === state.projectId && session.id === state.sessionId ? " active" : ""),
@@ -681,6 +701,15 @@ function renderWorkspace(view) {
           rowMenu([["重命名", () => performSessionAction(project.id, session, "rename")],
             ["分叉会话", () => performSessionAction(project.id, session, "fork")],
             ["删除", () => performSessionAction(project.id, session, "delete")]])));
+      }
+      if (sessions.length > limit) {
+        threads.append(el("button", {
+          class: "wsp-show-more", type: "button", text: "展示更多",
+          onclick: () => {
+            state.sessionLimits.set(project.id, limit + 6);
+            renderSidebar();
+          },
+        }));
       }
       section.append(threads);
       sideList.append(section);
@@ -1392,6 +1421,9 @@ function renderWorkspace(view) {
         state.sessionId = items[0]?.id || null;
         scrollToLatestOnLoad = true;
         workspaceSelection.sessionId = state.sessionId;
+        persistWorkspaceSelection();
+        refreshSelected();
+      } else if (state.projectId === project.id && !state.sessionDetails.has(state.sessionId)) {
         refreshSelected();
       }
       renderSidebar();
@@ -1590,10 +1622,10 @@ function renderWorkspace(view) {
       const group = el("section", { class: "wsp-model-group" },
         el("div", { class: "wsp-model-group-title" },
           el("strong", { text: provider.name || provider.id }),
-          el("span", { text: `${items.length} 个模型 · ${provider.source === "application" ? (provider.route_through_proxy ? "应用配置 · 代理记录" : "应用配置 · 直连") : "Sona Code 原生配置"}` })),
-        provider.source === "application"
-          ? el("a", { class: "wsp-provider-key", href: "#/models", text: "管理模型" })
-          : el("button", { type: "button", class: "wsp-provider-key", text: "设置 API Key", onclick: () => openProviderKeyDialog(provider) }));
+          el("span", { text: `${items.length} 个模型 · ${provider.source === "application" ? (provider.route_through_proxy ? "应用配置 · 代理记录" : "应用配置 · 直连") : "Sona Code 原生配置"}` })));
+      if (provider.source !== "application") {
+        group.append(el("button", { type: "button", class: "wsp-provider-key", text: "设置 API Key", onclick: () => openProviderKeyDialog(provider) }));
+      }
       for (const [id, model] of items) {
         const value = `${provider.id}\u0000${id}`;
         group.append(el("button", { type: "button", class: "wsp-model-option" + (value === selected ? " selected" : ""),
@@ -1887,7 +1919,7 @@ function renderWorkspace(view) {
     if (name === "skills") { await openSkillPicker(); return true; }
     if (name === "models") { composer.value = ""; openModelPicker(); return true; }
     if (name === "agents") { composer.value = ""; agentSelect.focus(); return true; }
-    if (name === "settings") { location.hash = "#/settings"; return true; }
+    if (name === "settings") { location.hash = "#/preferences"; return true; }
     if (name === "stop") {
       if (state.sessionId) await api(`${sessionPath(state.projectId, state.sessionId)}/abort`, { method: "POST", body: {}, silent: true });
       composer.value = "";
@@ -1987,6 +2019,8 @@ function renderWorkspace(view) {
     state.recordingData = null; state.recordingError = ""; trajectoryView = null; trajectorySignature = "";
     state.tab = remembered ? workspaceSelection.tab || "chat" : "chat";
     workspaceSelection = { projectId, sessionId: state.sessionId, tab: state.tab };
+    persistWorkspaceSelection();
+    state.collapsedProjects.delete(projectId);
     root.classList.remove("show-side");
     updateSidebarButton();
     renderSidebar(); renderHeader(); renderMain();
@@ -2018,6 +2052,8 @@ function renderWorkspace(view) {
     state.recordingData = null; state.recordingError = ""; trajectoryView = null; trajectorySignature = "";
     state.tab = "chat";
     workspaceSelection = { projectId, sessionId, tab: state.tab };
+    persistWorkspaceSelection();
+    state.collapsedProjects.delete(projectId);
     root.classList.remove("show-side");
     updateSidebarButton();
     renderSidebar(); renderHeader(); renderMain();
@@ -2051,6 +2087,7 @@ function renderWorkspace(view) {
     state.sessions.set(state.projectId, [session, ...items.filter((item) => item.id !== session.id)]);
     state.sessionId = session.id;
     workspaceSelection = { projectId: state.projectId, sessionId: session.id };
+    persistWorkspaceSelection();
     connectEvents(state.projectId);
     renderSidebar(); renderHeader();
   }
@@ -2141,6 +2178,7 @@ function renderWorkspace(view) {
       if (state.projectId === project.id) {
         state.projectId = null; state.sessionId = null; state.messages = [];
         workspaceSelection = { projectId: null, sessionId: null };
+        persistWorkspaceSelection();
         connectEvents(null);
         if (state.projects.length) selectProject(state.projects[0].id);
         else { renderSidebar(); renderHeader(); renderMain(); }
@@ -2415,9 +2453,6 @@ function renderWorkspace(view) {
       state.projects = projects.items || [];
       state.collapsedProjects = new Set(state.projects.map((project) => project.id));
       state.check = check;
-      view.querySelector("#wsp-connection").replaceChildren(
-        el("strong", { text: check.found ? "Sona Code 可用" : "未找到 Sona Code" }),
-        document.createTextNode(check.found ? "" : " · 请在设置中配置程序路径"));
       const selected = state.projects.find((item) => item.id === state.projectId) || state.projects[0];
       renderSidebar();
       if (selected) selectProject(selected.id);

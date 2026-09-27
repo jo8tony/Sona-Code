@@ -231,11 +231,17 @@ const routes = [
 function setNav(name) {
   document.querySelectorAll("#nav a").forEach((a) => {
     a.classList.toggle("active", a.dataset.nav === name);
+    if (a.dataset.nav === name) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
   });
 }
 
 function route() {
-  const hash = location.hash || "#/workspace";
+  let hash = location.hash || "#/workspace";
+  if (hash === "#/preferences") {
+    hash = adminMenusVisible ? "#/settings" : "#/skills";
+    history.replaceState(null, "", location.pathname + location.search + hash);
+  }
   runCleanups();
   const view = $("#view");
   view.replaceChildren(el("div", { class: "loading", text: "加载中…" }));
@@ -244,6 +250,7 @@ function route() {
     if (m) {
       document.body.classList.toggle("workspace-route", r.nav === "workspace");
       setNav(r.nav);
+      updateAdminMenus();
       document.title = "Sona Code · " + ({ workspace: "工作区", models: "模型", skills: "技能", dashboard: "仪表盘", calls: "调用列表", trajectory: "轨迹", terminal: "终端", settings: "设置" }[r.nav] || "");
       r.render(view, m);
       return;
@@ -719,7 +726,7 @@ if (!location.hash) history.replaceState(null, "", location.pathname + location.
 window.addEventListener("hashchange", route);
 route();
 
-// 顶栏版本号
+// 设置侧栏版本号
 api("meta", { silent: true })
   .then((m) => { $("#meta-version").textContent = "v" + (m.version || ""); })
   .catch(() => {});

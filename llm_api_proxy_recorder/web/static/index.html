@@ -10,15 +10,12 @@
 <link rel="stylesheet" href="workspace.css">
 <link rel="stylesheet" href="vendor/xterm.css">
 </head>
-<body>
-<header class="topbar">
-  <div class="brand">
-    <img class="brand-logo" src="sona-code-icon.png" alt="" width="28" height="28">
-    <span class="brand-name">Sona Code</span>
-    <span class="brand-ver mono" id="meta-version"></span>
-  </div>
-  <nav class="nav" id="nav">
-    <a href="#/workspace" data-nav="workspace">工作区</a>
+<body class="workspace-route">
+<div class="app-layout">
+<aside class="settings-sidebar" aria-label="设置导航">
+  <a class="settings-back" href="#/workspace" data-nav="workspace"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 5-7 7 7 7M5 12h14"/></svg><span>返回工作区</span></a>
+  <h1 class="settings-heading">设置</h1>
+  <nav class="nav" id="nav" aria-label="设置菜单">
     <a href="#/models" data-nav="models" data-admin-menu hidden>模型</a>
     <a href="#/skills" data-nav="skills">技能</a>
     <a href="#/terminal" data-nav="terminal" data-admin-menu hidden>终端</a>
@@ -27,10 +24,12 @@
     <a href="#/trajectory" data-nav="trajectory">轨迹</a>
     <a href="#/settings" data-nav="settings" data-admin-menu hidden>设置</a>
   </nav>
-</header>
+  <div class="settings-brand"><span>Sona Code</span><span class="brand-ver mono" id="meta-version"></span></div>
+</aside>
 <main id="view" class="view">
   <div class="loading">加载中…</div>
 </main>
+</div>
 <div id="toast-box" class="toast-box"></div>
 <noscript><div class="banner banner-err">需要启用 JavaScript 才能使用本页面。</div></noscript>
 <script src="chart.js"></script>

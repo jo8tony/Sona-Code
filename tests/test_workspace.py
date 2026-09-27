@@ -387,3 +387,98 @@ const css = fs.readFileSync("llm_api_proxy_recorder/web/static/workspace.css", "
 assert.equal(css.includes(":empty::before"), false);
 '''
     subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
+
+
+def test_workspace_remembers_selection_and_pages_project_sessions():
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for workspace sidebar regression coverage")
+    script = r'''
+const fs = require("node:fs");
+const vm = require("node:vm");
+const assert = require("node:assert/strict");
+const source = fs.readFileSync("llm_api_proxy_recorder/web/static/workspace.js", "utf8");
+let stored = JSON.stringify({projectId: "project", sessionId: "session-8"});
+const storage = {getItem() {return stored;}, setItem(key, value) {stored = value;}};
+const selectionSource = source.slice(0, source.indexOf("// Link only calls"));
+const restored = vm.createContext({localStorage: storage});
+vm.runInContext(selectionSource, restored);
+assert.equal(vm.runInContext("workspaceSelection.sessionId", restored), "session-8");
+vm.runInContext('workspaceSelection.sessionId = "session-9"; persistWorkspaceSelection()', restored);
+const restarted = vm.createContext({localStorage: storage});
+vm.runInContext(selectionSource, restarted);
+assert.equal(vm.runInContext("workspaceSelection.sessionId", restarted), "session-9");
+for (const value of ["invalid json", "null", '{"projectId":5}']) {
+  stored = value;
+  const context = vm.createContext({localStorage: storage});
+  vm.runInContext(selectionSource, context);
+  assert.equal(vm.runInContext("workspaceSelection.projectId", context), null);
+}
+const blocked = vm.createContext({localStorage: {
+  getItem() {throw Error("blocked");}, setItem() {throw Error("blocked");}
+}});
+vm.runInContext(selectionSource + "persistWorkspaceSelection();", blocked);
+
+function el(tag, props = {}, ...children) {
+  return {tag, ...props, children, append(...items) {this.children.push(...items);},
+    replaceChildren(...items) {this.children = items;}};
+}
+const sideList = el("div");
+const project = {id: "project", name: "Project", path: "/project"};
+const state = {
+  projects: [project], sessions: new Map([[project.id, Array.from({length: 14}, (_, i) => ({id: `session-${i}`, title: `Session ${i}`}))]]),
+  projectId: project.id, sessionId: "session-9", search: "", collapsedProjects: new Set(),
+  sessionLimits: new Map(), errors: new Map(),
+};
+const context = vm.createContext({state, sideList, el, closeRowMenus() {},
+  view: {querySelector() {return {}; }}, rowMenu: () => el("div"),
+  sessionTitle: s => s.title, shortStamp: () => "", stamp: () => ""});
+const sidebarSource = source.slice(source.indexOf("  function renderSidebar() {"), source.indexOf("  function renderHeader() {"));
+vm.runInContext(sidebarSource, context);
+const render = () => vm.runInContext("renderSidebar()", context);
+const threads = () => sideList.children[0].children[1];
+const rows = () => threads().children.filter(x => x.class === "wsp-thread-row");
+const more = () => threads().children.find(x => x.class === "wsp-show-more");
+render();
+assert.equal(rows().length, 6);
+more().onclick();
+assert.equal(rows().length, 12);
+more().onclick();
+assert.equal(rows().length, 14);
+assert.equal(more(), undefined);
+const heading = () => sideList.children[0].children[0].children[0];
+heading().onclick();
+assert.equal(state.collapsedProjects.has(project.id), true);
+heading().onclick();
+assert.equal(state.collapsedProjects.has(project.id), false);
+assert.equal(rows().length, 6);
+assert.ok(more());
+state.search = "Session 13";
+render();
+assert.equal(rows().length, 1);
+assert.equal(more(), undefined);
+
+let refreshes = 0;
+const loadContext = vm.createContext({state, workspaceSelection: {sessionId: "session-9"},
+  api: async () => ({items: state.sessions.get(project.id)}), alive: () => true,
+  scrollToLatestOnLoad: false, lastSessionListRefresh: 0,
+  persistWorkspaceSelection() {}, refreshSelected() {refreshes++;}, renderSidebar() {}, renderHeader() {},
+});
+state.sessionDetails = new Map();
+const loadSource = source.slice(source.indexOf("  async function loadSessions(project) {"), source.indexOf("  function modelDisplayName("));
+vm.runInContext(loadSource, loadContext);
+(async () => {
+  await vm.runInContext('loadSessions({id: "project"})', loadContext);
+  assert.equal(state.sessionId, "session-9");
+  assert.equal(refreshes, 1);
+  state.sessionId = "deleted";
+  await vm.runInContext('loadSessions({id: "project"})', loadContext);
+  assert.equal(state.sessionId, "session-0");
+  assert.equal(refreshes, 2);
+})().catch(error => {console.error(error); process.exitCode = 1;});
+'''
+    subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
