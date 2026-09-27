@@ -125,7 +125,13 @@ pub fn run() {
     // Register before spawning the sidecar: a second launch restores the first window.
     #[cfg(windows)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
-        show_main_window(app);
+        // Windows delivers this callback through synchronous WM_COPYDATA.
+        // Queue window operations from a worker so the sender can return and exit
+        // before Win32 restores/focuses the first instance's window.
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            show_main_window(&app);
+        });
     }));
     let app = builder
         .plugin(tauri_plugin_shell::init())
