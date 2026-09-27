@@ -13,11 +13,13 @@ use std::os::windows::process::CommandExt;
 struct SidecarState(Mutex<Option<CommandChild>>);
 
 fn show_main_window(app: &tauri::AppHandle) {
+    eprintln!("desktop: restoring main window");
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
     }
+    eprintln!("desktop: main window restore dispatched");
 }
 
 #[cfg(windows)]
@@ -139,8 +141,21 @@ pub fn run() {
         .on_window_event(|window, event| {
             #[cfg(any(target_os = "macos", windows))]
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "main" && window.hide().is_ok() {
+                if window.label() == "main" {
                     api.prevent_close();
+                    // Do not change Win32 visibility reentrantly inside WM_CLOSE.
+                    // Let the native close callback finish before dispatching hide.
+                    #[cfg(windows)]
+                    {
+                        let window = window.clone();
+                        tauri::async_runtime::spawn(async move {
+                            eprintln!("desktop: hiding main window");
+                            let _ = window.hide();
+                            eprintln!("desktop: main window hide dispatched");
+                        });
+                    }
+                    #[cfg(target_os = "macos")]
+                    let _ = window.hide();
                 }
             }
         })

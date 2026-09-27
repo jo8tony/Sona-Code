@@ -300,4 +300,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        # Public job annotations expose the concrete failure even when raw Actions
+        # logs are unavailable. Keep the validation gate intact.
+        message = f"{type(exc).__name__}: {exc}"
+        message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print(f"::error title=Windows package validation failed::{message}", flush=True)
+        raise
