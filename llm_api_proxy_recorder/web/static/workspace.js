@@ -59,15 +59,15 @@ function renderWorkspace(view) {
           <label class="wsp-search-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg><input class="wsp-search" id="wsp-search" type="search" placeholder="搜索项目和对话" aria-label="搜索项目和对话"><kbd>⌘K</kbd></label>
         </div>
         <div class="wsp-side-list"><div class="wsp-side-label"><span>项目与对话</span><span class="wsp-side-label-actions"><span id="wsp-project-count"></span></span></div><div id="wsp-projects"></div></div>
-        <div class="wsp-side-bottom" id="wsp-connection">正在检查 OpenCode…</div>
+        <div class="wsp-side-bottom" id="wsp-connection">正在检查 Sona Code…</div>
       </aside>
       <div class="wsp-side-scrim" id="wsp-side-scrim"></div>
       <div class="wsp-main">
-        <nav class="wsp-global-nav" aria-label="主导航"><a class="active" href="#/workspace">工作区</a><a href="#/models">模型</a><a href="#/skills">技能</a><a href="#/terminal">OpenCode 终端</a><a href="#/trajectory">轨迹</a><a href="#/calls">调用列表</a><a href="#/dashboard">仪表盘</a><a href="#/settings">设置</a><span class="wsp-nav-spacer"></span><span class="wsp-nav-note">代理观测与开发对话</span></nav>
+        <nav class="wsp-global-nav" aria-label="主导航"><a class="active" href="#/workspace">工作区</a><a href="#/models" data-admin-menu hidden>模型</a><a href="#/skills">技能</a><a href="#/terminal" data-admin-menu hidden>终端</a><a href="#/dashboard">仪表盘</a><a href="#/calls">调用列表</a><a href="#/trajectory">轨迹</a><a href="#/settings" data-admin-menu hidden>设置</a><span class="wsp-nav-spacer"></span><span class="wsp-nav-note">代理观测与开发对话</span></nav>
         <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="5" width="10" height="10" rx="2" fill="currentColor"/></svg></button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span></header>
         <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动<span class="wsp-tab-count" id="wsp-change-count" aria-label="修改文件数量">0</span></button><button class="wsp-tab" type="button" data-wsp-tab="trajectory">轨迹</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button><button class="wsp-tab" type="button" data-wsp-tab="tasks">任务</button></nav>
         <div class="wsp-scroll" id="wsp-scroll"><div class="wsp-content" id="wsp-content"></div></div>
-        <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" role="listbox" aria-label="命令与项目文件" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-close" aria-label="关闭模型选择">×</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><div class="wsp-attachment-list" id="wsp-attachment-list" aria-label="待发送附件" hidden></div><div class="wsp-input" id="wsp-input" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" aria-describedby="wsp-skill-error"></div><div id="wsp-skill-error" class="wsp-skill-error" role="status" aria-live="polite" hidden></div><div class="wsp-composer-bottom"><button class="wsp-attach" id="wsp-attach" type="button" title="选择 OpenCode 命令，也可输入 /" aria-label="选择 OpenCode 命令" aria-haspopup="listbox" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent" hidden><option value="build">Build · 执行</option></select><button class="wsp-agent-trigger" id="wsp-agent-trigger" type="button" aria-haspopup="menu" aria-expanded="false"><span id="wsp-agent-label">Build · 执行</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div class="wsp-agent-picker" id="wsp-agent-picker" role="menu" aria-label="选择 Agent" hidden></div><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">自动</button><select class="wsp-variant" id="wsp-variant" aria-label="选择模型强度" title="模型推理强度" hidden></select><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div></form><div class="wsp-stats" id="wsp-stats" aria-live="polite"></div></div>
+        <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" role="listbox" aria-label="命令与项目文件" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-close" aria-label="关闭模型选择">×</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><div class="wsp-attachment-list" id="wsp-attachment-list" aria-label="待发送附件" hidden></div><div class="wsp-input" id="wsp-input" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" aria-describedby="wsp-skill-error"></div><div id="wsp-skill-error" class="wsp-skill-error" role="status" aria-live="polite" hidden></div><div class="wsp-composer-bottom"><button class="wsp-attach" id="wsp-attach" type="button" title="选择 Sona Code 命令，也可输入 /" aria-label="选择 Sona Code 命令" aria-haspopup="listbox" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent" hidden><option value="build">Build · 执行</option></select><button class="wsp-agent-trigger" id="wsp-agent-trigger" type="button" aria-haspopup="menu" aria-expanded="false"><span id="wsp-agent-label">Build · 执行</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div class="wsp-agent-picker" id="wsp-agent-picker" role="menu" aria-label="选择 Agent" hidden></div><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">自动</button><select class="wsp-variant" id="wsp-variant" aria-label="选择模型强度" title="模型推理强度" hidden></select><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div></form><div class="wsp-stats" id="wsp-stats" aria-live="polite"></div></div>
       </div>
     </section>`;
 
@@ -77,7 +77,10 @@ function renderWorkspace(view) {
   const sideList = view.querySelector("#wsp-projects");
   const content = view.querySelector("#wsp-content");
   const scroll = view.querySelector("#wsp-scroll");
+  updateAdminMenus();
   const input = view.querySelector("#wsp-input");
+  const composerDock = view.querySelector(".wsp-composer-dock");
+  composerDock.hidden = state.tab !== "chat";
   const composer = createWorkspaceComposer(input, skillMention, fileMention);
   const attachmentList = view.querySelector("#wsp-attachment-list");
   const statsLine = view.querySelector("#wsp-stats");
@@ -116,8 +119,11 @@ function renderWorkspace(view) {
   scroll.addEventListener("scroll", () => {
     followLatest = scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop <= 80;
   }, { passive: true });
+  const updateTrajectoryHeight = () => scroll.style.setProperty("--wsp-scroll-height", `${scroll.clientHeight}px`);
+  updateTrajectoryHeight();
   if (typeof ResizeObserver !== "undefined") {
     const resizeObserver = new ResizeObserver(() => {
+      updateTrajectoryHeight();
       if (alive() && state.tab === "chat" && followLatest) scroll.scrollTop = scroll.scrollHeight;
     });
     resizeObserver.observe(content);
@@ -608,7 +614,7 @@ function renderWorkspace(view) {
         state.compactingSessionId = session.id;
         renderHeader(); renderMain();
         const result = await api(`${base}/summarize`, { method: "POST", body: { provider_id, model_id }, silent: true });
-        if (result === false) throw new Error("OpenCode 未能压缩上下文");
+        if (result === false) throw new Error("Sona Code 未能压缩上下文");
       }
       await refreshSelected();
       renderHeader();
@@ -699,7 +705,7 @@ function renderWorkspace(view) {
     const busy = compacting || state.sending || status?.type === "busy";
     const kind = failed ? "error" : busy ? "busy" : pending ? "attention" : state.check?.found ? "ready" : "missing";
     const description = failed ? "请求失败" : compacting ? "正在压缩上下文" : busy ? "正在处理" :
-      pending ? "等待确认" : state.check?.found ? "已就绪" : "未检测到 OpenCode";
+      pending ? "等待确认" : state.check?.found ? "已就绪" : "未检测到 Sona Code";
     label.className = `wsp-status ${kind}`;
     label.setAttribute("aria-label", description);
     label.title = description;
@@ -737,7 +743,7 @@ function renderWorkspace(view) {
     const error = info?.error;
     if (!error) return null;
     const data = error.data || {};
-    const raw = data.responseBody || data.message || error.message || error.name || "OpenCode 请求失败";
+    const raw = data.responseBody || data.message || error.message || error.name || "Sona Code 请求失败";
     return el("div", { class: "wsp-message-error" },
       el("p", { text: typeof raw === "string" ? raw : JSON.stringify(raw, null, 2) }));
   }
@@ -881,7 +887,7 @@ function renderWorkspace(view) {
     drafts[page] = draft;
     const card = el("div", { class: "wsp-question" },
       el("div", { class: "wsp-question-head" },
-        el("strong", { text: "OpenCode 需要你的回答" }),
+        el("strong", { text: "Sona Code 需要你的回答" }),
         el("span", { class: "wsp-question-count", text: `${page + 1} / ${questions.length}` })));
     if (!question) return card;
     const group = el("fieldset", { class: "wsp-question-group" },
@@ -979,7 +985,7 @@ function renderWorkspace(view) {
 
   function renderMessages() {
     if (!state.sessionId) {
-      content.append(empty("开始一段新对话", "选择项目后新建对话，OpenCode 会在该项目目录中工作。",
+      content.append(empty("开始一段新对话", "选择项目后新建对话，Sona Code 会在该项目目录中工作。",
         activeProject() ? ["新建对话", () => createSession()] : ["新建项目", openAddProject]));
       return;
     }
@@ -1025,7 +1031,7 @@ function renderWorkspace(view) {
       const modelInfo = message.modelInfo || message.info;
       if (role !== "user") body.append(el("div", { class: "wsp-message-meta" },
         el("strong", { text: "Sona" }),
-        `OpenCode${modelInfo?.providerID && modelInfo?.modelID ? ` · ${modelInfo.providerID} / ${modelInfo.modelID}` : ""}`));
+        modelInfo?.modelID ? modelDisplayName(modelInfo.providerID, modelInfo.modelID) : ""));
       const parts = message.parts || [];
       const references = role === "user" ? parts.filter(part => part.type === "file" &&
         part.url?.startsWith("file:") && part.filename).map(part => part.filename) : [];
@@ -1091,7 +1097,7 @@ function renderWorkspace(view) {
     for (const permission of state.permissions.filter((item) => item.sessionID === state.sessionId)) {
       const card = el("div", { class: "wsp-permission" },
         el("strong", { text: `需要确认：${permission.permission || permission.action || "工具操作"}` }),
-        el("p", { text: (permission.patterns || permission.resources || []).join("、") || "OpenCode 请求继续执行此操作。" }));
+        el("p", { text: (permission.patterns || permission.resources || []).join("、") || "Sona Code 请求继续执行此操作。" }));
       const actions = el("div", { class: "wsp-permission-actions" });
       for (const [label, reply, cls] of [["允许一次", "once", "wsp-mini primary"], ["始终允许", "always", "wsp-mini"], ["拒绝", "reject", "wsp-mini"]]) {
         actions.append(el("button", { class: cls, type: "button", text: label, onclick: () => replyPermission(permission.id, reply) }));
@@ -1191,7 +1197,7 @@ function renderWorkspace(view) {
     content.append(panelIntro("文件改动", "在同一处查看当前对话涉及的文件与代码差异。"));
     const diffs = changedFiles();
     if (!state.sessionId || !diffs.length) {
-      content.append(empty("暂无文件改动", "OpenCode 修改文件后，这里会显示改动摘要。"));
+      content.append(empty("暂无文件改动", "Sona Code 修改文件后，这里会显示改动摘要。"));
       return;
     }
     const counts = diffs.map(diffLineCounts);
@@ -1216,13 +1222,13 @@ function renderWorkspace(view) {
           el("span", { class: "wsp-diff-stats", text: lineCounts ? `+${lineCounts.additions}  −${lineCounts.deletions}` : "" })));
       const rows = diffRows(diff);
       if (rows.length) {
-        if (diff.derived) card.append(el("p", { class: "wsp-diff-preview-label", text: "写入内容预览 · OpenCode 未返回完整逐行差异" }));
+        if (diff.derived) card.append(el("p", { class: "wsp-diff-preview-label", text: "写入内容预览 · Sona Code 未返回完整逐行差异" }));
         const body = el("div", { class: "wsp-diff-body" });
         for (const row of rows) body.append(el("div", { class: `wsp-diff-line ${row.type}` },
           el("span", { class: "wsp-line-number", text: String(row.number) }), el("span", { text: row.text })));
         card.append(body);
       } else card.append(el("p", { class: "wsp-diff-unavailable", text: diff.derived
-        ? "OpenCode 记录了文件写入，但没有返回可显示的逐行差异。" : "此文件没有可显示的逐行差异。" }));
+        ? "Sona Code 记录了文件写入，但没有返回可显示的逐行差异。" : "此文件没有可显示的逐行差异。" }));
       content.append(card);
     }
   }
@@ -1263,7 +1269,7 @@ function renderWorkspace(view) {
     const addEvent = (time, title, description, duration, color, callId) => {
       timeline.append(el(callId ? "a" : "div", {
         class: "wsp-trace-row" + (callId ? " wsp-trace-link" : ""),
-        ...(callId ? { href: "#/calls/" + encodeURIComponent(callId), title: "查看模型请求详情" } : {}),
+        ...(callId ? { href: "#/calls/" + encodeURIComponent(callId) + "?from=workspace", title: "查看模型请求详情" } : {}),
       },
         el("span", { class: "wsp-trace-time", text: eventTime(time) }),
         el("span", { class: `wsp-trace-dot ${color}` }),
@@ -1277,7 +1283,7 @@ function renderWorkspace(view) {
     const callOwners = workspaceCallOwners(assistants, turns);
     const addCall = (turn) => {
       linkedCalls.add(turn.call_id);
-      addEvent(turn.started_at, "模型请求", turn.model || "OpenCode 回复",
+      addEvent(turn.started_at, "模型请求", turn.model || "Sona Code 回复",
         turn.duration_ms != null ? `${(turn.duration_ms / 1000).toFixed(1)} 秒` : "",
         turn.status === "error" || turn.status_code >= 400 ? "red" : "", turn.call_id);
     };
@@ -1288,7 +1294,7 @@ function renderWorkspace(view) {
       const seconds = start && end ? (new Date(end) - new Date(start)) / 1000 : NaN;
       const calls = turns.filter((turn) => callOwners.get(turn.call_id) === info.id);
       if (calls.length) calls.forEach(addCall);
-      else addEvent(start, "模型请求", [info.providerID, info.modelID].filter(Boolean).join(" / ") || "OpenCode 回复",
+      else addEvent(start, "模型请求", modelDisplayName(info.providerID, info.modelID) || "Sona Code 回复",
         Number.isFinite(seconds) && seconds >= 0 ? `${seconds.toFixed(1)} 秒 · 暂无调用记录` : "暂无调用记录", info.error ? "red" : "");
       for (const part of message.parts || []) {
         if (part.type !== "tool") continue;
@@ -1305,14 +1311,14 @@ function renderWorkspace(view) {
     for (const request of [...state.permissions, ...state.questions].filter((item) => item.sessionID === state.sessionId))
       addEvent(request.time?.created, "等待确认", request.permission || "需要你的回答", "待确认", "amber");
     if (count) content.append(timeline);
-    else content.append(empty("暂无对话活动", "OpenCode 回复或调用工具后，这里会按顺序展示。"));
+    else content.append(empty("暂无对话活动", "Sona Code 回复或调用工具后，这里会按顺序展示。"));
   }
 
   function renderTasks() {
     content.append(el("h2", { class: "wsp-section-title", text: "任务与子对话" }),
-      el("p", { class: "wsp-section-note", text: "OpenCode 在本轮对话中维护的待办和委派任务。" }));
+      el("p", { class: "wsp-section-note", text: "Sona Code 在本轮对话中维护的待办和委派任务。" }));
     if (!state.todos.length && !state.children.length) {
-      content.append(empty("暂无任务", "OpenCode 制定计划或启动子任务后会显示在这里。"));
+      content.append(empty("暂无任务", "Sona Code 制定计划或启动子任务后会显示在这里。"));
       return;
     }
     for (const todo of state.todos) {
@@ -1330,6 +1336,7 @@ function renderWorkspace(view) {
   }
 
   function renderMain(forceBottom = false) {
+    composerDock.hidden = state.tab !== "chat";
     const previousTop = scroll.scrollTop;
     const previousMaximum = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
     const nearBottom = previousMaximum - previousTop <= 80;
@@ -1397,6 +1404,19 @@ function renderWorkspace(view) {
         content.replaceChildren(el("div", { class: "wsp-error", text: detail(error) }));
       }
     }
+  }
+
+  function modelDisplayName(providerId, modelId) {
+    const provider = state.providers.find((item) => item.id === providerId);
+    let providerName = provider?.name || providerId || "";
+    if (!provider?.name && providerId?.startsWith("llmpr-")) {
+      try {
+        const encoded = providerId.slice(6).replace(/-/g, "+").replace(/_/g, "/");
+        const bytes = Uint8Array.from(atob(encoded.padEnd(Math.ceil(encoded.length / 4) * 4, "=")), (char) => char.charCodeAt(0));
+        providerName = new TextDecoder().decode(bytes);
+      } catch (_) { providerName = ""; }
+    }
+    return [providerName, provider?.models?.[modelId]?.name || modelId].filter(Boolean).join(" / ");
   }
 
   function selectedModel() {
@@ -1509,17 +1529,17 @@ function renderWorkspace(view) {
       el("div", { class: "wsp-modal", role: "dialog", "aria-modal": "true", "aria-label": `设置 ${provider.name || provider.id} API Key` },
         el("h2", { text: `设置 ${provider.name || provider.id} API Key` }),
         el("p", { text: state.connectedProviders.has(provider.id)
-          ? "OpenCode 已保存此 Provider 的凭据。新 Key 保存后会替换旧凭据；认证是否有效，以实际请求结果为准。"
-          : "保存到 OpenCode 的本地凭据存储。该 Provider 后续请求会使用这个 Key。" }),
+          ? "Sona Code 已保存此 Provider 的凭据。新 Key 保存后会替换旧凭据；认证是否有效，以实际请求结果为准。"
+          : "保存到 Sona Code 的本地凭据存储。该 Provider 后续请求会使用这个 Key。" }),
         keyInput, message,
         el("div", { class: "wsp-modal-actions" },
           el("button", { class: "wsp-mini", type: "button", text: "取消", onclick: () => mask.remove() }),
-          el("button", { class: "wsp-mini primary", type: "button", text: "保存到 OpenCode", onclick: async (event) => {
+          el("button", { class: "wsp-mini primary", type: "button", text: "保存到 Sona Code", onclick: async (event) => {
             const button = event.currentTarget;
             const key = keyInput.value.trim();
             if (!key) { message.textContent = "请先输入 API Key"; keyInput.focus(); return; }
             button.disabled = true;
-            message.textContent = "正在保存到本机 OpenCode 凭据存储…";
+            message.textContent = "正在保存到本机 Sona Code 凭据存储…";
             try {
               await api(`workspace/projects/${encodeURIComponent(state.projectId)}/providers/${encodeURIComponent(provider.id)}/api-key`, {
                 method: "POST", body: { key }, silent: true,
@@ -1528,7 +1548,7 @@ function renderWorkspace(view) {
               state.connectedProviders.add(provider.id);
               mask.remove();
               renderModelPicker();
-              toast(`${provider.name || provider.id} 凭据已保存到 OpenCode`, "ok");
+              toast(`${provider.name || provider.id} 凭据已保存到 Sona Code`, "ok");
             } catch (error) {
               message.textContent = `保存失败：${detail(error)}`;
               button.disabled = false;
@@ -1570,7 +1590,7 @@ function renderWorkspace(view) {
       const group = el("section", { class: "wsp-model-group" },
         el("div", { class: "wsp-model-group-title" },
           el("strong", { text: provider.name || provider.id }),
-          el("span", { text: `${items.length} 个模型 · ${provider.source === "application" ? (provider.route_through_proxy ? "应用配置 · 代理记录" : "应用配置 · 直连") : "OpenCode 原生配置"}` })),
+          el("span", { text: `${items.length} 个模型 · ${provider.source === "application" ? (provider.route_through_proxy ? "应用配置 · 代理记录" : "应用配置 · 直连") : "Sona Code 原生配置"}` })),
         provider.source === "application"
           ? el("a", { class: "wsp-provider-key", href: "#/models", text: "管理模型" })
           : el("button", { type: "button", class: "wsp-provider-key", text: "设置 API Key", onclick: () => openProviderKeyDialog(provider) }));
@@ -1789,7 +1809,7 @@ function renderWorkspace(view) {
       commandMenu.append(el("button", { type: "button", role: "option", "aria-selected": String(index === state.commandSelectedIndex),
         class: `wsp-command-option${index === state.commandSelectedIndex ? " selected" : ""}`, onclick: () => selectCommand(command),
         onmouseenter: () => { state.commandSelectedIndex = index; updateCommandSelection(); } },
-      el("strong", { text: `/${command.name}` }), el("span", { text: command.description || "OpenCode 命令" })));
+      el("strong", { text: `/${command.name}` }), el("span", { text: command.description || "Sona Code 命令" })));
     }
     commandMenu.hidden = commandMenu.children.length === 1;
     view.querySelector("#wsp-attach").setAttribute("aria-expanded", String(!commandMenu.hidden && commandPaletteOpen));
@@ -1842,7 +1862,7 @@ function renderWorkspace(view) {
           dialog.close(); input.focus(); composer.setSelectionRange(composer.value.length, composer.value.length);
         } }, el("strong", { text: skill.name }), el("span", { text: skill.description })));
         if (!matches.length) list.append(el("p", { text: query ? "没有匹配的技能" : "暂无可用技能，请在技能菜单中导入并启用。" }));
-        if (data.unavailable?.length) list.append(el("p", { class: "wsp-question-error", text: `以下技能未被 OpenCode 加载或存在同名命令：${data.unavailable.join("、")}` }));
+        if (data.unavailable?.length) list.append(el("p", { class: "wsp-question-error", text: `以下技能未被 Sona Code 加载或存在同名命令：${data.unavailable.join("、")}` }));
       }
       search.addEventListener("input", drawSkills);
       search.addEventListener("keydown", (event) => {
@@ -2058,7 +2078,7 @@ function renderWorkspace(view) {
     if (!window.__TAURI__?.dialog?.open) choose.hidden = true;
     const mask = el("div", { class: "wsp-modal-mask" },
       el("div", { class: "wsp-modal", role: "dialog", "aria-modal": "true", "aria-label": "新建项目" }, el("h2", { text: "新建项目" }),
-        el("p", { text: "输入现有目录的绝对路径，或选择一个目录作为 OpenCode 工作区。" }),
+        el("p", { text: "输入现有目录的绝对路径，或选择一个目录作为 Sona Code 工作区。" }),
         el("div", { class: "wsp-modal-row" }, pathInput, choose), errorLine,
         el("div", { class: "wsp-modal-actions" },
           el("button", { class: "wsp-mini", type: "button", text: "取消", onclick: () => mask.remove() }),
@@ -2112,7 +2132,7 @@ function renderWorkspace(view) {
   }
 
   async function removeProject(project) {
-    if (!await confirmDeletion("删除工作区项目", `确定从工作区列表删除项目“${project.name}”？项目目录和 OpenCode 对话仍保留在磁盘上。`)) return;
+    if (!await confirmDeletion("删除工作区项目", `确定从工作区列表删除项目“${project.name}”？项目目录和 Sona Code 对话仍保留在磁盘上。`)) return;
     try {
       await api(`workspace/projects/${encodeURIComponent(project.id)}`, { method: "DELETE", silent: true });
       state.projects = state.projects.filter((item) => item.id !== project.id);
@@ -2239,12 +2259,13 @@ function renderWorkspace(view) {
   }));
   view.querySelector("#wsp-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (consumeMenuCommand()) return;
     state.fileReferences = composer.fileReferences;
     const text = composer.value.trim();
     if ((!text && !state.attachments.length && !state.fileReferences.length) || state.sending) return;
     if (state.pendingImageCount) { toast("图片正在读取，请稍后发送", "error"); return; }
     if (!state.projectId) { openAddProject(); return; }
-    if (!state.check?.found) { toast("未找到 OpenCode，请在设置中配置程序路径", "error"); return; }
+    if (!state.check?.found) { toast("未找到 Sona Code，请在设置中配置程序路径", "error"); return; }
     const slash = text.match(/^\/([A-Za-z0-9_-]+)(?:\s+([\s\S]*))?$/);
     const shell = text.startsWith("!") ? text.slice(1).trim() : "";
     if ((state.attachments.length || state.fileReferences.length) && (text.startsWith("/") || text.startsWith("!"))) {
@@ -2300,7 +2321,15 @@ function renderWorkspace(view) {
       if (alive()) { updateSkillInput(); renderHeader(); renderMain(); }
     }
   });
-  input.addEventListener("input", () => { updateSkillInput(); commandPaletteOpen = false; state.commandSelectedIndex = 0; renderCommandMenu(); });
+  function consumeMenuCommand() {
+    if (composingInput || !handleMenuCommand(composer.value)) return false;
+    composer.value = "";
+    updateSkillInput();
+    hideAutocomplete();
+    return true;
+  }
+
+  input.addEventListener("input", () => { consumeMenuCommand(); updateSkillInput(); commandPaletteOpen = false; state.commandSelectedIndex = 0; renderCommandMenu(); });
   input.addEventListener("click", () => { commandPaletteOpen = false; renderCommandMenu(); });
   input.addEventListener("keyup", (event) => {
     if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) renderCommandMenu();
@@ -2322,7 +2351,7 @@ function renderWorkspace(view) {
     if (files.length) void addImageFiles(files);
   });
   input.addEventListener("compositionstart", () => { composingInput = true; updateSkillInput(); });
-  input.addEventListener("compositionend", () => { composingInput = false; updateSkillInput(); renderCommandMenu(); });
+  input.addEventListener("compositionend", () => { composingInput = false; consumeMenuCommand(); updateSkillInput(); renderCommandMenu(); });
   input.addEventListener("keydown", (event) => {
     if (event.key === "Escape") { hideAutocomplete(); return; }
     const composing = composingInput || event.isComposing || event.keyCode === 229;
@@ -2387,8 +2416,8 @@ function renderWorkspace(view) {
       state.collapsedProjects = new Set(state.projects.map((project) => project.id));
       state.check = check;
       view.querySelector("#wsp-connection").replaceChildren(
-        el("strong", { text: check.found ? "OpenCode 可用" : "未找到 OpenCode" }),
-        document.createTextNode(check.found ? ` · ${check.source}` : " · 请在设置中配置程序路径"));
+        el("strong", { text: check.found ? "Sona Code 可用" : "未找到 Sona Code" }),
+        document.createTextNode(check.found ? "" : " · 请在设置中配置程序路径"));
       const selected = state.projects.find((item) => item.id === state.projectId) || state.projects[0];
       renderSidebar();
       if (selected) selectProject(selected.id);

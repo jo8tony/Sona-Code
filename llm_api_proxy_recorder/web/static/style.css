@@ -743,3 +743,6 @@ body.term-route .term-page.term-fs .term-main { border: 0; border-radius: 0; }
   .topbar .nav { min-width: 0; max-width: 100%; overflow-x: auto; }
   .topbar .nav a { flex: 0 0 auto; white-space: nowrap; }
 }
+
+/* 管理菜单的 hidden 状态优先于导航的 flex 布局。 */
+.nav a[data-admin-menu][hidden], .wsp-global-nav a[data-admin-menu][hidden] { display: none; }

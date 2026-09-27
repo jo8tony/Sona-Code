@@ -192,6 +192,21 @@ function buildCallsTable(rows) {
   return el("div", { class: "tbl-wrap" }, el("table", { class: "tbl" }, thead, tb));
 }
 
+// 菜单模式仅保留在当前页面生命周期中，重新打开默认使用用户模式。
+let adminMenusVisible = false;
+function updateAdminMenus() {
+  document.querySelectorAll("[data-admin-menu]").forEach((item) => {
+    item.hidden = !adminMenusVisible;
+  });
+}
+function handleMenuCommand(text) {
+  if (text !== "#admin#" && text !== "#user#") return false;
+  adminMenusVisible = text === "#admin#";
+  updateAdminMenus();
+  toast(adminMenusVisible ? "已显示管理菜单" : "已隐藏管理菜单", "ok");
+  return true;
+}
+
 /* ============================================================ 路由 */
 let cleanups = [];
 function addCleanup(fn) { cleanups.push(fn); }
@@ -206,7 +221,7 @@ const routes = [
   { re: /^#\/skills$/, nav: "skills", render: (view) => renderSkills(view) },
   { re: /^#\/dashboard$/, nav: "dashboard", render: (view) => renderDashboard(view) },
   { re: /^#\/calls$/, nav: "calls", render: (view) => renderCalls(view) },
-  { re: /^#\/calls\/(.+)$/, nav: "calls", render: (view, m) => renderCallDetail(view, decodeURIComponent(m[1])) },
+  { re: /^#\/calls\/([^?]+)(?:\?(.*))?$/, nav: "calls", render: (view, m) => renderCallDetail(view, decodeURIComponent(m[1]), new URLSearchParams(m[2]).get("from") === "workspace") },
   { re: /^#\/trajectory$/, nav: "trajectory", render: (view) => renderTrajectoryList(view) },
   { re: /^#\/trajectory\/(.+)$/, nav: "trajectory", render: (view, m) => renderTrajectorySession(view, decodeURIComponent(m[1])) },
   { re: /^#\/terminal$/, nav: "terminal", render: (view) => renderTerminal(view) },
@@ -595,7 +610,8 @@ function rawChunksDetails(chunks) {
   return det;
 }
 
-async function renderCallDetail(view, id) {
+async function renderCallDetail(view, id, fromWorkspace = false) {
+  const returnHref = fromWorkspace ? "#/workspace" : "#/calls";
   let rec;
   try {
     rec = await api("calls/" + encodeURIComponent(id));
@@ -613,14 +629,14 @@ async function renderCallDetail(view, id) {
     try {
       await api("calls/" + encodeURIComponent(id), { method: "DELETE", silent: true });
       toast("已删除记录", "ok");
-      location.hash = "#/calls";
+      location.hash = returnHref;
     } catch (e) {
       toast("删除失败：" + (e.detail || e.message), "error");
       delBtn.disabled = false;
     }
   });
   view.append(el("div", { class: "detail-top" },
-    el("a", { class: "btn btn-ghost", href: "#/calls", text: "← 返回列表" }),
+    el("a", { class: "btn btn-ghost", href: returnHref, text: fromWorkspace ? "← 返回活动" : "← 返回列表" }),
     el("span", { class: "mono dim", text: rec.id }),
     el("span", { class: "filter-spacer" }),
     delBtn));

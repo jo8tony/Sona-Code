@@ -126,6 +126,7 @@
 .wsp-diff-head span:last-child { color: var(--green); font: 10px var(--mono); }
 .wsp-diff-content { padding: 11px 12px; overflow-x: auto; color: var(--text-dim); font: 10.5px/1.6 var(--mono); white-space: pre-wrap; }
 .wsp-composer-dock { padding: 13px 27px 17px; border-top: 1px solid var(--border); background: #fff; }
+.wsp-composer-dock[hidden] { display: none; }
 .wsp-composer { max-width: 860px; margin: auto; border: 1px solid var(--border); border-radius: 11px; background: #fff; box-shadow: 0 5px 22px rgba(42, 60, 88, .06); }
 .wsp-composer:focus-within { border-color: #abc2f7; }
 .wsp-input { width: 100%; min-height: 65px; max-height: 160px; padding: 12px 14px 0; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--text); font: 12px/1.5 var(--sans); }
@@ -444,7 +445,18 @@
 .wsp-trace-row:first-child { border-top: 0; }
 .wsp-trace-link { color: inherit; text-decoration: none; cursor: pointer; }
 .wsp-trace-link:hover, .wsp-trace-link:focus-visible { background: var(--accent-soft); }
-.wsp-content.wsp-content-trajectory { width: calc(100% - 48px); }
+/* 内嵌详情高度跟随工作区滚动视口，不能沿用独立页面的窗口高度。 */
+.wsp-content.wsp-content-trajectory { width: calc(100% - 48px); padding-bottom: 0; }
+.wsp-trajectory .trj-inspector {
+  top: 0;
+  height: var(--wsp-scroll-height);
+  max-height: var(--wsp-scroll-height);
+  margin-bottom: 0;
+  overscroll-behavior-y: contain;
+}
+@media (max-width: 1080px) {
+  .wsp-trajectory .trj-inspector { height: auto; max-height: none; overscroll-behavior-y: auto; }
+}
 .wsp-trace-time, .wsp-trace-duration { color: var(--text-faint); font: 10px var(--mono); padding-top: 3px; white-space: nowrap; }
 .wsp-trace-dot { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
 .wsp-trace-dot.green { background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); }
