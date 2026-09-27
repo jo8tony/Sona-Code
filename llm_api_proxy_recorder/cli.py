@@ -10,7 +10,7 @@ from llm_api_proxy_recorder.config import CONFIG_PATH, load_config, resolved_rec
 
 
 def _harden_stdio() -> None:
-    """Windows 英文 locale 下管道 stdout/stderr 使用 cp1252，中文输出会抛 UnicodeEncodeError。"""
+    """统一管道输出为 UTF-8；冻结版 Python 可能忽略 PYTHONIOENCODING。"""
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is None:
@@ -18,7 +18,7 @@ def _harden_stdio() -> None:
         encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
         if encoding != "utf8":
             try:
-                reconfigure(errors="replace")
+                reconfigure(encoding="utf-8", errors="replace")
             except (ValueError, OSError):
                 pass
 

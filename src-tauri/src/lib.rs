@@ -261,10 +261,15 @@ pub fn run() {
             let window =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("Sona Code")
+                    // WebView2 can pump native messages during construction. Do
+                    // not expose a closable window before its listeners are attached.
+                    .visible(!cfg!(windows))
                     .inner_size(1280.0, 820.0)
                     .min_inner_size(900.0, 620.0)
                     .center()
                     .build()?;
+            #[cfg(windows)]
+            window.show()?;
 
             std::thread::spawn(move || {
                 if wait_for_recorder(&instance_id, Duration::from_secs(60)) {
