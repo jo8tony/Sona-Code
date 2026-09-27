@@ -82,6 +82,19 @@ function workspaceTurnDiffs(messages, message, projectPath = "") {
   return [...files.values()];
 }
 
+// Keep unchanged messages attached so polling preserves hover, focus and selection.
+function workspaceSyncChildren(container, children) {
+  const retained = new Set(children);
+  for (const child of Array.from(container.childNodes)) {
+    if (!retained.has(child)) child.remove();
+  }
+  children.forEach((child, index) => {
+    const current = container.childNodes[index];
+    if (current !== child) container.insertBefore(child, current || null);
+  });
+  while (container.childNodes.length > children.length) container.lastChild.remove();
+}
+
 function renderWorkspace(view) {
   let disposed = false;
   let events = null;
@@ -1176,18 +1189,21 @@ function renderWorkspace(view) {
       statusIcon(kind), el("span", { text: label }));
   }
 
-  function renderMessages() {
+  function renderMessages(target) {
+    const existing = new Map(Array.from(content.children)
+      .filter(row => row.workspaceMessageKey)
+      .map(row => [row.workspaceMessageKey, row]));
     if (!state.sessionId) {
-      content.append(empty("开始一段新对话", "选择项目后新建对话，Sona Code 会在该项目目录中工作。",
+      target.append(empty("开始一段新对话", "选择项目后新建对话，Sona Code 会在该项目目录中工作。",
         activeProject() ? ["新建对话", () => createSession()] : ["新建项目", openAddProject]));
       return;
     }
     if (!state.messages.length && !state.permissions.some((item) => item.sessionID === state.sessionId) &&
       !state.questions.some((item) => item.sessionID === state.sessionId)) {
-      content.append(empty("输入你的开发需求", "发送第一条消息后，这里会实时显示回复和工具操作。"));
-      if (state.compactingSessionId === state.sessionId) content.append(compactionCard("busy"));
-      if (state.pendingAction) content.append(el("div", { class: "wsp-action-progress", text: `正在执行 ${state.pendingAction}…` }));
-      if (state.actionError) content.append(el("div", { class: "wsp-error", text: state.actionError }));
+      target.append(empty("输入你的开发需求", "发送第一条消息后，这里会实时显示回复和工具操作。"));
+      if (state.compactingSessionId === state.sessionId) target.append(compactionCard("busy"));
+      if (state.pendingAction) target.append(el("div", { class: "wsp-action-progress", text: `正在执行 ${state.pendingAction}…` }));
+      if (state.actionError) target.append(el("div", { class: "wsp-error", text: state.actionError }));
       return;
     }
     const displayMessages = [];
@@ -1205,7 +1221,7 @@ function renderWorkspace(view) {
     for (const [messageIndex, message] of displayMessages.entries()) {
       const day = messageDay(message);
       if (day !== previousDay) {
-        content.append(el("div", { class: "wsp-date-divider", text: day }));
+        target.append(el("div", { class: "wsp-date-divider", text: day }));
         previousDay = day;
       }
       if (message.info?.role === "user" && message.parts.some((part) => part.type === "compaction")) {
@@ -1213,18 +1229,38 @@ function renderWorkspace(view) {
           item.info.parentID === message.info.id);
         const complete = replies.some((item) => item.info.summary && item.info.finish && !item.info.error);
         const failed = replies.some((item) => item.info.error);
-        content.append(compactionCard(complete ? "ready" : failed ? "error" :
+        target.append(compactionCard(complete ? "ready" : failed ? "error" :
           compactionRunning() ? "busy" : "error"));
         continue;
       }
       const role = message?.info?.role || "assistant";
+      const modelInfo = message.modelInfo || message.info;
+      const modelLabel = modelInfo?.modelID ? modelDisplayName(modelInfo.providerID, modelInfo.modelID) : "";
+      const laterReply = displayMessages.slice(messageIndex + 1).some(item =>
+        item.info?.role === "assistant" && item.info.parentID === message.info?.parentID);
+      const diffs = role === "assistant" && !laterReply
+        ? workspaceTurnDiffs(state.messages, message, activeProject()?.path) : [];
+      const key = JSON.stringify([state.projectId, state.sessionId, message.info?.id || messageIndex]);
+      const signature = JSON.stringify([message, modelLabel, diffs,
+        role === "user" ? [message.info?.id === lastUserMessage()?.info.id, state.sending,
+          state.statuses?.[state.sessionId]?.type] : null,
+        !message.parts.length ? state.statuses?.[state.sessionId]?.type : null,
+        message.parts.filter(part => part.type === "tool").map(skillForTool)]);
+      const cached = existing.get(key);
+      if (cached?.workspaceMessageSignature === signature) {
+        const trigger = cached.querySelector(".wsp-change-summary");
+        if (trigger) changeTriggers.set(message.info.parentID, { trigger, diffs });
+        target.append(cached);
+        continue;
+      }
       const row = el("article", { class: "wsp-message " + (role === "user" ? "user" : "assistant") });
       if (role !== "user") row.append(el("img", { class: "wsp-avatar", src: "sona-code-icon.png", alt: "", width: 30, height: 30 }));
       const body = el("div", { class: "wsp-message-inner" });
-      const modelInfo = message.modelInfo || message.info;
+      row.workspaceMessageKey = key;
+      row.workspaceMessageSignature = signature;
       if (role !== "user") body.append(el("div", { class: "wsp-message-meta" },
         el("strong", { text: "Sona" }),
-        modelInfo?.modelID ? modelDisplayName(modelInfo.providerID, modelInfo.modelID) : ""));
+        modelLabel));
       const parts = message.parts || [];
       const references = role === "user" ? parts.filter(part => part.type === "file" &&
         part.url?.startsWith("file:") && part.filename).map(part => part.filename) : [];
@@ -1279,19 +1315,14 @@ function renderWorkspace(view) {
         }
       }
       flushTools();
-      const laterReply = displayMessages.slice(messageIndex + 1).some(item =>
-        item.info?.role === "assistant" && item.info.parentID === message.info?.parentID);
-      if (role === "assistant" && !laterReply) {
-        const diffs = workspaceTurnDiffs(state.messages, message, activeProject()?.path);
-        if (diffs.length) body.append(changeSummary(message.info.parentID, diffs));
-      }
+      if (diffs.length) body.append(changeSummary(message.info.parentID, diffs));
       const column = el("div", { class: "wsp-message-column" }, body, messageActions(message));
       row.append(column);
-      content.append(row);
+      target.append(row);
     }
     if (state.compactingSessionId === state.sessionId && !state.messages.some((message) =>
       message.info?.role === "user" && message.parts?.some((part) => part.type === "compaction"))) {
-      content.append(compactionCard("busy"));
+      target.append(compactionCard("busy"));
     }
     for (const permission of state.permissions.filter((item) => item.sessionID === state.sessionId)) {
       const card = el("div", { class: "wsp-permission" },
@@ -1302,13 +1333,13 @@ function renderWorkspace(view) {
         actions.append(el("button", { class: cls, type: "button", text: label, onclick: () => replyPermission(permission.id, reply) }));
       }
       card.append(actions);
-      content.append(card);
+      target.append(card);
     }
     for (const question of state.questions.filter((item) => item.sessionID === state.sessionId)) {
-      content.append(questionCard(question));
+      target.append(questionCard(question));
     }
-    if (state.pendingAction) content.append(el("div", { class: "wsp-action-progress", text: `正在执行 ${state.pendingAction}…` }));
-    if (state.actionError) content.append(el("div", { class: "wsp-error", text: state.actionError }));
+    if (state.pendingAction) target.append(el("div", { class: "wsp-action-progress", text: `正在执行 ${state.pendingAction}…` }));
+    if (state.actionError) target.append(el("div", { class: "wsp-error", text: state.actionError }));
   }
 
   function panelIntro(title, description) {
@@ -1705,13 +1736,17 @@ function renderWorkspace(view) {
       trajectoryView?.parentNode === content && trajectorySignature === JSON.stringify(state.recordingData);
     const focusedChangeTrigger = changePopover?.trigger === document.activeElement;
     changeTriggers.clear();
-    if (!keepTrajectory) content.replaceChildren();
+    if (!keepTrajectory && state.tab !== "chat") content.replaceChildren();
     content.classList.remove("wsp-content-trajectory");
     const changeCount = view.querySelector("#wsp-change-count");
     changeCount.textContent = String(state.sessionId ? changedFiles().length : 0);
     changeCount.title = `修改了 ${changeCount.textContent} 个文件`;
     if (state.tab === "trajectory") renderSessionTrajectory();
-    if (state.tab === "chat") renderMessages();
+    if (state.tab === "chat") {
+      const children = [];
+      renderMessages({ append: (...nodes) => children.push(...nodes) });
+      workspaceSyncChildren(content, children);
+    }
     if (state.tab === "changes") renderChanges();
     if (state.tab === "activity") renderActivity();
     if (state.tab === "tasks") renderTasks();
