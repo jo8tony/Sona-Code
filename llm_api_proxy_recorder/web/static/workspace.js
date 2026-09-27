@@ -2,6 +2,28 @@
 /* Headless OpenCode workspace. The existing proxy record pages remain separate. */
 
 let workspaceSelection = { projectId: null, sessionId: null, tab: "chat" };
+const workspaceDrafts = new Map();
+function workspaceConversationKey(projectId, sessionId) {
+  return JSON.stringify([projectId, sessionId || null]);
+}
+function workspaceReadDraft(key) {
+  if (!workspaceDrafts.has(key)) {
+    try {
+      const draft = JSON.parse(sessionStorage.getItem(`sona-code:draft:${key}`) || "null");
+      if (typeof draft?.text === "string") workspaceDrafts.set(key, draft);
+    } catch (_) { /* The in-memory draft remains available without browser storage. */ }
+  }
+  return workspaceDrafts.get(key);
+}
+function workspaceWriteDraft(key, draft) {
+  const present = draft && (draft.text || draft.attachments?.length);
+  if (present) workspaceDrafts.set(key, draft);
+  else workspaceDrafts.delete(key);
+  try {
+    if (present) sessionStorage.setItem(`sona-code:draft:${key}`, JSON.stringify(draft));
+    else sessionStorage.removeItem(`sona-code:draft:${key}`);
+  } catch (_) { /* Large image drafts still survive conversation switches in memory. */ }
+}
 try {
   const saved = JSON.parse(localStorage.getItem("sona-code:workspace-selection") || "null");
   if (saved && typeof saved.projectId === "string") {
@@ -82,7 +104,7 @@ function workspaceTurnDiffs(messages, message, projectPath = "") {
   return [...files.values()];
 }
 
-// Keep unchanged messages attached so polling preserves hover, focus and selection.
+// Keep unchanged nodes attached so polling preserves animations, focus and selection.
 function workspaceSyncChildren(container, children) {
   const retained = new Set(children);
   for (const child of Array.from(container.childNodes)) {
@@ -116,17 +138,31 @@ function renderWorkspace(view) {
   let trajectoryView = null;
   let trajectorySignature = "";
   let changePopover = null;
+  let draftTimer = null;
+  let draftContextReady = false;
+  let statusRefreshing = false;
+  const sendingConversations = new Set();
+  const pendingActions = new Map();
+  const pendingImages = new Map();
+  const statusVersions = new Map();
+  let messageVersion = 0;
+  const sidebarSections = new Map();
+  const sidebarRows = new Map();
   const changeTriggers = new Map();
   const state = {
-    projects: [], sessions: new Map(), sessionDetails: new Map(), errors: new Map(),
+    projects: [], sessions: new Map(), sessionDetails: new Map(), errors: new Map(), projectStatuses: new Map(),
     projectId: workspaceSelection.projectId, sessionId: workspaceSelection.sessionId,
     messages: [], permissions: [], questions: [], questionDrafts: new Map(), questionPages: new Map(),
     questionErrors: new Map(), diffs: [], selectedChange: null, todos: [], children: [], statuses: {},
-    recordingData: null, recordingError: "", check: null, tab: workspaceSelection.tab || "chat", search: "", sending: false, chosenModels: new Map(), defaultModel: null,
+    recordingData: null, recordingError: "", check: null, tab: workspaceSelection.tab || "chat", search: "", chosenModels: new Map(), defaultModel: null,
+    get sending() { return sendingConversations.has(workspaceConversationKey(this.projectId, this.sessionId)); },
+    get pendingAction() { return pendingActions.get(workspaceConversationKey(this.projectId, this.sessionId)) || ""; },
     queue: { items: [], paused: false, error: "" }, queueLoaded: false,
     chosenAgents: new Map(), chosenVariants: new Map(), providers: [], connectedProviders: new Set(), agents: [], commands: [], skills: [], modelLoadError: "",
-    collapsedProjects: new Set(), sessionLimits: new Map(), expandedTools: new Map(), pendingAction: "", actionError: "", compactingSessionId: null,
-    attachments: [], fileReferences: [], pendingImageCount: 0, pendingImageBytes: 0, commandSelectedIndex: 0,
+    collapsedProjects: new Set(), sessionLimits: new Map(), expandedTools: new Map(), actionError: "", compactingSessionId: null,
+    attachments: [], fileReferences: [], commandSelectedIndex: 0,
+    get pendingImageCount() { return pendingImages.get(workspaceConversationKey(this.projectId, this.sessionId))?.count || 0; },
+    get pendingImageBytes() { return pendingImages.get(workspaceConversationKey(this.projectId, this.sessionId))?.bytes || 0; },
   };
 
   view.innerHTML = `
@@ -160,6 +196,26 @@ function renderWorkspace(view) {
   const composerDock = view.querySelector(".wsp-composer-dock");
   composerDock.hidden = state.tab !== "chat";
   const composer = createWorkspaceComposer(input, skillMention, fileMention);
+  function saveDraft() {
+    if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+    if (!state.projectId || !draftContextReady) return;
+    workspaceWriteDraft(workspaceConversationKey(state.projectId, state.sessionId), {
+      ...composer.snapshot(), attachments: state.attachments.map(item => ({ ...item })),
+    });
+  }
+  function scheduleDraftSave() {
+    if (draftTimer) clearTimeout(draftTimer);
+    draftTimer = setTimeout(saveDraft, 180);
+  }
+  function restoreDraft() {
+    draftContextReady = true;
+    const draft = workspaceReadDraft(workspaceConversationKey(state.projectId, state.sessionId));
+    composer.restore(draft);
+    state.attachments = (draft?.attachments || []).map(item => ({ ...item }));
+    state.fileReferences = composer.fileReferences;
+    state.actionError = "";
+    updateSkillInput(); renderAttachments();
+  }
   const attachmentList = view.querySelector("#wsp-attachment-list");
   const statsLine = view.querySelector("#wsp-stats");
   const modelButton = view.querySelector("#wsp-model-trigger");
@@ -286,6 +342,7 @@ function renderWorkspace(view) {
   }
 
   addCleanup(() => {
+    saveDraft();
     disposed = true;
     if (events) events.close();
     if (refreshTimer) clearTimeout(refreshTimer);
@@ -310,7 +367,7 @@ function renderWorkspace(view) {
 
   function activeProject() { return state.projects.find((item) => item.id === state.projectId); }
   function activeSession() {
-    return state.sessionDetails.get(state.sessionId) ||
+    return state.sessionDetails.get(workspaceConversationKey(state.projectId, state.sessionId)) ||
       (state.sessions.get(state.projectId) || []).find((item) => item.id === state.sessionId);
   }
   function sessionTitle(session) {
@@ -328,14 +385,6 @@ function renderWorkspace(view) {
     const day = sameDay(date, today) ? "今天" : sameDay(date, yesterday) ? "昨天" : date.toLocaleDateString("zh-CN", { month: "long", day: "numeric" });
     return `更新于${day} ${date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
   }
-  function shortStamp(session) {
-    const value = session?.time?.updated || session?.time?.created;
-    if (!value) return "";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "";
-    return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
-  }
-
   function compactionRunning() {
     if (!state.sessionId) return false;
     if (state.compactingSessionId === state.sessionId) return true;
@@ -447,7 +496,8 @@ function renderWorkspace(view) {
         if (withdraw.disabled || state.sending) return;
         if (!confirm("撤回最后一轮用户消息及模型回复，并将提问回填到输入框？项目文件修改会保留，当前输入框内容会被替换。")) return;
         withdraw.disabled = true;
-        state.sending = true;
+        const operationKey = workspaceConversationKey(projectId, sessionId);
+        sendingConversations.add(operationKey);
         renderHeader();
         try {
           await api(`${sessionPath(projectId, sessionId)}/withdraw`, {
@@ -461,7 +511,7 @@ function renderWorkspace(view) {
           renderMain();
           await refreshSelected();
         } catch (error) { toast("撤回失败：" + detail(error), "error"); }
-        finally { state.sending = false; if (alive()) { renderHeader(); renderMain(); } }
+        finally { sendingConversations.delete(operationKey); if (alive()) { renderHeader(); renderMain(); } }
       });
       withdraw.disabled = state.sending || state.statuses?.[sessionId]?.type === "busy" ||
         state.statuses?.[sessionId]?.type === "retry";
@@ -536,7 +586,7 @@ function renderWorkspace(view) {
       const promptTokens = numeric(usage.input) + numeric(cache.read) + numeric(cache.write);
       inputTokens += promptTokens;
       outputTokens += numeric(usage.output);
-      if (usage.input != null || usage.output != null || cache.read != null || cache.write != null) {
+      if (promptTokens + numeric(usage.output) + numeric(usage.reasoning) > 0) {
         const sampleTime = timestamp(info.time?.created) ?? messageIndex;
         if (sampleTime >= latestContextTime) {
           contextSample = { info, usage, promptTokens };
@@ -565,8 +615,8 @@ function renderWorkspace(view) {
       const contextWindow = numeric(model?.limit?.context);
       const used = promptTokens + numeric(usage.output) + numeric(usage.reasoning);
       if (contextWindow > 0) {
-        const percent = Math.min(100, Math.round(used / contextWindow * 100));
-        contextGroup = el("span", { class: "wsp-stat-context", title: "按最近一次模型请求的 Token 用量和模型上下文上限估算",
+        const percent = Math.round(used / contextWindow * 100);
+        contextGroup = el("span", { class: "wsp-stat-context", title: "OpenCode 最近一次有效模型用量（含输出、推理和缓存 Token）；模型调用结束时更新",
           text: `上下文 ${formatTokens(used)} / ${formatTokens(contextWindow)} · ${percent}%` });
       }
     }
@@ -595,7 +645,7 @@ function renderWorkspace(view) {
         el("button", { type: "button", title: `移除 ${attachment.filename}`, "aria-label": `移除 ${attachment.filename}`,
           text: "×", onclick: () => {
             state.attachments = state.attachments.filter((item) => item.id !== attachment.id);
-            renderAttachments();
+            renderAttachments(); saveDraft();
           } }));
       attachmentList.append(preview);
     }
@@ -616,6 +666,9 @@ function renderWorkspace(view) {
     if (state.sending) { toast("消息发送中，稍后再添加图片", "error"); return; }
     const projectId = state.projectId;
     const sessionId = state.sessionId;
+    const key = workspaceConversationKey(projectId, sessionId);
+    const pending = pendingImages.get(key) || { count: 0, bytes: 0 };
+    pendingImages.set(key, pending);
     const acceptedTypes = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
     for (const file of files) {
       if (!file) continue;
@@ -624,19 +677,25 @@ function renderWorkspace(view) {
       const totalBytes = state.attachments.reduce((sum, item) => sum + item.size, 0) + state.pendingImageBytes;
       if (state.attachments.length + state.fileReferences.length + state.pendingImageCount >= 8) { toast("一条消息最多添加 8 个附件或文件引用", "error"); break; }
       if (totalBytes + file.size > 20 * 1024 * 1024) { toast("图片总大小不能超过 20 MB", "error"); continue; }
-      state.pendingImageCount += 1;
-      state.pendingImageBytes += file.size;
+      pending.count += 1;
+      pending.bytes += file.size;
       renderHeader();
       try {
         const url = await readImage(file);
-        if (!alive() || projectId !== state.projectId || sessionId !== state.sessionId) return;
-        state.attachments.push({ id: `${Date.now()}-${Math.random()}`, filename: (file.name || `粘贴图片.${file.type.split("/")[1] || "png"}`).replace(/[\\/]/g, "_"),
-          mime: file.type, url, size: file.size });
-        renderAttachments();
+        if (!alive()) return;
+        const attachment = { id: `${Date.now()}-${Math.random()}`, filename: (file.name || `粘贴图片.${file.type.split("/")[1] || "png"}`).replace(/[\\/]/g, "_"),
+          mime: file.type, url, size: file.size };
+        if (projectId !== state.projectId || sessionId !== state.sessionId) {
+          const draft = workspaceReadDraft(key) || { text: "", references: [], attachments: [] };
+          workspaceWriteDraft(key, { ...draft, attachments: [...(draft.attachments || []), attachment] });
+          return;
+        }
+        state.attachments.push(attachment);
+        renderAttachments(); saveDraft();
       } catch (error) { toast(detail(error), "error"); }
       finally {
-        state.pendingImageCount = Math.max(0, state.pendingImageCount - 1);
-        state.pendingImageBytes = Math.max(0, state.pendingImageBytes - file.size);
+        pending.count = Math.max(0, pending.count - 1);
+        pending.bytes = Math.max(0, pending.bytes - file.size);
         if (alive()) renderHeader();
       }
     }
@@ -717,7 +776,7 @@ function renderWorkspace(view) {
               const updated = await api(`${sessionPath(projectId, session.id)}`, {
                 method: "PATCH", body: { title }, silent: true,
               });
-              state.sessionDetails.set(session.id, updated);
+              state.sessionDetails.set(workspaceConversationKey(projectId, session.id), updated);
               mask.remove();
               await loadSessions(state.projects.find((item) => item.id === projectId));
               if (state.projectId === projectId && state.sessionId === session.id) renderHeader();
@@ -772,9 +831,12 @@ function renderWorkspace(view) {
       }
       if (action === "delete") {
         await api(base, { method: "DELETE", silent: true });
-        state.sessionDetails.delete(session.id);
+        workspaceWriteDraft(workspaceConversationKey(projectId, session.id), null);
+        state.sessionDetails.delete(workspaceConversationKey(projectId, session.id));
         if (state.projectId === projectId && state.sessionId === session.id) {
           state.sessionId = null;
+          restoreDraft();
+          state.queue = { items: [], paused: false, error: "" }; state.queueLoaded = false;
           workspaceSelection.sessionId = null;
           persistWorkspaceSelection();
           state.messages = [];
@@ -809,7 +871,9 @@ function renderWorkspace(view) {
 
   function renderSidebar() {
     closeRowMenus();
-    sideList.replaceChildren();
+    const sections = [];
+    const sectionKeys = new Set();
+    const rowKeys = new Set();
     view.querySelector("#wsp-project-count").textContent = `${state.projects.length} 个项目`;
     const query = state.search.trim().toLocaleLowerCase();
     let visible = 0;
@@ -820,7 +884,14 @@ function renderWorkspace(view) {
       if (query && !projectMatches && !sessions.length) continue;
       visible++;
       const collapsed = state.collapsedProjects.has(project.id) && !query;
-      const section = el("section", { class: "wsp-project" + (collapsed ? " collapsed" : "") });
+      sectionKeys.add(project.id);
+      let cached = sidebarSections.get(project.id);
+      if (!cached) {
+        cached = {section: el("section"), threads: el("div", {class: "wsp-threads"})};
+        sidebarSections.set(project.id, cached);
+      }
+      const {section, threads} = cached;
+      section.className = "wsp-project" + (collapsed ? " collapsed" : "");
       const heading = el("button", { class: "wsp-project-head", type: "button", title: project.path,
         "aria-expanded": String(!collapsed), onclick: () => {
           state.sessionLimits.delete(project.id);
@@ -839,33 +910,54 @@ function renderWorkspace(view) {
         el("button", { class: "wsp-row-action wsp-row-plus", type: "button", text: "+",
           title: `在 ${project.name} 中新建对话`, "aria-label": `在 ${project.name} 中新建对话`,
           onclick: () => { state.collapsedProjects.delete(project.id); renderSidebar(); createSession(project.id); } }));
-      section.append(projectRow);
-      const threads = el("div", { class: "wsp-threads" });
+      const threadNodes = [];
       if (state.errors.has(project.id)) {
-        threads.append(el("div", { class: "wsp-error", text: state.errors.get(project.id) }));
+        threadNodes.push(el("div", { class: "wsp-error", text: state.errors.get(project.id) }));
       } else if (!all) {
-        threads.append(el("div", { class: "wsp-thread-time", text: "点击项目读取对话" }));
+        threadNodes.push(el("div", { class: "wsp-thread-time", text: "点击项目读取对话" }));
       } else if (all && !sessions.length) {
-        threads.append(el("div", { class: "wsp-thread-time", text: query ? "无匹配对话" : "暂无对话" }));
+        threadNodes.push(el("div", { class: "wsp-thread-time", text: query ? "无匹配对话" : "暂无对话" }));
       }
       const limit = state.sessionLimits.get(project.id) || 6;
       for (const session of sessions.slice(0, limit)) {
-        const threadButton = el("button", {
-          class: "wsp-thread" + (session.parentID ? " child" : "") +
-            (project.id === state.projectId && session.id === state.sessionId ? " active" : ""),
-          type: "button", title: sessionTitle(session),
-          onclick: () => selectSession(project.id, session.id),
-        }, el("span", { class: "wsp-thread-line" },
-          el("span", { class: "wsp-thread-title", text: `${session.parentID ? "↳ " : ""}${sessionTitle(session)}` }),
-          el("span", { class: "wsp-thread-time", title: "对话最后更新时间", text: shortStamp(session) })),
-        el("span", { class: "wsp-thread-preview", text: stamp(session) }));
-        threads.append(el("div", { class: "wsp-thread-row" }, threadButton,
-          rowMenu([["重命名", () => performSessionAction(project.id, session, "rename")],
-            ["分叉会话", () => performSessionAction(project.id, session, "fork")],
-            ["删除", () => performSessionAction(project.id, session, "delete")]])));
+        const status = state.projectStatuses.get(project.id)?.[session.id];
+        const running = ["busy", "retry"].includes(status?.type);
+        const key = workspaceConversationKey(project.id, session.id);
+        rowKeys.add(key);
+        let row = sidebarRows.get(key);
+        if (!row) {
+          const title = el("span", {class: "wsp-thread-title"});
+          const preview = el("span", {class: "wsp-thread-preview"});
+          const text = el("span", {class: "wsp-thread-text"},
+            el("span", {class: "wsp-thread-line"}, title), preview);
+          const button = el("button", {type: "button", onclick: () => selectSession(project.id, session.id)}, text);
+          row = {node: el("div", {class: "wsp-thread-row"}, button), button, title, preview, indicator: null};
+          sidebarRows.set(key, row);
+        }
+        row.button.className = "wsp-thread" + (session.parentID ? " child" : "") +
+          (project.id === state.projectId && session.id === state.sessionId ? " active" : "");
+        row.button.title = sessionTitle(session);
+        row.title.textContent = `${session.parentID ? "↳ " : ""}${sessionTitle(session)}`;
+        row.preview.textContent = stamp(session);
+        if (running && !row.indicator) {
+          row.indicator = el("span", {class: "wsp-thread-running", role: "img"}, statusIcon("busy"));
+          row.button.append(row.indicator);
+        } else if (!running && row.indicator) {
+          row.indicator.remove(); row.indicator = null;
+        }
+        if (row.indicator) {
+          const label = status.type === "retry" ? "正在重试" : "正在运行";
+          row.indicator.title = label; row.indicator.setAttribute("aria-label", label);
+        }
+        // Menus capture current session metadata; the button and spinner stay attached.
+        const menu = rowMenu([["重命名", () => performSessionAction(project.id, session, "rename")],
+          ["分叉会话", () => performSessionAction(project.id, session, "fork")],
+          ["删除", () => performSessionAction(project.id, session, "delete")]]);
+        workspaceSyncChildren(row.node, [row.button, menu]);
+        threadNodes.push(row.node);
       }
       if (sessions.length > limit) {
-        threads.append(el("button", {
+        threadNodes.push(el("button", {
           class: "wsp-show-more", type: "button", text: "展示更多",
           onclick: () => {
             state.sessionLimits.set(project.id, limit + 6);
@@ -873,12 +965,16 @@ function renderWorkspace(view) {
           },
         }));
       }
-      section.append(threads);
-      sideList.append(section);
+      workspaceSyncChildren(threads, threadNodes);
+      workspaceSyncChildren(section, [projectRow, threads]);
+      sections.push(section);
     }
-    if (query && !visible) sideList.append(el("p", { class: "wsp-empty-search", text: "没有找到匹配的项目或对话。" }));
-    else if (!state.projects.length) sideList.append(el("div", { class: "wsp-empty", style: "min-height:200px" },
+    if (query && !visible) sections.push(el("p", { class: "wsp-empty-search", text: "没有找到匹配的项目或对话。" }));
+    else if (!state.projects.length) sections.push(el("div", { class: "wsp-empty", style: "min-height:200px" },
       el("p", { text: "还没有项目。点击上方按钮选择已有目录。" })));
+    workspaceSyncChildren(sideList, sections);
+    for (const key of sidebarSections.keys()) if (!sectionKeys.has(key)) sidebarSections.delete(key);
+    for (const key of sidebarRows.keys()) if (!rowKeys.has(key)) sidebarRows.delete(key);
   }
 
   function renderHeader() {
@@ -1783,6 +1879,7 @@ function renderWorkspace(view) {
   }
 
   async function loadSessions(project) {
+    if (!project) return;
     try {
       const data = await api(`workspace/projects/${encodeURIComponent(project.id)}/sessions`, { silent: true });
       if (!alive()) return;
@@ -1792,13 +1889,15 @@ function renderWorkspace(view) {
       if (state.projectId === project.id) lastSessionListRefresh = Date.now();
       state.errors.delete(project.id);
       if (state.projectId === project.id && !items.some((item) => item.id === state.sessionId) &&
-          !state.sessionDetails.has(state.sessionId)) {
+          !state.sessionDetails.has(workspaceConversationKey(project.id, state.sessionId))) {
+        saveDraft();
         state.sessionId = items[0]?.id || null;
+        restoreDraft();
         scrollToLatestOnLoad = true;
         workspaceSelection.sessionId = state.sessionId;
         persistWorkspaceSelection();
         refreshSelected();
-      } else if (state.projectId === project.id && !state.sessionDetails.has(state.sessionId)) {
+      } else if (state.projectId === project.id && !state.sessionDetails.has(workspaceConversationKey(project.id, state.sessionId))) {
         refreshSelected();
       }
       renderSidebar();
@@ -2304,6 +2403,16 @@ function renderWorkspace(view) {
     return false;
   }
 
+  function applyMessageEvent(projectId, update) {
+    const info = update.type === "message.updated" ? update.properties?.info : null;
+    if (!info?.id || !info.sessionID || projectId !== state.projectId || info.sessionID !== state.sessionId) return;
+    const message = state.messages.find(item => item.info?.id === info.id);
+    if (message) message.info = {...message.info, ...info};
+    else state.messages.push({info, parts: []});
+    messageVersion++;
+    renderStatsLine();
+  }
+
   function connectEvents(projectId) {
     if (eventProjectId === projectId) return;
     if (events) events.close();
@@ -2312,9 +2421,19 @@ function renderWorkspace(view) {
     if (!projectId || typeof EventSource === "undefined") return;
     events = new EventSource(`api/workspace/projects/${encodeURIComponent(projectId)}/events`);
     events.onmessage = (event) => {
+      if (!alive() || state.projectId !== projectId) return;
       scheduleRefresh();
       try {
         const update = JSON.parse(event.data);
+        applyMessageEvent(projectId, update);
+        if (update.type === "session.status" && update.properties?.sessionID && update.properties?.status) {
+          const statuses = { ...(state.projectStatuses.get(projectId) || {}),
+            [update.properties.sessionID]: update.properties.status };
+          state.projectStatuses.set(projectId, statuses);
+          statusVersions.set(projectId, (statusVersions.get(projectId) || 0) + 1);
+          state.statuses = statuses;
+          renderSidebar(); renderHeader();
+        }
         if (update.type === "session.updated" && Date.now() - lastSessionListRefresh > 700) {
           const project = activeProject();
           if (project) loadSessions(project);
@@ -2330,6 +2449,28 @@ function renderWorkspace(view) {
     refreshTimer = setTimeout(() => { refreshTimer = null; refreshSelected(); }, 120);
   }
 
+  async function refreshWorkspaceStatuses() {
+    if (!alive() || statusRefreshing) return;
+    statusRefreshing = true;
+    const versions = new Map(statusVersions);
+    try {
+      const result = await api("workspace/status", { silent: true });
+      if (!alive()) return;
+      let changed = false;
+      for (const [projectId, entry] of Object.entries(result.projects || {})) {
+        if (entry.error) continue;
+        if (versions.get(projectId) !== statusVersions.get(projectId)) continue;
+        const statuses = entry.statuses || {};
+        if (JSON.stringify(state.projectStatuses.get(projectId)) !== JSON.stringify(statuses)) changed = true;
+        state.projectStatuses.set(projectId, statuses);
+        if (projectId === state.projectId) state.statuses = statuses;
+      }
+      if (changed) renderSidebar();
+      renderHeader();
+    } catch (_) { /* Keep the last known states until the next poll succeeds. */ }
+    finally { statusRefreshing = false; }
+  }
+
   async function refreshSelected() {
     if (!alive() || !state.projectId || !state.sessionId) return;
     if (refreshing) { refreshRequested = true; return; }
@@ -2338,6 +2479,8 @@ function renderWorkspace(view) {
     const sessionId = state.sessionId;
     const base = sessionPath(projectId, sessionId);
     const queueVersion = queueUpdateVersion;
+    const statusVersion = statusVersions.get(projectId);
+    const messagesVersion = messageVersion;
     try {
       const [messages, statuses, permissions, questions, diffs, todos, children, session, recording, queue] = await Promise.allSettled([
         api(`${base}/messages`, { silent: true }),
@@ -2355,17 +2498,23 @@ function renderWorkspace(view) {
       if (queue.status === "fulfilled" && queueVersion === queueUpdateVersion) { state.queue = queue.value; state.queueLoaded = true; }
       if (recording.status === "fulfilled") { state.recordingData = recording.value; state.recordingError = ""; }
       else state.recordingError = detail(recording.reason);
-      if (messages.status === "fulfilled") state.messages = Array.isArray(messages.value) ? messages.value : [];
-      if (statuses.status === "fulfilled") state.statuses = statuses.value || {};
+      if (messages.status === "fulfilled" && messagesVersion === messageVersion) state.messages = Array.isArray(messages.value) ? messages.value : [];
+      if (statuses.status === "fulfilled" && statusVersion === statusVersions.get(projectId)) {
+        state.statuses = statuses.value || {};
+        const changed = JSON.stringify(state.projectStatuses.get(projectId)) !== JSON.stringify(state.statuses);
+        state.projectStatuses.set(projectId, state.statuses);
+        statusVersions.set(projectId, (statusVersions.get(projectId) || 0) + 1);
+        if (changed) renderSidebar();
+      }
       if (permissions.status === "fulfilled") state.permissions = Array.isArray(permissions.value) ? permissions.value : [];
       if (questions.status === "fulfilled") state.questions = Array.isArray(questions.value) ? questions.value : [];
       if (diffs.status === "fulfilled") state.diffs = Array.isArray(diffs.value) ? diffs.value : [];
       if (todos.status === "fulfilled") state.todos = Array.isArray(todos.value) ? todos.value : [];
       if (children.status === "fulfilled") {
         state.children = Array.isArray(children.value) ? children.value : [];
-        for (const child of state.children) state.sessionDetails.set(child.id, child);
+        for (const child of state.children) state.sessionDetails.set(workspaceConversationKey(projectId, child.id), child);
       }
-      if (session.status === "fulfilled" && session.value?.id) state.sessionDetails.set(session.value.id, session.value);
+      if (session.status === "fulfilled" && session.value?.id) state.sessionDetails.set(workspaceConversationKey(projectId, session.value.id), session.value);
       if (messages.status === "rejected") content.replaceChildren(el("div", { class: "wsp-error", text: detail(messages.reason) }));
       else {
         renderMain(scrollToLatestOnLoad);
@@ -2379,21 +2528,20 @@ function renderWorkspace(view) {
   }
 
   function selectProject(projectId) {
+    saveDraft();
     hideAutocomplete();
     scrollToLatestOnLoad = true;
     state.projectId = projectId;
     state.queue = { items: [], paused: false, error: "" }; state.queueLoaded = false;
     state.skills = []; state.commands = []; updateSkillInput();
-    composer.clearFileReferences();
-    state.attachments = [];
-    state.fileReferences = [];
-    renderAttachments();
     if (!state.chosenModels.has(projectId)) {
       try { state.chosenModels.set(projectId, localStorage.getItem(`sona-code:model:${projectId}`) || ""); }
       catch (_) { state.chosenModels.set(projectId, ""); }
     }
     const remembered = workspaceSelection.projectId === projectId ? workspaceSelection.sessionId : null;
     state.sessionId = remembered || (state.sessions.get(projectId) || [])[0]?.id || null;
+    state.statuses = state.projectStatuses.get(projectId) || {};
+    restoreDraft();
     closeChangePopover();
     state.selectedChange = null;
     state.messages = []; state.permissions = []; state.questions = []; state.questionDrafts.clear(); state.diffs = []; state.todos = []; state.children = [];
@@ -2416,20 +2564,20 @@ function renderWorkspace(view) {
   }
 
   function selectSession(projectId, sessionId) {
+    if (draftContextReady && state.projectId === projectId && state.sessionId === sessionId) return;
+    saveDraft();
     hideAutocomplete();
     scrollToLatestOnLoad = true;
     state.projectId = projectId;
     state.queue = { items: [], paused: false, error: "" }; state.queueLoaded = false;
     state.skills = []; state.commands = []; updateSkillInput();
-    composer.clearFileReferences();
-    state.attachments = [];
-    state.fileReferences = [];
-    renderAttachments();
     if (!state.chosenModels.has(projectId)) {
       try { state.chosenModels.set(projectId, localStorage.getItem(`sona-code:model:${projectId}`) || ""); }
       catch (_) { state.chosenModels.set(projectId, ""); }
     }
     state.sessionId = sessionId;
+    state.statuses = state.projectStatuses.get(projectId) || {};
+    restoreDraft();
     closeChangePopover();
     state.selectedChange = null;
     state.messages = []; state.permissions = []; state.questions = []; state.questionDrafts.clear(); state.diffs = []; state.todos = []; state.children = [];
@@ -2615,14 +2763,16 @@ function renderWorkspace(view) {
       state.sessions.delete(project.id);
       state.errors.delete(project.id);
       if (state.projectId === project.id) {
+        saveDraft();
         state.projectId = null; state.sessionId = null; state.messages = [];
+        draftContextReady = false;
         state.selectedChange = null;
         closeChangePopover();
         workspaceSelection = { projectId: null, sessionId: null };
         persistWorkspaceSelection();
         connectEvents(null);
         if (state.projects.length) selectProject(state.projects[0].id);
-        else { renderSidebar(); renderHeader(); renderMain(); }
+        else { restoreDraft(); renderSidebar(); renderHeader(); renderMain(); }
       } else renderSidebar();
     } catch (error) { toast("删除工作区失败：" + detail(error), "error"); }
   }
@@ -2781,15 +2931,21 @@ function renderWorkspace(view) {
     const agent = agentSelect.value || "build";
     const files = state.attachments.map(({ filename, mime, url }) => ({ filename, mime, url }));
     const references = state.fileReferences.map(({ path }) => ({ path }));
-    state.sending = true; renderHeader();
+    const sendKey = workspaceConversationKey(state.projectId, state.sessionId);
+    let operationKey = sendKey;
+    const originalDraft = { ...composer.snapshot(), attachments: state.attachments.map(item => ({ ...item })) };
+    saveDraft();
+    sendingConversations.add(sendKey); renderHeader();
     hideAutocomplete();
     state.actionError = "";
     try {
       if (slash && await executeBuiltIn(slash[1])) return;
       const { projectId, sessionId } = await ensureSessionForSend();
+      operationKey = workspaceConversationKey(projectId, sessionId);
+      sendingConversations.add(operationKey);
       const base = sessionPath(projectId, sessionId);
       if (shell) {
-        state.pendingAction = `!${shell}`;
+        pendingActions.set(workspaceConversationKey(projectId, sessionId), `!${shell}`);
         state.actionError = "";
         renderMain();
       }
@@ -2809,21 +2965,31 @@ function renderWorkspace(view) {
         applyQueue(queue, projectId, sessionId);
       }
       if (!alive()) return;
+      const deliveredKey = workspaceConversationKey(projectId, sessionId);
+      const saved = workspaceReadDraft(sendKey);
+      if (JSON.stringify(saved) === JSON.stringify(originalDraft)) workspaceWriteDraft(sendKey, null);
+      if (sendKey !== deliveredKey && JSON.stringify(workspaceReadDraft(deliveredKey)) === JSON.stringify(originalDraft)) {
+        workspaceWriteDraft(deliveredKey, null);
+      }
       if (state.projectId === projectId && state.sessionId === sessionId) {
         if (composer.value.trim() === text) composer.value = "";
         updateSkillInput();
         state.attachments = [];
         state.fileReferences = composer.fileReferences;
         renderAttachments();
+        saveDraft();
       }
+      refreshWorkspaceStatuses();
       await loadSessions(state.projects.find((project) => project.id === projectId));
       await refreshSelected();
     } catch (error) {
-      state.actionError = `操作失败：${detail(error)}`;
-      toast(state.actionError, "error");
+      const failure = `操作失败：${detail(error)}`;
+      if (workspaceConversationKey(state.projectId, state.sessionId) === sendKey) state.actionError = failure;
+      toast(failure, "error");
     } finally {
-      state.pendingAction = "";
-      state.sending = false;
+      pendingActions.delete(operationKey);
+      sendingConversations.delete(operationKey);
+      sendingConversations.delete(sendKey);
       if (alive()) { updateSkillInput(); renderHeader(); renderMain(); }
     }
   });
@@ -2835,7 +3001,7 @@ function renderWorkspace(view) {
     return true;
   }
 
-  input.addEventListener("input", () => { consumeMenuCommand(); updateSkillInput(); commandPaletteOpen = false; state.commandSelectedIndex = 0; renderCommandMenu(); });
+  input.addEventListener("input", () => { consumeMenuCommand(); updateSkillInput(); commandPaletteOpen = false; state.commandSelectedIndex = 0; renderCommandMenu(); scheduleDraftSave(); });
   input.addEventListener("click", () => { commandPaletteOpen = false; renderCommandMenu(); });
   input.addEventListener("keyup", (event) => {
     if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) renderCommandMenu();
@@ -2857,7 +3023,7 @@ function renderWorkspace(view) {
     if (files.length) void addImageFiles(files);
   });
   input.addEventListener("compositionstart", () => { composingInput = true; updateSkillInput(); });
-  input.addEventListener("compositionend", () => { composingInput = false; consumeMenuCommand(); updateSkillInput(); renderCommandMenu(); });
+  input.addEventListener("compositionend", () => { composingInput = false; consumeMenuCommand(); updateSkillInput(); renderCommandMenu(); scheduleDraftSave(); });
   input.addEventListener("keydown", (event) => {
     if (event.key === "Escape") { hideAutocomplete(); return; }
     const composing = composingInput || event.isComposing || event.keyCode === 229;
@@ -2903,13 +3069,16 @@ function renderWorkspace(view) {
   });
 
   const poll = setInterval(() => {
-    if (!alive() || !state.sessionId) return;
+    if (!alive()) return;
+    refreshWorkspaceStatuses();
     refreshSelected();
     if (Date.now() - lastSessionListRefresh > 15000) {
       const project = activeProject();
       if (project) loadSessions(project);
     }
   }, 2500);
+  window.addEventListener("pagehide", saveDraft);
+  addCleanup(() => window.removeEventListener("pagehide", saveDraft));
   updateModelButton();
   updateSidebarButton();
   (async () => {
@@ -2921,6 +3090,7 @@ function renderWorkspace(view) {
       state.projects = projects.items || [];
       state.collapsedProjects = new Set(state.projects.map((project) => project.id));
       state.check = check;
+      refreshWorkspaceStatuses();
       const selected = state.projects.find((item) => item.id === state.projectId) || state.projects[0];
       renderSidebar();
       if (selected) selectProject(selected.id);

@@ -114,6 +114,14 @@ class AddProjectBody(BaseModel):
     path: str = Field(min_length=1)
 
 
+@router.get("/workspace/status")
+async def workspace_status(request: Request) -> dict:
+    runtime = request.app.state.runtime
+    active = await runtime.workspace.running_statuses()
+    return {"projects": {item["id"]: active.get(item["path"], {"statuses": {}})
+                         for item in map(_project_info, runtime.terminal_projects.list())}}
+
+
 @router.post("/workspace/projects", status_code=201)
 def add_project(body: AddProjectBody, request: Request) -> dict:
     path = Path(body.path).expanduser().resolve()
@@ -321,8 +329,21 @@ async def project_models(project_id: str, request: Request):
     cfg = request.app.state.runtime.config
     providers = application_catalog(cfg)
     connected = []
-    if cfg.model_settings.show_native_models:
+    try:
         data = await _opencode(request, path, "GET", "/config/providers")
+    except HTTPException:
+        if cfg.model_settings.show_native_models:
+            raise
+        data = {}
+    native = {item.get("id"): item for item in data.get("providers", []) if isinstance(item, dict)}
+    # Only copy the public context limit; native options may contain credentials.
+    for provider in providers:
+        models = native.get(provider["id"], {}).get("models") or {}
+        for model_id, model in provider["models"].items():
+            context = models.get(model_id, {}).get("limit", {}).get("context")
+            if isinstance(context, (int, float)) and not isinstance(context, bool) and context > 0:
+                model.setdefault("limit", {})["context"] = context
+    if cfg.model_settings.show_native_models:
         auth = await _opencode(request, path, "GET", "/provider")
         providers.extend(public_native_catalog(data))
         connected = auth.get("connected", []) if isinstance(auth, dict) else []

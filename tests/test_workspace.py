@@ -500,27 +500,43 @@ const blocked = vm.createContext({localStorage: {
 vm.runInContext(selectionSource + "persistWorkspaceSelection();", blocked);
 
 function el(tag, props = {}, ...children) {
-  return {tag, ...props, children, append(...items) {this.children.push(...items);},
-    replaceChildren(...items) {this.children = items;}};
+  const node = {tag, ...props, children: [], get childNodes() {return this.children;},
+    append(...items) {for (const item of items) this.insertBefore(item, null);},
+    insertBefore(item, before) {item.remove(); const index = before ? this.children.indexOf(before) : this.children.length;
+      this.children.splice(index,0,item); item.parent=this;},
+    remove() {if (this.parent) {this.parent.children.splice(this.parent.children.indexOf(this),1);this.parent=null;}},
+    setAttribute(key,value) {this[key]=value;},
+    replaceChildren(...items) {for (const item of [...this.children]) item.remove(); this.append(...items);}};
+  node.append(...children); return node;
 }
 const sideList = el("div");
 const project = {id: "project", name: "Project", path: "/project"};
 const state = {
   projects: [project], sessions: new Map([[project.id, Array.from({length: 14}, (_, i) => ({id: `session-${i}`, title: `Session ${i}`}))]]),
   projectId: project.id, sessionId: "session-9", search: "", collapsedProjects: new Set(),
-  sessionLimits: new Map(), errors: new Map(),
+  sessionLimits: new Map(), errors: new Map(), projectStatuses: new Map(),
 };
 const context = vm.createContext({state, sideList, el, closeRowMenus() {},
+  sidebarSections: new Map(), sidebarRows: new Map(), workspaceConversationKey: (p,s) => JSON.stringify([p,s]), statusIcon: () => el("svg"),
   view: {querySelector() {return {}; }}, rowMenu: () => el("div"),
   sessionTitle: s => s.title, shortStamp: () => "", stamp: () => ""});
 const sidebarSource = source.slice(source.indexOf("  function renderSidebar() {"), source.indexOf("  function renderHeader() {"));
-vm.runInContext(sidebarSource, context);
+vm.runInContext(source.slice(source.indexOf("function workspaceSyncChildren("), source.indexOf("function renderWorkspace(")) + sidebarSource, context);
 const render = () => vm.runInContext("renderSidebar()", context);
 const threads = () => sideList.children[0].children[1];
 const rows = () => threads().children.filter(x => x.class === "wsp-thread-row");
 const more = () => threads().children.find(x => x.class === "wsp-show-more");
 render();
 assert.equal(rows().length, 6);
+state.projectStatuses.set(project.id, {"session-0": {type:"busy"}}); render();
+const firstRow = rows()[0], spinner = firstRow.children[0].children[1];
+render();
+assert.equal(rows()[0], firstRow); assert.equal(rows()[0].children[0].children[1], spinner);
+assert.equal(spinner.parent, firstRow.children[0]);
+assert.equal(firstRow.children[0].children[0].children.length, 2); // Title and single timestamp.
+state.projectStatuses.set(project.id, {"session-0": {type:"retry"}}); render();
+assert.equal(firstRow.children[0].children[1], spinner); assert.equal(spinner.title, "正在重试");
+state.projectStatuses.set(project.id, {}); render(); assert.equal(spinner.parent, null);
 more().onclick();
 assert.equal(rows().length, 12);
 more().onclick();
@@ -539,10 +555,10 @@ assert.equal(rows().length, 1);
 assert.equal(more(), undefined);
 
 let refreshes = 0;
-const loadContext = vm.createContext({state, workspaceSelection: {sessionId: "session-9"},
+const loadContext = vm.createContext({state, workspaceConversationKey: (p,s) => JSON.stringify([p,s]), workspaceSelection: {sessionId: "session-9"},
   api: async () => ({items: state.sessions.get(project.id)}), alive: () => true,
   scrollToLatestOnLoad: false, lastSessionListRefresh: 0,
-  persistWorkspaceSelection() {}, refreshSelected() {refreshes++;}, renderSidebar() {}, renderHeader() {},
+  saveDraft() {}, restoreDraft() {}, persistWorkspaceSelection() {}, refreshSelected() {refreshes++;}, renderSidebar() {}, renderHeader() {},
 });
 state.sessionDetails = new Map();
 const loadSource = source.slice(source.indexOf("  async function loadSessions(project) {"), source.indexOf("  function modelDisplayName("));

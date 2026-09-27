@@ -166,6 +166,28 @@ function createWorkspaceComposer(input, createMention, createFileMention) {
   return {
     get value() { return value(); },
     set value(text) { input.replaceChildren(...(text ? [textNode(text)] : [])); },
+    snapshot() {
+      return { text: value(), references: Array.from(input.querySelectorAll("[data-file-path]"), mention => ({
+        path: mention.dataset.filePath,
+        start: offsetAt(mention.parentNode, Array.prototype.indexOf.call(mention.parentNode.childNodes, mention)),
+      })) };
+    },
+    restore(draft) {
+      const text = typeof draft?.text === "string" ? draft.text : "";
+      input.replaceChildren(...(text ? [textNode(text)] : []));
+      for (const reference of [...(draft?.references || [])].sort((a, b) => b.start - a.start)) {
+        const { path, start } = reference;
+        if (typeof path !== "string" || !Number.isInteger(start) || start < 0 ||
+            text.slice(start, start + path.length + 1) !== `@${path}`) continue;
+        const mention = createFileMention(path);
+        prepareMention(mention, `@${path}`, `引用文件 ${path}`);
+        mention.dataset.filePath = path;
+        const range = document.createRange();
+        const begin = pointAt(start), end = pointAt(start + path.length + 1);
+        range.setStart(...begin); range.setEnd(...end);
+        range.deleteContents(); range.insertNode(mention);
+      }
+    },
     get selectionStart() {
       const selection = selectionOffsets();
       return selection ? Math.min(selection.anchor, selection.focus) : readText(input).length;

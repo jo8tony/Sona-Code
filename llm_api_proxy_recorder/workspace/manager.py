@@ -138,6 +138,23 @@ class WorkspaceManager:
         finally:
             self._task_requests -= 1
 
+    async def running_statuses(self) -> dict[str, dict]:
+        """Read existing servers in parallel without starting unopened projects."""
+        async def read(path: str, server: OpenCodeServer) -> tuple[str, dict]:
+            if server.process.poll() is not None:
+                return path, {"statuses": {}}
+            try:
+                response = await server.client.get("/session/status", params={"directory": path}, timeout=3)
+                response.raise_for_status()
+                statuses = response.json()
+                if not isinstance(statuses, dict):
+                    raise ValueError("invalid session statuses")
+                return path, {"statuses": statuses}
+            except (httpx.HTTPError, ValueError, RuntimeError):
+                return path, {"error": "暂时无法读取运行状态"}
+
+        return dict(await asyncio.gather(*(read(path, server) for path, server in list(self._servers.items()))))
+
     async def _request(
         self, project: str, config: AppConfig, method: str, endpoint: str,
         *, body: dict | None = None, params: dict[str, str | int] | None = None,

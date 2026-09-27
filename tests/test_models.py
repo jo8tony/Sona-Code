@@ -143,7 +143,8 @@ def test_workspace_catalog_defaults_filter_and_sanitize(cfg, tmp_path):
         pid = client.get("/__recorder/api/workspace/projects").json()["items"][0]["id"]
         base = f"/__recorder/api/workspace/projects/{pid}"
         models = client.get(base + "/models").json()
-        assert models["providers"][0]["id"] == native_provider_id("company") and not calls
+        assert models["providers"][0]["id"] == native_provider_id("company")
+        assert calls == [("/config/providers", None)]
         response = client.post(base + "/sessions/session-one/prompt", json={"text": "hello"})
         assert response.status_code == 200
         assert calls[-1][1]["model"] == models["default_model"]
