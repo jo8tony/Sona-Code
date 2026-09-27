@@ -77,7 +77,7 @@ function workspaceTurnDiffs(messages, message, projectPath = "") {
     const file = workspaceRelativeFile(diff.file || diff.path, projectPath);
     if (file) files.set(file, { ...diff, file });
   };
-  if (Array.isArray(native)) {
+  if (Array.isArray(native) && native.length) {
     native.forEach(add);
     return [...files.values()];
   }
@@ -89,19 +89,44 @@ function workspaceTurnDiffs(messages, message, projectPath = "") {
       const changes = Array.isArray(metadata.files) ? metadata.files.map(file => ({
         ...file, file: file.relativePath || file.filePath, patch: file.diff,
       })) : metadata.filediff ? [metadata.filediff] : [{
-        file: input.filePath || input.path, patch: metadata.diff, derived: true, input,
+        file: input.filePath || input.path || metadata.filepath, patch: metadata.diff, derived: true, input,
+        ...(part.tool === "write" && metadata.exists === false ? {
+          before: "", after: input.content || "", derived: false,
+          additions: input.content ? input.content.replace(/\n$/, "").split("\n").length : 0, deletions: 0,
+        } : {}),
       }];
       for (const diff of changes) {
         const file = workspaceRelativeFile(diff.file || diff.path, projectPath);
         const previous = files.get(file);
-        // Repeated tool edits are not a net diff. Keep the file without claiming
-        // exact totals until OpenCode publishes the native turn summary.
-        add(previous ? { file, derived: true, input: diff.input || input } : diff);
-        if (previous && files.has(file)) files.get(file).countsUnknown = true;
+        if (!previous) { add(diff); continue; }
+        // Preserve all successful edits. These totals describe editing activity,
+        // while native summaries above remain authoritative for the final diff.
+        add(workspaceCombineFileEdits(previous, diff, file));
       }
     }
   }
   return [...files.values()];
+}
+
+function workspaceCombineFileEdits(previous, diff, file) {
+  const edits = [...(previous.toolEdits || [previous]), diff];
+  const counts = edits.map(edit => {
+    if (edit.countsUnknown) return null;
+    if (Number.isFinite(edit.additions) && Number.isFinite(edit.deletions))
+      return { additions: edit.additions, deletions: edit.deletions };
+    if (edit.patch) {
+      const lines = edit.patch.split("\n");
+      return { additions: lines.filter(line => line.startsWith("+") && !line.startsWith("+++ ")).length,
+        deletions: lines.filter(line => line.startsWith("-") && !line.startsWith("--- ")).length };
+    }
+    return null;
+  }).filter(Boolean);
+  const patch = edits.map(edit => edit.patch || "").filter(Boolean).join("\n");
+  return { ...diff, file, toolEdits: edits, cumulative: true, patch,
+    derived: !patch, input: diff.input || previous.input, countsUnknown: !counts.length,
+    countsPartial: counts.length < edits.length || edits.some(edit => edit.countsPartial),
+    additions: counts.reduce((sum, count) => sum + count.additions, 0),
+    deletions: counts.reduce((sum, count) => sum + count.deletions, 0) };
 }
 
 // Keep unchanged nodes attached so polling preserves animations, focus and selection.
@@ -398,6 +423,7 @@ function renderWorkspace(view) {
   function statusIcon(kind) {
     const icon = el("svg", { class: "wsp-status-icon", viewBox: "0 0 20 20", "aria-hidden": "true" });
     if (kind === "busy") {
+      icon.setAttribute("class", "wsp-status-icon wsp-status-spinning");
       icon.append(el("g", { class: "wsp-status-spinner" },
         el("circle", { cx: "10", cy: "10", r: "7.25", "stroke-dasharray": "12 34" })));
     } else {
@@ -1313,6 +1339,15 @@ function renderWorkspace(view) {
       } else displayMessages.push({ info: message.info, parts: [...(message.parts || [])],
         errorInfo: message.info?.error ? message.info : null, modelInfo: message.info, skillUse: message.skillUse });
     }
+    const sessionStatus = state.statuses?.[state.sessionId];
+    const running = ["busy", "retry"].includes(sessionStatus?.type) && !compactionRunning() &&
+      !state.permissions.some(item => item.sessionID === state.sessionId) &&
+      !state.questions.some(item => item.sessionID === state.sessionId);
+    if (running && displayMessages.at(-1)?.info?.role === "user") {
+      const user = displayMessages.at(-1);
+      displayMessages.push({ info: { id: `waiting:${user.info.id}`, role: "assistant", parentID: user.info.id,
+        time: user.info.time }, parts: [], awaitingReply: true });
+    }
     let previousDay = "";
     for (const [messageIndex, message] of displayMessages.entries()) {
       const day = messageDay(message);
@@ -1336,8 +1371,17 @@ function renderWorkspace(view) {
         item.info?.role === "assistant" && item.info.parentID === message.info?.parentID);
       const diffs = role === "assistant" && !laterReply
         ? workspaceTurnDiffs(state.messages, message, activeProject()?.path) : [];
+      let progressLabel = "";
+      if (running && role === "assistant" && messageIndex === displayMessages.length - 1 && !message.errorInfo) {
+        const activeTool = message.parts.some(part => part.type === "tool" &&
+          ["pending", "running"].includes(part.state?.status));
+        const streamingText = message.parts.some(part => part.type === "text" && !part.synthetic &&
+          part.text && part.time?.end == null && modelInfo?.time?.completed == null);
+        progressLabel = sessionStatus.type === "retry" ? "正在重试…" : activeTool ? "" :
+          streamingText ? "正在回复…" : "正在思考…";
+      }
       const key = JSON.stringify([state.projectId, state.sessionId, message.info?.id || messageIndex]);
-      const signature = JSON.stringify([message, modelLabel, diffs,
+      const signature = JSON.stringify([message, modelLabel, diffs, progressLabel,
         role === "user" ? [message.info?.id === lastUserMessage()?.info.id, state.sending,
           state.statuses?.[state.sessionId]?.type] : null,
         !message.parts.length ? state.statuses?.[state.sessionId]?.type : null,
@@ -1366,10 +1410,6 @@ function renderWorkspace(view) {
       }
       const error = role !== "user" ? messageError(message.errorInfo) : null;
       if (error) body.append(error);
-      else if (role !== "user" && !parts.length) {
-        const busy = state.statuses?.[state.sessionId]?.type === "busy";
-        body.append(el("div", { class: busy ? "wsp-thinking" : "wsp-no-response", text: busy ? "正在思考…" : "本轮未收到回复" }));
-      }
       let pendingTools = [];
       const flushTools = () => {
         if (pendingTools.length) body.append(toolGroup(pendingTools));
@@ -1383,7 +1423,7 @@ function renderWorkspace(view) {
         }
         if (!['text', 'reasoning', 'file'].includes(part.type)) continue;
         flushTools();
-        if (part.type === "text" && !part.synthetic) {
+        if (part.type === "text" && !part.synthetic && (role === "user" || part.text)) {
           if (message.skillUse) body.append(el("details", { class: "wsp-reasoning" }, el("summary", { text: "查看已加载技能内容" }), el("pre", { text: part.text })));
           else body.append(textPart(part, role, references));
         }
@@ -1411,8 +1451,14 @@ function renderWorkspace(view) {
         }
       }
       flushTools();
+      if (progressLabel) body.append(el("div", { class: "wsp-thinking", role: "status", "aria-live": "polite" },
+        statusIcon("busy"), el("span", { text: progressLabel })));
+      else if (role !== "user" && !error && body.children.length === 1) {
+        body.append(el("div", { class: "wsp-no-response", text: "本轮未收到回复" }));
+      }
       if (diffs.length) body.append(changeSummary(message.info.parentID, diffs));
-      const column = el("div", { class: "wsp-message-column" }, body, messageActions(message));
+      const column = el("div", { class: "wsp-message-column" }, body);
+      if (!message.awaitingReply) column.append(messageActions(message));
       row.append(column);
       target.append(row);
     }
@@ -1508,7 +1554,7 @@ function renderWorkspace(view) {
 
   function changeTotals(diffs) {
     const counts = diffs.map(diffLineCounts).filter(Boolean);
-    const prefix = counts.length < diffs.length ? "≥" : "";
+    const prefix = counts.length < diffs.length || diffs.some(diff => diff.countsPartial) ? "≥" : "";
     return { additions: counts.length ? `${prefix}+${counts.reduce((sum, item) => sum + item.additions, 0)}` : "—",
       deletions: counts.length ? `${prefix}−${counts.reduce((sum, item) => sum + item.deletions, 0)}` : "—" };
   }
@@ -1517,7 +1563,9 @@ function renderWorkspace(view) {
     const totals = changeTotals(diffs);
     return el("span", { class: "wsp-change-stats" },
       el("span", { class: "add", text: totals.additions, title: "新增行" }),
-      el("span", { class: "remove", text: totals.deletions, title: "删除行" }));
+      el("span", { class: "remove", text: totals.deletions, title: "删除行" }),
+      diffs.some(diff => diff.cumulative) ? el("small", { class: "wsp-change-count-kind", text: "累计编辑",
+        title: "成功编辑操作的增删行数累计，可能包含对同一行的多次修改" }) : null);
   }
 
   function changeFileIcon() {
@@ -1627,7 +1675,7 @@ function renderWorkspace(view) {
     try {
       const result = await api(`${sessionPath(projectId, sessionId)}/diff?message_id=${encodeURIComponent(messageId)}`, { silent: true });
       if (!alive() || state.selectedChange !== selection || state.projectId !== projectId || state.sessionId !== sessionId) return;
-      if (Array.isArray(result)) selection.diffs = result.map(diff => ({ ...diff,
+      if (Array.isArray(result) && result.length) selection.diffs = result.map(diff => ({ ...diff,
         file: workspaceRelativeFile(diff.file || diff.path, activeProject()?.path) }));
     } catch (error) {
       if (state.selectedChange === selection) selection.error = detail(error);
@@ -1650,11 +1698,14 @@ function renderWorkspace(view) {
   function changedFiles() {
     const writtenFiles = new Map();
     if (state.sessionId && !state.diffs.length) {
-      for (const message of state.messages) for (const part of message.parts || []) {
-        if (part.type !== "tool" || !["write", "edit", "apply_patch", "multiedit"].includes(part.tool)) continue;
-        if (part.state?.status !== "completed") continue;
-        const path = part.state?.input?.filePath || part.state?.input?.path;
-        if (path) writtenFiles.set(path, { file: path, derived: true, input: part.state.input });
+      const turns = new Set();
+      for (const message of state.messages) {
+        if (message.info?.role !== "assistant" || !message.info.parentID || turns.has(message.info.parentID)) continue;
+        turns.add(message.info.parentID);
+        for (const diff of workspaceTurnDiffs(state.messages, message, activeProject()?.path)) {
+          const previous = writtenFiles.get(diff.file);
+          writtenFiles.set(diff.file, previous ? workspaceCombineFileEdits(previous, diff, diff.file) : diff);
+        }
       }
     }
     const diffs = state.diffs.length ? state.diffs : [...writtenFiles.values()];
@@ -1686,7 +1737,7 @@ function renderWorkspace(view) {
     const additions = knownCounts.reduce((sum, count) => sum + count.additions, 0);
     const deletions = knownCounts.reduce((sum, count) => sum + count.deletions, 0);
     const countLabel = (value, sign) => !knownCounts.length ? "—" :
-      `${knownCounts.length < diffs.length ? "≥" : ""}${sign}${value}`;
+      `${knownCounts.length < diffs.length || diffs.some(diff => diff.countsPartial) ? "≥" : ""}${sign}${value}`;
     const overview = el("div", { class: "wsp-diff-overview" });
     for (const [value, label, className] of [[diffs.length, "修改文件", ""], [countLabel(additions, "+"), "新增行", "add"], [countLabel(deletions, "−"), "删除行", "remove"]]) {
       overview.append(el("div", { class: `wsp-diff-metric ${className}` },
@@ -2427,12 +2478,16 @@ function renderWorkspace(view) {
         const update = JSON.parse(event.data);
         applyMessageEvent(projectId, update);
         if (update.type === "session.status" && update.properties?.sessionID && update.properties?.status) {
+          const previous = state.statuses?.[update.properties.sessionID]?.type;
           const statuses = { ...(state.projectStatuses.get(projectId) || {}),
             [update.properties.sessionID]: update.properties.status };
           state.projectStatuses.set(projectId, statuses);
           statusVersions.set(projectId, (statusVersions.get(projectId) || 0) + 1);
           state.statuses = statuses;
-          renderSidebar(); renderHeader();
+          if (previous !== update.properties.status.type) {
+            renderSidebar(); renderHeader();
+            if (update.properties.sessionID === state.sessionId) renderMain();
+          }
         }
         if (update.type === "session.updated" && Date.now() - lastSessionListRefresh > 700) {
           const project = activeProject();
@@ -2446,7 +2501,7 @@ function renderWorkspace(view) {
 
   function scheduleRefresh() {
     if (refreshTimer) return;
-    refreshTimer = setTimeout(() => { refreshTimer = null; refreshSelected(); }, 120);
+    refreshTimer = setTimeout(() => { refreshTimer = null; refreshSelected(); }, 300);
   }
 
   async function refreshWorkspaceStatuses() {
@@ -2457,16 +2512,21 @@ function renderWorkspace(view) {
       const result = await api("workspace/status", { silent: true });
       if (!alive()) return;
       let changed = false;
+      let selectedChanged = false;
       for (const [projectId, entry] of Object.entries(result.projects || {})) {
         if (entry.error) continue;
         if (versions.get(projectId) !== statusVersions.get(projectId)) continue;
         const statuses = entry.statuses || {};
-        if (JSON.stringify(state.projectStatuses.get(projectId)) !== JSON.stringify(statuses)) changed = true;
+        if (JSON.stringify(state.projectStatuses.get(projectId)) !== JSON.stringify(statuses)) {
+          changed = true;
+          if (projectId === state.projectId) selectedChanged = true;
+        }
         state.projectStatuses.set(projectId, statuses);
         if (projectId === state.projectId) state.statuses = statuses;
       }
       if (changed) renderSidebar();
       renderHeader();
+      if (selectedChanged) renderMain();
     } catch (_) { /* Keep the last known states until the next poll succeeds. */ }
     finally { statusRefreshing = false; }
   }

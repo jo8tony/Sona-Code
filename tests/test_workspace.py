@@ -401,7 +401,15 @@ assert.deepEqual(workspaceTurnDiffs(messages, a), [firstDiff]);
 assert.deepEqual(workspaceTurnDiffs(messages, b), [firstDiff]);
 assert.deepEqual(workspaceTurnDiffs(messages, c), [secondDiff]);
 assert.deepEqual(workspaceTurnDiffs(messages, reply("orphan")), []);
-assert.deepEqual(workspaceTurnDiffs([user("u1", []), a], a), []);
+assert.deepEqual(workspaceTurnDiffs([user("u1", []), a], a).map(diff => diff.file), ["/project/ignored.py"]);
+const created = reply("created", "u4", [{type: "tool", tool: "write", state: {status: "completed",
+  input: {filePath: "/project/game.html", content: "first\nsecond\n"}, metadata: {exists: false}}}]);
+const createdDiff = workspaceTurnDiffs([user("u4", []), created], created, "/project")[0];
+assert.equal(createdDiff.file, "game.html");
+assert.equal(createdDiff.additions, 2);
+assert.equal(createdDiff.deletions, 0);
+assert.equal(createdDiff.before, "");
+assert.equal(createdDiff.after, "first\nsecond\n");
 const working = reply("working", "u3", [tool("/project/src/app.py"), tool("/project/pending.py", "running"),
   tool("/project/failed.py", "error"), {type: "tool", tool: "read", state: {status: "completed", input: {filePath: "read.py"}}}]);
 assert.deepEqual(workspaceTurnDiffs([user("u3"), working], working, "/project").map(diff => diff.file), ["src/app.py"]);
@@ -410,6 +418,17 @@ const patch = reply("patch", "u3", [{type: "tool", tool: "apply_patch", state: {
     {filePath: "/project/gone.py", diff: "-old", additions: 0, deletions: 1}]}}}]);
 assert.deepEqual(workspaceTurnDiffs([user("u3"), patch], patch, "/project").map(diff => diff.file), ["new.py", "gone.py"]);
 assert.equal(workspaceTurnDiffs([user("u3"), working, reply("repeat", "u3", [tool("/project/src/app.py")])], working, "/project")[0].countsUnknown, true);
+const nativeEdit = (additions, deletions, patch) => ({type: "tool", tool: "edit", state: {status: "completed",
+  metadata: {filediff: {file: "/project/game.html", additions, deletions, patch}}}});
+const repeated = reply("repeated", "u5", [nativeEdit(5, 5, "-old\n+new"), nativeEdit(3, 3, "-new\n+newer")]);
+const cumulative = workspaceTurnDiffs([user("u5", []), repeated], repeated, "/project")[0];
+assert.equal(cumulative.additions, 8);
+assert.equal(cumulative.deletions, 8);
+assert.equal(cumulative.cumulative, true);
+assert.equal(cumulative.countsUnknown, false);
+assert.equal(cumulative.toolEdits.length, 2);
+assert(cumulative.patch.includes("+newer"));
+assert.deepEqual(workspaceTurnDiffs([user("u5", [firstDiff]), repeated], repeated), [firstDiff]);
 assert.equal(workspaceRelativeFile("C:\\project\\src\\app.js", "C:\\project"), "src/app.js");
 assert.equal(workspaceRelativeFile("/project-other/app.js", "/project"), "/project-other/app.js");
 '''

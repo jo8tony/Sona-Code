@@ -33,10 +33,12 @@ class Element {
     this.parent = null;
   }
   querySelector() { return null; }
+  addEventListener() {}
 }
 global.el = (tag, props, ...children) => { const element = new Element(tag, props); element.append(...children); return element; };
 global.content = new Element("main");
-global.state = {projectId: "p", sessionId: "s", messages: [], permissions: [], questions: [], statuses: {}, sending: false};
+global.state = {projectId: "p", sessionId: "s", messages: [], permissions: [], questions: [], statuses: {}, sending: false,
+  expandedTools: new Map()};
 global.changeTriggers = new Map();
 global.messageDay = () => "今天";
 global.activeProject = () => ({path: "/project"});
@@ -45,6 +47,9 @@ global.lastUserMessage = () => state.messages.findLast(message => message.info.r
 global.messageError = () => null;
 global.textPart = part => new Element("text", {text: part.text});
 global.skillForTool = () => null;
+global.compactionRunning = () => false;
+global.statusIcon = () => new Element("svg", {class: "wsp-status-icon"});
+global.toolGroup = () => new Element("tools");
 let actionsBuilt = 0;
 global.messageActions = message => { actionsBuilt++; return new Element("actions", {text: message.parts[0]?.text}); };
 const reply = (id, text) => ({info: {id, role: "assistant", parentID: "u-" + id}, parts: [{type: "text", text}]});
@@ -87,6 +92,88 @@ state.messages = [{info: {id: "u", role: "user"}, parts: [{type: "text", text: "
 const user = render()[0];
 state.sending = true;
 assert.notEqual(render()[0], user);
+// Native step markers and empty content parts must not hide the waiting state.
+state.sending = false;
+const prompt = {info: {id: "u", role: "user"}, parts: [{type: "text", text: "question"}]};
+const assistant = {info: {id: "a", role: "assistant", parentID: "u"}, parts: []};
+const descendants = node => [node, ...node.children.flatMap(descendants)];
+const progress = row => descendants(row).filter(node => node.class === "wsp-thinking");
+const label = row => progress(row)[0]?.children.at(-1)?.text;
+state.statuses = {other: {type: "busy"}};
+for (const parts of [[], [{type: "step-start"}], [{type: "text", text: ""}],
+                     [{type: "reasoning", text: ""}, {type: "step-start"}],
+                     [{type: "reasoning", text: "Considering the layout", time: {start: 1}}]]) {
+  state.messages = [prompt, {...assistant, parts}];
+  const row = render().at(-1);
+  assert.equal(label(row), "正在思考…");
+  assert.equal(progress(row)[0].role, "status");
+  assert.equal(progress(row)[0].children[0].tag, "svg");
+}
+// Only the current turn shows progress; completed history must stay unchanged.
+state.messages = [{...assistant, info: {...assistant.info, id: "old", parentID: "old-u"}}, prompt, assistant];
+assert.equal(progress(render()[0]).length, 0);
+state.statuses.other = {type: "retry", attempt: 1};
+assert.equal(label(render().at(-1)), "正在重试…");
+state.statuses.other = {type: "idle"};
+assert.equal(progress(render().at(-1)).length, 0);
+assert(descendants(render().at(-1)).some(node => node.text === "本轮未收到回复"));
+// Before the first assistant message arrives, show a temporary reply row.
+state.messages = [prompt];
+state.statuses.other = {type: "busy"};
+assert.equal(label(render().at(-1)), "正在思考…");
+assert.equal(state.messages.length, 1);
+assert(!descendants(render().at(-1)).some(node => node.tag === "actions"));
+state.statuses = {};
+assert.equal(render().length, 1);
+// Output and tool execution have distinct progress; idle removes the spinner.
+state.statuses.other = {type: "busy"};
+state.messages = [prompt, {...assistant, parts: [{type: "text", text: "Streaming", time: {start: 1}}]}];
+assert.equal(label(render().at(-1)), "正在回复…");
+state.messages[1].parts[0].time.end = 2;
+assert.equal(label(render().at(-1)), "正在思考…");
+state.messages[1].parts = [{type: "tool", state: {status: "running"}}];
+assert.equal(progress(render().at(-1)).length, 0);
+state.messages[1].parts[0].state.status = "completed";
+assert.equal(label(render().at(-1)), "正在思考…");
+state.statuses = {};
+assert.equal(progress(render().at(-1)).length, 0);
+// Permission/question pauses and compaction must not be labelled thinking.
+state.messages = [prompt, assistant];
+state.statuses.other = {type: "busy"};
+state.permissions = [{sessionID: "different", id: "p"}];
+assert.equal(label(render().at(-1)), "正在思考…");
+state.permissions = [{sessionID: "other", id: "p"}];
+assert.equal(progress(render().at(-1)).length, 0);
+state.permissions = [];
+global.questionCard = () => new Element("question");
+state.questions = [{sessionID: "other", id: "q"}];
+assert.equal(progress(render().at(-1)).length, 0);
+state.questions = [];
+global.messageError = info => info?.error ? new Element("error") : null;
+state.messages[1] = {...assistant, info: {...assistant.info, error: {name: "APIError"}}};
+assert.equal(progress(render().at(-1)).length, 0);
+state.messages[1] = assistant;
+global.compactionRunning = () => true;
+assert.equal(progress(render().at(-1)).length, 0);
+// A non-Git native server may return an empty diff even after successful writes.
+vm.runInThisContext(source.slice(source.indexOf("  async function openMessageChange("),
+  source.indexOf("  function focusSelectedChange(")));
+global.closeChangePopover = () => {};
+global.renderHeader = global.renderMain = global.focusSelectedChange = () => {};
+global.sessionPath = () => "session";
+global.alive = () => true;
+global.detail = error => error.message;
+const toolDiff = {file: "game.html", before: "", after: "new", additions: 1, deletions: 0};
+global.api = async () => [];
+(async () => {
+  await openMessageChange("u", [toolDiff], "game.html");
+  assert.deepEqual(state.selectedChange.diffs, [toolDiff]);
+  assert.equal(state.selectedChange.loading, false);
+  const nativeDiff = {...toolDiff, additions: 2};
+  global.api = async () => [nativeDiff];
+  await openMessageChange("u", [toolDiff], "game.html");
+  assert.deepEqual(state.selectedChange.diffs, [nativeDiff]);
+})().catch(error => { console.error(error); process.exitCode = 1; });
 '''
     subprocess.run(
         [node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True

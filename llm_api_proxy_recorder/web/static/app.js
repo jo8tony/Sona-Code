@@ -438,41 +438,136 @@ async function renderCalls(view) {
   addCleanup(() => clearInterval(t));
 }
 
-/* ============================================================ JSON 查看器（简易语法高亮） */
+/* ============================================================ JSON 树形查看器 */
 function jsonViewer(value) {
-  let text = null;
-  try { text = JSON.stringify(value); } catch (_) { text = null; }
-  if (text !== null && text.length > 1e6) return bigTextBlock(text);
-  return el("div", { class: "json-wrap" }, el("div", { class: "json" }, jsonNode(value, 0)));
-}
-
-function jsonNode(v, depth) {
-  const pad = depth * 14;
-  if (v === null) return el("span", { class: "j-null", text: "null" });
-  const t = typeof v;
-  if (t === "string") return el("span", { class: "j-str", text: JSON.stringify(v) });
-  if (t === "number") return el("span", { class: "j-num", text: String(v) });
-  if (t === "boolean") return el("span", { class: "j-bool", text: String(v) });
-  const isArr = Array.isArray(v);
-  const entries = isArr ? v.map((x) => [null, x]) : Object.entries(v);
-  if (!entries.length) return el("span", { class: "j-punc", text: isArr ? "[]" : "{}" });
-  const wrap = el("span", { class: "j-coll" });
-  wrap.append(el("div", { class: "j-line" }, el("span", { class: "j-punc", text: isArr ? "[" : "{" })));
-  entries.forEach(([k, val], i) => {
-    const line = el("div", { class: "j-line" });
-    line.style.paddingLeft = pad + 14 + "px";
-    if (!isArr) {
-      line.append(el("span", { class: "j-key", text: JSON.stringify(k) }), el("span", { class: "j-punc", text: ": " }));
+  const branches = [];
+  const records = new Map();
+  const keyLabel = (key, arrayItem) => key === null ? [] : [
+    el("span", { class: arrayItem ? "j-index" : "j-key", text: arrayItem ? String(key) : JSON.stringify(key) }),
+    el("span", { class: "j-punc", text: ": " }),
+  ];
+  function node(v, depth, key = null, arrayItem = false, comma = false, path = []) {
+    const suffix = comma ? "," : "";
+    const collection = v !== null && typeof v === "object";
+    const isArray = Array.isArray(v);
+    const keys = collection ? Object.keys(v) : [];
+    if (!keys.length) {
+      const type = v === null ? "null" : typeof v;
+      const text = collection ? (isArray ? "[]" : "{}") : JSON.stringify(v) ?? String(v);
+      const cls = collection ? "j-punc" : ({string: "j-str", number: "j-num", boolean: "j-bool", null: "j-null"}[type] || "j-punc");
+      const leaf = el("div", { class: "j-line j-value" }, ...keyLabel(key, arrayItem),
+        el("span", { class: cls, text }), el("span", { class: "j-punc", text: suffix }));
+      records.set(JSON.stringify(path), { element: leaf });
+      return leaf;
     }
-    line.append(jsonNode(val, depth + 1));
-    if (i < entries.length - 1) line.append(el("span", { class: "j-punc", text: "," }));
-    wrap.append(line);
+    const opening = isArray ? "[" : "{";
+    const closing = isArray ? "]" : "}";
+    const children = el("div", { class: "j-children" });
+    const branch = el("details", { class: "j-branch" },
+      el("summary", { class: "j-line" }, ...keyLabel(key, arrayItem),
+        el("span", { class: "j-punc", text: opening }),
+        el("span", { class: "j-preview", text: ` … ${closing}${suffix} · ${keys.length} 项` })),
+      children, el("div", { class: "j-line j-closing j-punc", text: closing + suffix }));
+    let loaded = false;
+    const load = () => {
+      if (loaded) return;
+      loaded = true;
+      keys.forEach((childKey, index) => children.append(
+        node(v[childKey], depth + 1, childKey, isArray, index < keys.length - 1, [...path, childKey])));
+    };
+    const record = { element: branch, depth, load };
+    branches.push(record);
+    records.set(JSON.stringify(path), record);
+    branch.addEventListener("toggle", () => { if (branch.open) load(); });
+    if (depth === 0) { load(); branch.open = true; }
+    return branch;
+  }
+  const tree = el("div", { class: "json" }, node(value, 0));
+  const visible = branch => {
+    for (let parent = branch.element.parentElement; parent && parent !== tree; parent = parent.parentElement) {
+      if (parent.tagName === "DETAILS" && !parent.open) return false;
+    }
+    return true;
+  };
+  const button = (text, action) => el("button", { class: "btn btn-xs", type: "button", text, onclick: action });
+  const toolbar = el("div", { class: "json-toolbar", role: "group", "aria-label": "JSON 展开控制" },
+    button("展开一级", () => {
+      const frontier = branches.filter(branch => visible(branch) && !branch.element.open);
+      frontier.forEach(branch => { branch.load(); branch.element.open = true; });
+    }),
+    button("收起一级", () => {
+      const opened = branches.filter(branch => visible(branch) && branch.element.open);
+      const deepest = Math.max(...opened.map(branch => branch.depth));
+      opened.filter(branch => branch.depth === deepest).forEach(branch => { branch.element.open = false; });
+    }),
+    button("全部展开", () => {
+      // Loading a branch adds its children to this list; visit them in the same pass.
+      for (let index = 0; index < branches.length; index++) {
+        branches[index].load(); branches[index].element.open = true;
+      }
+    }),
+    button("全部收起", () => branches.forEach(branch => { branch.element.open = false; })));
+  let matches = [], matchIndex = -1, highlighted = null, savedExpansion = null;
+  const searchCount = el("span", { class: "json-search-count", role: "status", "aria-live": "polite", text: "" });
+  const searchInput = el("input", { class: "json-search-input", type: "search", placeholder: "搜索 JSON 字段或值…",
+    "aria-label": "搜索 JSON 字段或值" });
+  const previous = button("上一个", () => showMatch(matchIndex - 1));
+  const next = button("下一个", () => showMatch(matchIndex + 1));
+  previous.disabled = next.disabled = true;
+  function showMatch(index) {
+    if (!matches.length) return;
+    if (highlighted) highlighted.classList.remove("j-search-hit");
+    matchIndex = (index + matches.length) % matches.length;
+    const path = matches[matchIndex];
+    for (let length = 0; length < path.length; length++) {
+      const parent = records.get(JSON.stringify(path.slice(0, length)));
+      parent.load(); parent.element.open = true;
+    }
+    highlighted = records.get(JSON.stringify(path)).element;
+    highlighted.classList.add("j-search-hit");
+    const anchor = highlighted.tagName === "DETAILS" ? highlighted.firstElementChild : highlighted;
+    anchor.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "auto" });
+    searchCount.textContent = `${matchIndex + 1} / ${matches.length}${matches.length === 2000 ? "（最多显示 2000 处）" : ""}`;
+  }
+  function search() {
+    const query = searchInput.value.trim().toLocaleLowerCase();
+    if (highlighted) highlighted.classList.remove("j-search-hit");
+    highlighted = null; matches = []; matchIndex = -1;
+    if (savedExpansion) branches.forEach(branch => { branch.element.open = savedExpansion.get(branch.element) || false; });
+    if (!query) {
+      savedExpansion = null; searchCount.textContent = "";
+      previous.disabled = next.disabled = true;
+      return;
+    }
+    if (!savedExpansion) savedExpansion = new Map(branches.map(branch => [branch.element, branch.element.open]));
+    // Search the data, including unopened branches, without rendering the entire tree.
+    const pending = [{ value, path: [] }];
+    while (pending.length && matches.length < 2000) {
+      const item = pending.pop();
+      const collection = item.value !== null && typeof item.value === "object";
+      const key = item.path.at(-1) || "";
+      const text = collection ? "" : String(item.value);
+      if (key.toLocaleLowerCase().includes(query) || text.toLocaleLowerCase().includes(query)) matches.push(item.path);
+      if (collection) {
+        const keys = Object.keys(item.value);
+        for (let index = keys.length - 1; index >= 0; index--) {
+          const child = keys[index];
+          pending.push({ value: item.value[child], path: [...item.path, child] });
+        }
+      }
+    }
+    previous.disabled = next.disabled = !matches.length;
+    searchCount.textContent = matches.length ? "" : "无匹配结果";
+    showMatch(0);
+  }
+  searchInput.addEventListener("input", search);
+  searchInput.addEventListener("keydown", event => {
+    if (event.key === "Enter") { event.preventDefault(); showMatch(matchIndex + (event.shiftKey ? -1 : 1)); }
+    if (event.key === "Escape") { event.preventDefault(); searchInput.value = ""; search(); }
   });
-  const closing = el("div", { class: "j-line" });
-  closing.style.paddingLeft = pad + "px";
-  closing.append(el("span", { class: "j-punc", text: isArr ? "]" : "}" }));
-  wrap.append(closing);
-  return wrap;
+  return el("div", { class: "json-viewer" },
+    el("div", { class: "json-search" }, searchInput, previous, next, searchCount), branches.length ? toolbar : null,
+    el("div", { class: "json-wrap" }, tree));
 }
 
 /* 超大文本（>1MB）截断展示 */

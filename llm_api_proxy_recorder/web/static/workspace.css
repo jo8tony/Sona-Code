@@ -211,7 +211,9 @@
 .wsp-composer:focus-within { border-color: #aec4f4; box-shadow: 0 0 0 3px rgba(54,111,232,.06), 0 5px 24px rgba(45,65,91,.06); }
 .wsp-input { min-height: 66px; max-height: 165px; padding: 13px 15px 2px; resize: none; outline: 0 !important; }
 .wsp-model { width: auto; max-width: min(260px, 48vw); min-height: 29px; padding: 5px 30px 5px 8px; border-radius: 6px; background-color: #f8fafc; font-size: 10.5px; }
-.wsp-thinking { margin-top: 5px; color: var(--text-faint); font-size: 11.5px; animation: wsp-pulse 1.6s ease-in-out infinite; }
+.wsp-thinking { display: flex; align-items: center; gap: 8px; margin-top: 9px; color: var(--accent); font-size: 11.5px; }
+.wsp-thinking .wsp-status-icon { width: 16px; height: 16px; flex: none; }
+.wsp-change-count-kind { color: var(--text-faint); font-size: 10px; font-weight: 400; white-space: nowrap; }
 .wsp-no-response { margin-top: 5px; color: var(--text-faint); font-size: 11.5px; }
 .wsp-composer { position: relative; }
 .wsp-model-trigger { position: relative; min-width: 0; max-width: 260px; height: 29px; padding: 0 25px 0 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--border); border-radius: 6px; background: #f8fafc; color: var(--text-dim); font-size: 10.5px; text-align: left; }
@@ -574,7 +576,7 @@
 .wsp-status.error { border-color: #efcecc; background: #fff5f4; color: var(--red); }
 .wsp-status-icon { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .wsp-status-mark { stroke-width: 2.2; }
-.wsp-status-spinner { transform-box: view-box; transform-origin: 10px 10px; animation: wsp-spin 1.1s linear infinite; will-change: transform; backface-visibility: hidden; }
+.wsp-status-spinning { transform-origin: center; animation: wsp-spin 1.1s linear infinite; will-change: transform; backface-visibility: hidden; }
 .wsp-status-spinner circle { stroke-width: 2.3; }
 .wsp-composer-hint { white-space: nowrap; }
 .wsp-variant-trigger { height: 31px; min-width: 0; max-width: 86px; padding: 0 5px; display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 6px; background: transparent; color: var(--text-dim); font-size: 11px; white-space: nowrap; cursor: pointer; }
@@ -588,7 +590,7 @@
 .wsp-command-menu .wsp-file-option strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px var(--mono); }
 .wsp-command-menu .wsp-file-option span { flex: none; color: var(--text-faint); font-size: 10px; }
 .wsp-command-menu .wsp-file-state { padding: 12px 10px; color: var(--text-faint); font-size: 11px; }
-@media (prefers-reduced-motion: reduce) { .wsp-status-spinner { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .wsp-status-spinning { animation: none; } }
 
 /* Keep controls outside the bubble and reserve their space on hover. */
 .wsp-change-summary { display: inline-flex; align-items: center; gap: 10px; max-width: 100%; margin-top: 16px; padding: 9px 12px; border: 1px solid #e5e9ef; border-radius: 9px; background: #fafbfd; color: var(--text-dim); font-size: 11.5px; cursor: pointer; transition: border-color .15s, background .15s; }
@@ -699,7 +701,7 @@
 
 .wsp-thread-running { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 14px; width: 14px; height: 14px; color: var(--blue, #356be8); }
 .wsp-thread-running .wsp-status-icon { width: 14px; height: 14px; transform-origin: center; animation: wsp-spin 1.1s linear infinite; will-change: transform; }
-.wsp-thread-running .wsp-status-spinner { animation: none; }
+.wsp-thread-running .wsp-status-spinning { animation: none; }
 @media (prefers-reduced-motion: reduce) {
   .wsp-thread-running .wsp-status-icon { animation: none; }
 }
