@@ -139,6 +139,12 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
+            if matches!(
+                event,
+                tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+            ) {
+                eprintln!("desktop: window {} event {event:?}", window.label());
+            }
             #[cfg(any(target_os = "macos", windows))]
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
@@ -274,7 +280,19 @@ pub fn run() {
         .expect("failed to build desktop application");
 
     app.run(|app_handle, event| match event {
-        RunEvent::Exit | RunEvent::ExitRequested { .. } => stop_sidecar(app_handle),
+        #[cfg(windows)]
+        RunEvent::ExitRequested {
+            code: None, api, ..
+        } => {
+            // Background residency is explicit: only a requested exit code (the
+            // tray Quit action) may end the Windows app and stop its backend.
+            eprintln!("desktop: preventing automatic exit");
+            api.prevent_exit();
+        }
+        RunEvent::Exit | RunEvent::ExitRequested { .. } => {
+            eprintln!("desktop: exiting after {event:?}");
+            stop_sidecar(app_handle);
+        }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => {
             show_main_window(app_handle);

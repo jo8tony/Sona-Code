@@ -65,6 +65,12 @@ jobs:
       - name: Check runner architecture
         run: test "$(uname -m)" = "${{ matrix.arch }}"
 
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          cache-on-failure: true
+
       - name: Install Python dependencies
         run: |
           python -m venv .venv-build

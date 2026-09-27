@@ -149,7 +149,8 @@ def _verify_desktop_lifecycle(desktop: Path) -> None:
             time.sleep(0.1)
         raise RuntimeError(f"desktop timed out: {description}")
 
-    process = subprocess.Popen([str(desktop)])
+    desktop_log = tempfile.TemporaryFile()
+    process = subprocess.Popen([str(desktop)], stdout=desktop_log, stderr=subprocess.STDOUT)
     second = None
     base_url = "http://127.0.0.1:8117"
     try:
@@ -171,6 +172,12 @@ def _verify_desktop_lifecycle(desktop: Path) -> None:
         wait_for(lambda: user32.IsWindowVisible(hwnd), "second launch restores hidden window")
         if _request_json(base_url, "GET", "/__recorder/api/ping") != original:
             raise RuntimeError("second launch replaced the backend instance")
+    except Exception:
+        desktop_log.seek(0)
+        trace = desktop_log.read().decode("utf-8", errors="replace")[-8000:]
+        trace = trace.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print(f"::notice title=Desktop lifecycle trace::{trace}", flush=True)
+        raise
     finally:
         for child in (second, process):
             if child is not None and child.poll() is None:
@@ -180,6 +187,7 @@ def _verify_desktop_lifecycle(desktop: Path) -> None:
                     creationflags=subprocess.CREATE_NO_WINDOW,
                 )
                 child.wait(timeout=10)
+        desktop_log.close()
 
 
 def main() -> None:
