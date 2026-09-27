@@ -2104,19 +2104,70 @@ function renderWorkspace(view) {
   function openAddProject() {
     const pathInput = el("input", { type: "text", placeholder: "项目目录的绝对路径", autocomplete: "off", spellcheck: "false" });
     const errorLine = el("div", { class: "wsp-error hidden" });
+    const directoryBrowser = el("div", { class: "wsp-directory-browser hidden", "aria-live": "polite" });
+    let browseVersion = 0;
+    let browseTimer;
+    function navigateDirectory(path) {
+      pathInput.value = path;
+      scheduleBrowse(0);
+    }
+    function scheduleBrowse(delay = 200) {
+      clearTimeout(browseTimer);
+      const version = ++browseVersion;
+      const path = pathInput.value.trim();
+      directoryBrowser.classList.toggle("hidden", !path);
+      directoryBrowser.replaceChildren();
+      if (!path) return;
+      directoryBrowser.append(el("div", { class: "wsp-directory-status", text: "正在读取目录…" }));
+      browseTimer = setTimeout(() => loadDirectories(path, version), delay);
+    }
+    async function loadDirectories(path, version) {
+      const current = () => mask.isConnected && version === browseVersion;
+      const read = (value) => api("terminal/fs?path=" + encodeURIComponent(value), { silent: true });
+      try {
+        let result;
+        let prefix = "";
+        try { result = await read(path); }
+        catch (error) {
+          if (!current()) return;
+          // A partially typed basename can still browse its existing parent.
+          const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+          if (separator < 0 || separator === path.length - 1) throw error;
+          const parent = path.slice(0, separator + 1);
+          prefix = path.slice(separator + 1).toLocaleLowerCase();
+          result = await read(parent);
+        }
+        if (!current()) return;
+        const heading = el("div", { class: "wsp-directory-heading" },
+          el("span", { text: result.path, title: result.path }));
+        if (result.parent) heading.append(el("button", { class: "wsp-mini", type: "button", text: "↑ 上一级",
+          onclick: () => navigateDirectory(result.parent) }));
+        if (prefix) heading.append(el("button", { class: "wsp-mini", type: "button", text: "使用此目录",
+          onclick: () => navigateDirectory(result.path) }));
+        const list = el("div", { class: "wsp-directory-list" });
+        const entries = result.entries.filter((entry) => entry.name.toLocaleLowerCase().startsWith(prefix));
+        for (const entry of entries) list.append(el("button", { class: "wsp-directory-item", type: "button",
+          text: "📁 " + entry.name, title: entry.path, onclick: () => navigateDirectory(entry.path) }));
+        if (!entries.length) list.append(el("div", { class: "wsp-directory-status", text: prefix ? "没有匹配的子目录" : "此目录下没有子目录" }));
+        directoryBrowser.replaceChildren(heading, list);
+      } catch (error) {
+        if (current()) directoryBrowser.replaceChildren(el("div", { class: "wsp-directory-status", text: "无法浏览目录：" + detail(error) }));
+      }
+    }
+    pathInput.addEventListener("input", () => scheduleBrowse());
     const choose = el("button", { class: "wsp-mini", type: "button", text: "选择目录…", onclick: async () => {
       const dialog = window.__TAURI__?.dialog;
       if (!dialog?.open) { pathInput.focus(); return; }
       try {
         const selected = await dialog.open({ directory: true, multiple: false, title: "选择项目目录" });
-        if (selected) pathInput.value = selected;
+        if (selected && mask.isConnected) navigateDirectory(selected);
       } catch (error) { errorLine.textContent = detail(error); errorLine.classList.remove("hidden"); }
     } });
     if (!window.__TAURI__?.dialog?.open) choose.hidden = true;
     const mask = el("div", { class: "wsp-modal-mask" },
       el("div", { class: "wsp-modal", role: "dialog", "aria-modal": "true", "aria-label": "新建项目" }, el("h2", { text: "新建项目" }),
         el("p", { text: "输入现有目录的绝对路径，或选择一个目录作为 Sona Code 工作区。" }),
-        el("div", { class: "wsp-modal-row" }, pathInput, choose), errorLine,
+        el("div", { class: "wsp-modal-row" }, pathInput, choose), directoryBrowser, errorLine,
         el("div", { class: "wsp-modal-actions" },
           el("button", { class: "wsp-mini", type: "button", text: "取消", onclick: () => mask.remove() }),
           el("button", { class: "wsp-mini primary", type: "button", text: "创建项目", onclick: async () => {

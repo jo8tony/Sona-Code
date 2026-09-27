@@ -631,3 +631,12 @@
 .wsp-skill-message { white-space: pre-wrap; overflow-wrap: anywhere; }
 .wsp-skill-use { border-color: #d5e3ff; }
 .wsp-skill-use .wsp-tool-head { color: #245abb; }
+
+.wsp-directory-browser { margin-top: 10px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.wsp-directory-heading { display: flex; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid var(--border); }
+.wsp-directory-heading > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-dim); }
+.wsp-directory-heading > button { flex-shrink: 0; }
+.wsp-directory-list { max-height: 220px; overflow-y: auto; padding: 4px; }
+.wsp-directory-item { display: block; width: 100%; padding: 8px; border: 0; border-radius: 5px; background: transparent; color: inherit; text-align: left; font: inherit; font-size: 12px; cursor: pointer; overflow-wrap: anywhere; }
+.wsp-directory-item:hover, .wsp-directory-item:focus-visible { background: var(--blue-soft, #edf3ff); }
+.wsp-directory-status { padding: 10px; color: var(--text-dim); font-size: 11.5px; }

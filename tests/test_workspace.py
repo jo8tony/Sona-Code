@@ -482,3 +482,58 @@ vm.runInContext(loadSource, loadContext);
 })().catch(error => {console.error(error); process.exitCode = 1;});
 '''
     subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
+
+
+def test_project_directory_browser_navigation_and_stale_results():
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for browser interaction coverage")
+    script = r'''
+const fs = require("fs"), vm = require("vm"), assert = require("assert");
+const source = fs.readFileSync("llm_api_proxy_recorder/web/static/workspace.js", "utf8");
+const nodes = [];
+function el(tag, props = {}, ...children) {
+  const classes = new Set((props.class || "").split(" "));
+  const node = {tag, ...props, children, value: props.value || "", isConnected: true,
+    classList: {toggle(c, on) {if (on) classes.add(c); else classes.delete(c);}, remove(c) {classes.delete(c);}},
+    append(...items) {this.children.push(...items);}, replaceChildren(...items) {this.children = items;},
+    addEventListener(name, fn) {this[name] = fn;}, focus() {}, remove() {this.isConnected = false;}};
+  nodes.push(node); return node;
+}
+let pending = [], timers = [];
+const context = vm.createContext({el, window: {}, document: {body: {append() {}}},
+  setTimeout(fn) {timers.push(fn); return fn;}, clearTimeout(fn) {timers = timers.filter(x => x !== fn);},
+  api(url) {return new Promise((resolve, reject) => pending.push({url, resolve, reject}));},
+  detail: e => e.message, encodeURIComponent});
+vm.runInContext(source.slice(source.indexOf("  function openAddProject() {"), source.indexOf("  function openRenameProject(")), context);
+vm.runInContext("openAddProject()", context);
+const input = nodes.find(n => n.tag === "input");
+const browser = nodes.find(n => n.class === "wsp-directory-browser hidden");
+const flush = async () => {await new Promise(resolve => setImmediate(resolve));};
+const type = path => {input.value = path; input.input(); timers.shift()();};
+(async () => {
+  type("/old"); type("/projects");
+  pending[1].resolve({path: "/projects", parent: "/", entries: [{name: "alpha", path: "/projects/alpha"}]}); await flush();
+  pending[0].resolve({path: "/old", parent: "/", entries: []}); await flush();
+  assert.equal(browser.children[0].children[0].text, "/projects");
+  browser.children[1].children[0].onclick(); timers.shift()();
+  assert.equal(input.value, "/projects/alpha");
+  pending[2].resolve({path: input.value, parent: "/projects", entries: []}); await flush();
+  browser.children[0].children[1].onclick(); timers.shift()();
+  assert.equal(input.value, "/projects");
+  pending[3].resolve({path: input.value, parent: "/", entries: []}); await flush();
+  type("/projects/al"); pending[4].reject(new Error("missing")); await flush();
+  assert.ok(pending[5].url.endsWith(encodeURIComponent("/projects/")));
+  pending[5].resolve({path: "/projects/", parent: "/", entries: [{name: "alpha", path: "/projects/alpha"}, {name: "beta", path: "/projects/beta"}]}); await flush();
+  assert.equal(browser.children[1].children.length, 1);
+  assert.equal(browser.children[1].children[0].text, "📁 alpha");
+  type("/closed"); nodes.find(n => n.class === "wsp-modal-mask").remove();
+  pending[6].resolve({path: "/closed", parent: "/", entries: []}); await flush();
+  assert.equal(browser.children[0].text, "正在读取目录…");
+})().catch(error => {console.error(error); process.exitCode = 1;});
+'''
+    subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
