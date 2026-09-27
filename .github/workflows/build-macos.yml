@@ -113,6 +113,6 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.release_tag || github.ref_name }}
-          body_path: ${{ (inputs.release_tag || github.ref_name) == 'v2.1.1' && 'docs/releases/v2.1.1.md' || (inputs.release_tag || github.ref_name) == 'v2.0.1' && 'docs/releases/v2.0.1.md' || '' }}
+          body_path: ${{ (inputs.release_tag || github.ref_name) == 'v2.2.1' && 'docs/releases/v2.2.1.md' || (inputs.release_tag || github.ref_name) == 'v2.1.1' && 'docs/releases/v2.1.1.md' || (inputs.release_tag || github.ref_name) == 'v2.0.1' && 'docs/releases/v2.0.1.md' || '' }}
           files: src-tauri/target/release/bundle/dmg/*.dmg
           fail_on_unmatched_files: true

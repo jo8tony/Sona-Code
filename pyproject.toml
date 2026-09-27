@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm-api-proxy-recorder"
-version = "2.1.1"
+version = "2.2.1"
 description = "本地大模型 API 代理记录器：透明转发并落盘调用明细"
 requires-python = ">=3.10"
 dependencies = [
