@@ -340,6 +340,82 @@ assert.equal(workspaceCallOwners(messages, [{call_id: "invalid", started_at: "in
     subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
 
 
+def test_workspace_diff_delegates_optional_user_message(tmp_path):
+    config = AppConfig(
+        upstreams=[UpstreamConfig(name="main", base_url="http://127.0.0.1:9001")],
+        default_upstream="main",
+    )
+    app = create_app(config, config_path=str(tmp_path / "config.json"))
+    project = tmp_path / "project"
+    project.mkdir()
+    app.state.runtime.terminal_projects.add(str(project), "opencode")
+    calls = []
+    diff = [{"file": "src/app.py", "before": "old", "after": "new", "additions": 1, "deletions": 1}]
+
+    async def fake_request(project, cfg, method, endpoint, *, body=None, params=None):
+        calls.append((method, endpoint, params))
+        return diff
+
+    app.state.runtime.workspace.request = fake_request
+    with TestClient(app) as client:
+        project_id = client.get("/__recorder/api/workspace/projects").json()["items"][0]["id"]
+        endpoint = f"/__recorder/api/workspace/projects/{project_id}/sessions/ses_test/diff"
+        assert client.get(endpoint).json() == diff
+        assert calls[-1] == ("GET", "/session/ses_test/diff", None)
+        assert client.get(endpoint, params={"message_id": "msg_first"}).json() == diff
+        assert calls[-1] == ("GET", "/session/ses_test/diff", {"messageID": "msg_first"})
+        count = len(calls)
+        assert client.get(endpoint, params={"message_id": "bad/id"}).status_code == 400
+        assert client.get(endpoint, params={"message_id": ""}).status_code == 400
+        assert len(calls) == count
+
+
+def test_workspace_turn_changes_preserve_ownership_and_native_totals():
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for workspace changes regression coverage")
+    script = r'''
+const fs = require("node:fs");
+const vm = require("node:vm");
+const assert = require("node:assert/strict");
+const source = fs.readFileSync("llm_api_proxy_recorder/web/static/workspace.js", "utf8");
+vm.runInThisContext(source);
+vm.runInThisContext(source.slice(source.indexOf("  function diffRows("), source.indexOf("  function diffLineCounts(")));
+assert.deepEqual(diffRows({before: "", after: "new"}), [{type: "added", number: 1, text: "+new"}]);
+assert.deepEqual(diffRows({before: "old", after: ""}), [{type: "removed", number: 1, text: "-old"}]);
+const firstDiff = {file: "src/app.py", before: "a", after: "b", additions: 1, deletions: 1};
+const secondDiff = {...firstDiff, after: "c", additions: 7, deletions: 2};
+const user = (id, diffs) => ({info: {id, role: "user", ...(diffs ? {summary: {diffs}} : {})}});
+const tool = (path, status = "completed") => ({type: "tool", tool: "edit",
+  state: {status, input: {filePath: path, oldString: "old", newString: "new"}}});
+const reply = (id, parentID, parts = []) => ({info: {id, role: "assistant", parentID}, parts});
+const a = reply("a", "u1", [tool("/project/ignored.py")]);
+const b = reply("b", "u1");
+const c = reply("c", "u2");
+const messages = [user("u1", [firstDiff]), a, b, user("u2", [secondDiff]), c];
+assert.deepEqual(workspaceTurnDiffs(messages, a), [firstDiff]);
+assert.deepEqual(workspaceTurnDiffs(messages, b), [firstDiff]);
+assert.deepEqual(workspaceTurnDiffs(messages, c), [secondDiff]);
+assert.deepEqual(workspaceTurnDiffs(messages, reply("orphan")), []);
+assert.deepEqual(workspaceTurnDiffs([user("u1", []), a], a), []);
+const working = reply("working", "u3", [tool("/project/src/app.py"), tool("/project/pending.py", "running"),
+  tool("/project/failed.py", "error"), {type: "tool", tool: "read", state: {status: "completed", input: {filePath: "read.py"}}}]);
+assert.deepEqual(workspaceTurnDiffs([user("u3"), working], working, "/project").map(diff => diff.file), ["src/app.py"]);
+const patch = reply("patch", "u3", [{type: "tool", tool: "apply_patch", state: {status: "completed",
+  metadata: {files: [{relativePath: "new.py", diff: "+new", additions: 1, deletions: 0},
+    {filePath: "/project/gone.py", diff: "-old", additions: 0, deletions: 1}]}}}]);
+assert.deepEqual(workspaceTurnDiffs([user("u3"), patch], patch, "/project").map(diff => diff.file), ["new.py", "gone.py"]);
+assert.equal(workspaceTurnDiffs([user("u3"), working, reply("repeat", "u3", [tool("/project/src/app.py")])], working, "/project")[0].countsUnknown, true);
+assert.equal(workspaceRelativeFile("C:\\project\\src\\app.js", "C:\\project"), "src/app.js");
+assert.equal(workspaceRelativeFile("/project-other/app.js", "/project"), "/project-other/app.js");
+'''
+    subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
+
+
 def test_workspace_placeholder_hides_during_ime_composition():
     import shutil
     import subprocess

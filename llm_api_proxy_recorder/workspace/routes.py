@@ -14,11 +14,12 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Awaitable, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from llm_api_proxy_recorder.admin.skills import WORKSPACE_COMMANDS
 from llm_api_proxy_recorder.terminal.manager import resolve_opencode
@@ -128,6 +129,7 @@ def add_project(body: AddProjectBody, request: Request) -> dict:
 @router.delete("/workspace/projects/{project_id}")
 async def remove_project(project_id: str, request: Request) -> dict:
     path = _project_path(request, project_id)
+    await request.app.state.runtime.workspace_queue.discard(project_id)
     deleted = request.app.state.runtime.terminal_projects.delete(path)
     await request.app.state.runtime.workspace.stop(path)
     return {"ok": deleted}
@@ -200,6 +202,7 @@ async def rename_session(project_id: str, session_id: str, body: RenameSessionBo
 @router.delete("/workspace/projects/{project_id}/sessions/{session_id}")
 async def delete_session(project_id: str, session_id: str, request: Request):
     path = _project_path(request, project_id)
+    await request.app.state.runtime.workspace_queue.discard(project_id, _safe_id(session_id))
     return await _opencode(request, path, "DELETE", f"/session/{_safe_id(session_id)}")
 
 
@@ -481,6 +484,11 @@ def _model_choice(provider_id: str | None, model_id: str | None, request: Reques
 @router.post("/workspace/projects/{project_id}/sessions/{session_id}/prompt")
 async def send_prompt(project_id: str, session_id: str, body: PromptBody, request: Request):
     path = _project_path(request, project_id)
+    prompt = _prepare_prompt(path, body, request)
+    return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/prompt_async", prompt)
+
+
+def _prepare_prompt(path: str, body: PromptBody, request: Request) -> dict:
     if len(body.files) + len(body.references) > 8:
         raise HTTPException(status_code=400, detail="一条消息最多添加 8 个附件或文件引用")
     if not body.text.strip() and not body.files and not body.references:
@@ -521,7 +529,7 @@ async def send_prompt(project_id: str, session_id: str, body: PromptBody, reques
         prompt["agent"] = body.agent
     if body.variant:
         prompt["variant"] = body.variant
-    return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/prompt_async", prompt)
+    return prompt
 
 
 class CommandBody(BaseModel):
@@ -537,38 +545,148 @@ class CommandBody(BaseModel):
 async def run_command(project_id: str, session_id: str, body: CommandBody, request: Request):
     async with request.app.state.runtime.workspace.task_dispatch():
         path = _project_path(request, project_id)
-        installed = await asyncio.to_thread(request.app.state.runtime.skills.list)
-        managed = next((item for item in installed["items"]
-                        if item["name"] == body.command and not item.get("conflict")), None)
-        catalog = None
-        if managed is None:
-            catalog = await _native_skill_catalog(request, path)
-            managed = next((item for item in _native_skill_items(catalog) if item["name"] == body.command), None)
-            if managed:
-                managed["enabled"] = await asyncio.to_thread(request.app.state.runtime.skills.permission, body.command) != "deny"
-        if managed:
-            if not managed["enabled"] or managed.get("error"):
-                raise HTTPException(status_code=409, detail="该技能已停用或格式无效，请重新选择技能")
-            available = await _native_managed_skill_names(request, path, [managed], catalog)
-            if body.command not in available:
-                raise HTTPException(status_code=409, detail="OpenCode 未加载该技能或存在同名技能/命令，请检查配置")
-        if managed:
-            if not await _agent_allows_skill(request, path, body.command, body.agent):
-                raise HTTPException(409, "当前 Agent 禁止使用该技能，请切换 Agent 或修改权限")
-        payload: dict = {"command": body.command, "arguments": body.arguments}
-        if managed:
-            message_id = "msg_" + format(int(time.time() * 1000) << 12, "012x") + secrets.token_hex(7)
-            payload["messageID"] = message_id
-            await asyncio.to_thread(request.app.state.runtime.skills.record_use,
-                                    path, session_id, message_id, managed, body.arguments)
-        model = _model_choice(body.provider_id, body.model_id, request, body.variant)
-        if model:
-            payload["model"] = f"{model['providerID']}/{model['modelID']}"
-        if body.agent:
-            payload["agent"] = body.agent
-        if body.variant:
-            payload["variant"] = body.variant
+        payload = await _prepare_command(path, session_id, body, request, record=True)
         return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/command", payload)
+
+
+async def _prepare_command(
+    path: str, session_id: str, body: CommandBody, request: Request,
+    *, record: bool = False, message_id: str | None = None,
+) -> dict:
+    installed = await asyncio.to_thread(request.app.state.runtime.skills.list)
+    managed = next((item for item in installed["items"]
+                    if item["name"] == body.command and not item.get("conflict")), None)
+    catalog = None
+    if managed is None:
+        catalog = await _native_skill_catalog(request, path)
+        managed = next((item for item in _native_skill_items(catalog) if item["name"] == body.command), None)
+        if managed:
+            managed["enabled"] = await asyncio.to_thread(request.app.state.runtime.skills.permission, body.command) != "deny"
+    if managed:
+        if not managed["enabled"] or managed.get("error"):
+            raise HTTPException(status_code=409, detail="该技能已停用或格式无效，请重新选择技能")
+        available = await _native_managed_skill_names(request, path, [managed], catalog)
+        if body.command not in available:
+            raise HTTPException(status_code=409, detail="OpenCode 未加载该技能或存在同名技能/命令，请检查配置")
+    if managed:
+        if not await _agent_allows_skill(request, path, body.command, body.agent):
+            raise HTTPException(409, "当前 Agent 禁止使用该技能，请切换 Agent 或修改权限")
+    payload: dict = {"command": body.command, "arguments": body.arguments}
+    if managed and record:
+        message_id = message_id or "msg_" + format(int(time.time() * 1000) << 12, "012x") + secrets.token_hex(7)
+        payload["messageID"] = message_id
+        await asyncio.to_thread(request.app.state.runtime.skills.record_use,
+                                path, session_id, message_id, managed, body.arguments)
+    model = _model_choice(body.provider_id, body.model_id, request, body.variant)
+    if model:
+        payload["model"] = f"{model['providerID']}/{model['modelID']}"
+    if body.agent:
+        payload["agent"] = body.agent
+    if body.variant:
+        payload["variant"] = body.variant
+    if message_id:
+        payload["messageID"] = message_id
+    return payload
+
+
+class QueuedMessageBody(BaseModel):
+    kind: Literal["prompt", "command"] = "prompt"
+    payload: dict
+
+
+class QueueStateBody(BaseModel):
+    paused: bool
+
+
+async def _queue_result(operation: Awaitable[dict]) -> dict:
+    try:
+        return await operation
+    except WorkspaceError as exc:
+        raise HTTPException(exc.status, exc.detail) from exc
+
+
+async def _queue_payload(project_id: str, session_id: str, body: QueuedMessageBody, request: Request) -> dict:
+    path = _project_path(request, project_id)
+    _safe_id(session_id)
+    try:
+        parsed = (PromptBody if body.kind == "prompt" else CommandBody).model_validate(body.payload)
+    except ValidationError as exc:
+        raise HTTPException(422, "排队消息格式无效") from exc
+    async with request.app.state.runtime.workspace.task_dispatch():
+        if body.kind == "prompt":
+            prepared = _prepare_prompt(path, parsed, request)
+        else:
+            prepared = await _prepare_command(path, session_id, parsed, request)
+        selected = prepared.get("model")
+        if isinstance(selected, str):
+            parsed.provider_id, _, parsed.model_id = selected.partition("/")
+        elif isinstance(selected, dict):
+            parsed.provider_id, parsed.model_id = selected["providerID"], selected["modelID"]
+    return parsed.model_dump()
+
+
+@router.get("/workspace/projects/{project_id}/sessions/{session_id}/queue")
+async def get_queue(project_id: str, session_id: str, request: Request):
+    _project_path(request, project_id)
+    return request.app.state.runtime.workspace_queue.snapshot(project_id, _safe_id(session_id))
+
+
+@router.post("/workspace/projects/{project_id}/sessions/{session_id}/queue", status_code=202)
+async def enqueue_message(project_id: str, session_id: str, body: QueuedMessageBody, request: Request):
+    payload = await _queue_payload(project_id, session_id, body, request)
+    # Confirm the session exists before storing anything for background delivery.
+    path = _project_path(request, project_id)
+    await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}")
+    return await _queue_result(request.app.state.runtime.workspace_queue.add(project_id, path, session_id, body.kind, payload))
+
+
+@router.patch("/workspace/projects/{project_id}/sessions/{session_id}/queue")
+async def set_queue_state(project_id: str, session_id: str, body: QueueStateBody, request: Request):
+    _project_path(request, project_id)
+    return await _queue_result(request.app.state.runtime.workspace_queue.pause(project_id, _safe_id(session_id), body.paused))
+
+
+@router.patch("/workspace/projects/{project_id}/sessions/{session_id}/queue/{item_id}")
+async def edit_queued_message(project_id: str, session_id: str, item_id: str, body: QueuedMessageBody, request: Request):
+    payload = await _queue_payload(project_id, session_id, body, request)
+    return await _queue_result(request.app.state.runtime.workspace_queue.update(project_id, session_id, _safe_id(item_id), body.kind, payload))
+
+
+@router.delete("/workspace/projects/{project_id}/sessions/{session_id}/queue/{item_id}")
+async def remove_queued_message(project_id: str, session_id: str, item_id: str, request: Request):
+    _project_path(request, project_id)
+    return await _queue_result(request.app.state.runtime.workspace_queue.remove(project_id, _safe_id(session_id), _safe_id(item_id)))
+
+
+def configure_workspace_queue(app: FastAPI) -> None:
+    request = Request({"type": "http", "app": app})
+    queue = app.state.runtime.workspace_queue
+
+    async def inspect(entry: dict) -> tuple[dict, list]:
+        path = _project_path(request, entry["project_id"])
+        session_id = _safe_id(entry["session_id"])
+        statuses = await _opencode(request, path, "GET", "/session/status")
+        if isinstance(statuses, dict) and statuses.get(session_id, {}).get("type", "idle") != "idle":
+            return statuses, []
+        messages = await _opencode(request, path, "GET", f"/session/{session_id}/message")
+        return statuses, messages
+
+    async def dispatch(entry: dict, item: dict) -> object:
+        async with app.state.runtime.workspace.task_dispatch():
+            path = _project_path(request, entry["project_id"])
+            message_id = item.get("message_id", item["id"])
+            if item["kind"] == "prompt":
+                payload = _prepare_prompt(path, PromptBody.model_validate(item["payload"]), request)
+                endpoint = "prompt_async"
+            else:
+                payload = await _prepare_command(path, entry["session_id"], CommandBody.model_validate(item["payload"]),
+                                                 request, record=True, message_id=message_id)
+                endpoint = "command"
+            payload["messageID"] = message_id
+            return await _opencode(request, path, "POST", f"/session/{_safe_id(entry['session_id'])}/{endpoint}", payload)
+
+    queue.inspect = inspect
+    queue.dispatch = dispatch
 
 
 def _agent_skill_allowed(agents: object, name: str, agent: str | None) -> bool:
@@ -662,13 +780,17 @@ async def run_shell(project_id: str, session_id: str, body: ShellBody, request: 
 @router.post("/workspace/projects/{project_id}/sessions/{session_id}/abort")
 async def abort_session(project_id: str, session_id: str, request: Request):
     path = _project_path(request, project_id)
+    await request.app.state.runtime.workspace_queue.pause(project_id, _safe_id(session_id))
     return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/abort", {})
 
 
 @router.get("/workspace/projects/{project_id}/sessions/{session_id}/diff")
-async def session_diff(project_id: str, session_id: str, request: Request):
+async def session_diff(
+    project_id: str, session_id: str, request: Request, message_id: str | None = None,
+):
     path = _project_path(request, project_id)
-    return await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}/diff")
+    params = {"messageID": _safe_id(message_id)} if message_id is not None else None
+    return await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}/diff", params=params)
 
 
 @router.get("/workspace/projects/{project_id}/permissions")

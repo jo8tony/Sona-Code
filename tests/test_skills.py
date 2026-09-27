@@ -253,6 +253,60 @@ def test_management_api_and_native_skill_commands(tmp_path, monkeypatch):
         assert source.is_dir()
 
 
+def test_queued_skill_records_native_message_only_at_dispatch_and_rechecks_permissions(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    app = create_app(default_config(), str(tmp_path / "proxy.json"))
+    app.state.runtime.config.model_settings.show_native_models = True
+    app.state.runtime.skills.add(str(make_skill(tmp_path / "user")))
+    calls = []
+
+    async def request(project, config, method, endpoint, *, body=None, params=None):
+        calls.append((method, endpoint, body))
+        if endpoint == "/command":
+            return [{"name": "code-review", "source": "skill"}]
+        if endpoint == "/skill":
+            item = app.state.runtime.skills.list()["items"][0]
+            return [{"name": "code-review", "location": str(Path(item["path"]) / "SKILL.md")}]
+        if endpoint == "/agent":
+            return [{"name": "build", "permission": []}]
+        if endpoint == "/session/status":
+            return {"ses_1": {"type": "busy"}}
+        return {"id": "ses_1"}
+
+    app.state.runtime.workspace.request = request
+    project = tmp_path / "project"
+    project.mkdir()
+    app.state.runtime.terminal_projects.add(str(project), "opencode")
+    with TestClient(app) as client:
+        prefix = "/__recorder/api/workspace/projects"
+        project_id = client.get(prefix).json()["items"][0]["id"]
+        base = f"{prefix}/{project_id}/sessions/ses_1"
+        response = client.post(base + "/queue", json={"kind": "command", "payload": {
+            "command": "code-review", "arguments": "review changes", "agent": "build",
+            "provider_id": "test", "model_id": "model"}})
+        assert response.status_code == 202
+        item = response.json()["items"][0]
+        native_message = {"info": {"id": item["id"], "role": "user"}, "parts": []}
+        annotate = lambda: app.state.runtime.skills.annotate_messages(str(project), "ses_1", [native_message])[0]
+        assert "skillUse" not in annotate()
+        client.post(base + "/abort", json={})
+        queue = app.state.runtime.workspace_queue
+        entry = queue._queues[f"{project_id}:ses_1"]
+        client.portal.call(queue.dispatch, entry, entry["items"][0])
+        method, endpoint, body = calls[-1]
+        assert (method, endpoint) == ("POST", "/session/ses_1/command")
+        assert body["messageID"] == item["id"]
+        assert body["model"] == "test/model"
+        assert annotate()["skillUse"]["name"] == "code-review"
+        app.state.runtime.skills.set_enabled("code-review", False)
+        count = sum(method == "POST" and endpoint.endswith("/command") for method, endpoint, _ in calls)
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as error:
+            client.portal.call(queue.dispatch, entry, entry["items"][0])
+        assert error.value.status_code == 409
+        assert sum(method == "POST" and endpoint.endswith("/command") for method, endpoint, _ in calls) == count
+
+
 def test_native_name_collisions_do_not_invoke_another_skill_or_command(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     app = create_app(default_config(), str(tmp_path / "proxy.json"))

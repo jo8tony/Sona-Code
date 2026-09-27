@@ -25,7 +25,8 @@ from llm_api_proxy_recorder.terminal import TerminalManager
 from llm_api_proxy_recorder.terminal.projects import TerminalProjectStore
 from llm_api_proxy_recorder.terminal.routes import router as terminal_router
 from llm_api_proxy_recorder.workspace import WorkspaceManager
-from llm_api_proxy_recorder.workspace.routes import router as workspace_router
+from llm_api_proxy_recorder.workspace.routes import router as workspace_router, configure_workspace_queue
+from llm_api_proxy_recorder.workspace.queue import WorkspaceQueue
 
 logger = logging.getLogger("llm_api_proxy_recorder")
 
@@ -73,6 +74,7 @@ class RuntimeState:
         self.terminal = TerminalManager()
         self.terminal_projects = TerminalProjectStore(config_path)
         self.workspace = WorkspaceManager(lambda: self.config)
+        self.workspace_queue = WorkspaceQueue(config_path)
         self.skills = SkillStore()
 
     async def apply_config(self, new_cfg: AppConfig, *, restart_workspace: bool = True) -> None:
@@ -92,9 +94,11 @@ class RuntimeState:
             or new_cfg.default_upstream != old_cfg.default_upstream
             or new_cfg.server.port != old_cfg.server.port
         ):
+            await self.workspace_queue.shutdown()
             await self.workspace.shutdown()
 
     async def aclose(self) -> None:
+        await self.workspace_queue.shutdown()
         await self.workspace.shutdown()
         await self.upstream_client.aclose()
 
@@ -127,6 +131,7 @@ def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
 
     app = FastAPI(title="llm-api-proxy-recorder", lifespan=lifespan)
     app.state.runtime = runtime
+    configure_workspace_queue(app)
     app.state.config = cfg  # 兼容旧引用
     app.state.config_path = config_path or CONFIG_PATH
 

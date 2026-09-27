@@ -37,6 +37,51 @@ function workspaceCallOwners(assistants, turns) {
   return owners;
 }
 
+function workspaceRelativeFile(path, projectPath = "") {
+  const file = String(path || "").replace(/\\/g, "/");
+  const base = String(projectPath || "").replace(/\\/g, "/").replace(/\/$/, "");
+  return base && file.startsWith(`${base}/`) ? file.slice(base.length + 1) : file;
+}
+
+// Native user summaries describe one turn, including all of its assistant steps.
+// Never substitute the cumulative session diff for a missing turn summary.
+function workspaceTurnDiffs(messages, message, projectPath = "") {
+  const userId = message.info?.parentID;
+  if (!userId) return [];
+  const user = messages.find(item => item.info?.role === "user" && item.info.id === userId);
+  const native = user?.info?.summary?.diffs;
+  const files = new Map();
+  const add = (diff) => {
+    const file = workspaceRelativeFile(diff.file || diff.path, projectPath);
+    if (file) files.set(file, { ...diff, file });
+  };
+  if (Array.isArray(native)) {
+    native.forEach(add);
+    return [...files.values()];
+  }
+  for (const reply of messages.filter(item => item.info?.role === "assistant" && item.info.parentID === userId)) {
+    for (const part of reply.parts || []) {
+      if (part.type !== "tool" || part.state?.status !== "completed" ||
+          !["write", "edit", "apply_patch", "multiedit"].includes(part.tool)) continue;
+      const { input = {}, metadata = {} } = part.state;
+      const changes = Array.isArray(metadata.files) ? metadata.files.map(file => ({
+        ...file, file: file.relativePath || file.filePath, patch: file.diff,
+      })) : metadata.filediff ? [metadata.filediff] : [{
+        file: input.filePath || input.path, patch: metadata.diff, derived: true, input,
+      }];
+      for (const diff of changes) {
+        const file = workspaceRelativeFile(diff.file || diff.path, projectPath);
+        const previous = files.get(file);
+        // Repeated tool edits are not a net diff. Keep the file without claiming
+        // exact totals until OpenCode publishes the native turn summary.
+        add(previous ? { file, derived: true, input: diff.input || input } : diff);
+        if (previous && files.has(file)) files.get(file).countsUnknown = true;
+      }
+    }
+  }
+  return [...files.values()];
+}
+
 function renderWorkspace(view) {
   let disposed = false;
   let events = null;
@@ -57,12 +102,15 @@ function renderWorkspace(view) {
   let scrollToLatestOnLoad = true;
   let trajectoryView = null;
   let trajectorySignature = "";
+  let changePopover = null;
+  const changeTriggers = new Map();
   const state = {
     projects: [], sessions: new Map(), sessionDetails: new Map(), errors: new Map(),
     projectId: workspaceSelection.projectId, sessionId: workspaceSelection.sessionId,
     messages: [], permissions: [], questions: [], questionDrafts: new Map(), questionPages: new Map(),
-    questionErrors: new Map(), diffs: [], todos: [], children: [], statuses: {},
+    questionErrors: new Map(), diffs: [], selectedChange: null, todos: [], children: [], statuses: {},
     recordingData: null, recordingError: "", check: null, tab: workspaceSelection.tab || "chat", search: "", sending: false, chosenModels: new Map(), defaultModel: null,
+    queue: { items: [], paused: false, error: "" }, queueLoaded: false,
     chosenAgents: new Map(), chosenVariants: new Map(), providers: [], connectedProviders: new Set(), agents: [], commands: [], skills: [], modelLoadError: "",
     collapsedProjects: new Set(), sessionLimits: new Map(), expandedTools: new Map(), pendingAction: "", actionError: "", compactingSessionId: null,
     attachments: [], fileReferences: [], pendingImageCount: 0, pendingImageBytes: 0, commandSelectedIndex: 0,
@@ -124,6 +172,105 @@ function renderWorkspace(view) {
   const sessionPath = (projectId, sessionId) =>
     `workspace/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}`;
   const alive = () => !disposed && view.isConnected && (!location.hash || location.hash === "#/workspace");
+  const queuePanel = el("section", { class: "wsp-queue", "aria-label": "待发送消息", hidden: true });
+  view.querySelector("#wsp-form").before(queuePanel);
+  let queueSignature = "";
+  let queueUpdateVersion = 0;
+  let queueDialog = null;
+  addCleanup(() => queueDialog?.close());
+
+  function waitingForReply() {
+    const status = state.statuses?.[state.sessionId]?.type;
+    return compactionRunning() || status === "busy" || status === "retry" ||
+      state.queue.items.some((item) => item.status === "sending");
+  }
+
+  function applyQueue(queue, projectId, sessionId) {
+    if (!alive() || state.projectId !== projectId || state.sessionId !== sessionId) return;
+    state.queue = queue;
+    queueUpdateVersion++;
+    state.queueLoaded = true;
+    renderHeader();
+  }
+
+  async function queueAction(suffix, method, body) {
+    const projectId = state.projectId, sessionId = state.sessionId;
+    const queue = await api(`${sessionPath(projectId, sessionId)}/queue${suffix}`, { method, body, silent: true });
+    applyQueue(queue, projectId, sessionId);
+  }
+
+  function renderQueue() {
+    const items = state.queue.items.filter((item) => item.status === "pending" || state.queue.paused);
+    const pendingCount = items.filter((item) => item.status === "pending").length;
+    const visible = !!items.length || !!state.queue.error;
+    queuePanel.hidden = !visible;
+    const signature = JSON.stringify([state.projectId, state.sessionId, state.queue, waitingForReply()]);
+    if (signature === queueSignature) return;
+    queueSignature = signature;
+    queuePanel.replaceChildren();
+    if (!visible) return;
+    const heading = el("div", { class: "wsp-queue-heading" },
+      el("span", { class: "wsp-queue-title", role: "status", text: `待发送 · ${pendingCount}` }),
+      el("span", { class: "wsp-queue-note", text: state.queue.paused ? "已暂停" : waitingForReply() ? "本轮结束后依次发送" : "即将发送" }),
+      el("button", { type: "button", class: "wsp-queue-toggle", text: state.queue.paused ? "继续发送" : "暂停",
+        onclick: async () => {
+          try { await queueAction("", "PATCH", { paused: !state.queue.paused }); }
+          catch (error) { toast("操作失败：" + detail(error), "error"); }
+        } }));
+    queuePanel.append(heading);
+    if (state.queue.error) queuePanel.append(el("p", { class: "wsp-queue-error", role: "status", text: state.queue.error }));
+    const list = el("ol", { class: "wsp-queue-list" });
+    for (const [index, item] of items.entries()) {
+      const payload = item.payload;
+      const text = item.kind === "command" ? `/${payload.command} ${payload.arguments || ""}` : payload.text || "";
+      const files = [...(payload.references || []).map((ref) => ref.path), ...(payload.files || []).map((file) => file.filename)];
+      const description = text || (files.length ? files.join("、") : "附件消息");
+      const sent = item.status === "sending";
+      const metadata = [sent ? "已提交 · 继续后核对状态" : "", payload.agent, payload.model_id,
+        files.length ? `${files.length} 个文件` : ""].filter(Boolean).join(" · ");
+      list.append(el("li", { class: "wsp-queue-row" },
+        el("span", { class: "wsp-queue-number", text: String(index + 1) }),
+        el("div", { class: "wsp-queue-message" }, el("span", { class: "wsp-queue-preview", text: description, title: description }),
+          el("small", { text: metadata })),
+        !sent && el("button", { type: "button", class: "wsp-queue-action", text: "编辑", "aria-label": `编辑第 ${index + 1} 条待发送消息`, onclick: () => editQueuedMessage(item) }),
+        el("button", { type: "button", class: "wsp-queue-action wsp-queue-remove", text: "×", title: sent ? "移出队列，不撤回已发送消息" : "移除", "aria-label": `移除第 ${index + 1} 条待发送消息`,
+          onclick: async () => {
+            try { await queueAction(`/${encodeURIComponent(item.id)}`, "DELETE"); }
+            catch (error) { toast("移除失败：" + detail(error), "error"); }
+          } })));
+    }
+    queuePanel.append(list);
+  }
+
+  function editQueuedMessage(item) {
+    if (queueDialog) return;
+    const projectId = state.projectId, sessionId = state.sessionId;
+    const command = item.kind === "command";
+    const field = el("textarea", { class: "wsp-queue-editor", "aria-label": command ? "技能任务" : "消息内容",
+      value: command ? item.payload.arguments || "" : item.payload.text || "", rows: "5" });
+    const errorLine = el("p", { class: "wsp-queue-error", role: "alert" });
+    const save = el("button", { type: "button", class: "wsp-mini primary", text: "保存", onclick: async () => {
+      save.disabled = true;
+      try {
+        const payload = { ...item.payload, [command ? "arguments" : "text"]: field.value };
+        const queue = await api(`${sessionPath(projectId, sessionId)}/queue/${encodeURIComponent(item.id)}`, {
+          method: "PATCH", body: { kind: item.kind, payload }, silent: true,
+        });
+        applyQueue(queue, projectId, sessionId);
+        dialog.close();
+      } catch (error) { errorLine.textContent = detail(error); }
+      finally { save.disabled = false; }
+    } });
+    const dialog = el("dialog", { class: "wsp-modal wsp-queue-dialog", "aria-label": "编辑待发送消息" },
+      el("h2", { text: "编辑待发送消息" }),
+      el("p", { text: command ? `/${item.payload.command} · 修改任务内容，保留队列位置` : "保存后保留队列位置和已选文件" }),
+      field, errorLine, el("div", { class: "wsp-modal-actions" },
+        el("button", { type: "button", class: "wsp-mini", text: "取消", onclick: () => dialog.close() }), save));
+    dialog.addEventListener("close", () => { queueDialog = null; dialog.remove(); });
+    queueDialog = dialog;
+    document.body.append(dialog);
+    dialog.showModal(); field.focus();
+  }
 
   addCleanup(() => {
     disposed = true;
@@ -618,6 +765,8 @@ function renderWorkspace(view) {
           workspaceSelection.sessionId = null;
           persistWorkspaceSelection();
           state.messages = [];
+          state.selectedChange = null;
+          closeChangePopover();
           renderHeader(); renderMain();
         }
         await loadSessions(state.projects.find((item) => item.id === projectId));
@@ -731,7 +880,7 @@ function renderWorkspace(view) {
     const last = state.messages.at(-1);
     const failed = last?.info?.role === "assistant" && last.info.error;
     const compacting = compactionRunning();
-    const busy = compacting || state.sending || status?.type === "busy";
+    const busy = state.sending || waitingForReply();
     const kind = failed ? "error" : busy ? "busy" : pending ? "attention" : state.check?.found ? "ready" : "missing";
     const description = failed ? "请求失败" : compacting ? "正在压缩上下文" : busy ? "正在处理" :
       pending ? "等待确认" : state.check?.found ? "已就绪" : "未检测到 Sona Code";
@@ -744,7 +893,22 @@ function renderWorkspace(view) {
     }
     view.querySelector("#wsp-abort").hidden = !session || !busy;
     view.querySelectorAll(".wsp-tab").forEach((button) => button.classList.toggle("active", button.dataset.wspTab === state.tab));
-    view.querySelector("#wsp-send").disabled = state.sending || !project || !state.check?.found;
+    const send = view.querySelector("#wsp-send");
+    send.disabled = state.sending || !project || !state.check?.found || (!!state.sessionId && !state.queueLoaded);
+    const queued = waitingForReply() || state.queue.items.length > 0 || state.queue.paused;
+    const sendLabel = queued ? "加入队列" : "发送消息";
+    send.title = sendLabel;
+    send.setAttribute("aria-label", sendLabel);
+    send.classList.toggle("queuing", queued);
+    if (send.dataset.mode !== String(queued)) {
+      send.innerHTML = queued ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h12M4 11h12M4 16h7m7-2v8m-4-4h8"/></svg>' :
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg>';
+      send.dataset.mode = String(queued);
+    }
+    view.querySelector(".wsp-composer-hint").textContent = `Enter ${queued ? "加入队列" : "发送"} · Shift+Enter 换行`;
+    input.dataset.placeholder = state.queue.paused ? "队列已暂停，继续输入可加入队列…" :
+      queued ? "继续输入，本轮结束后发送…" : "向 Sona Code 描述你的需求…";
+    renderQueue();
     view.querySelector("#wsp-attach").disabled = state.sending || state.pendingImageCount > 0 || !project;
     modelButton.disabled = !project;
   }
@@ -1038,7 +1202,7 @@ function renderWorkspace(view) {
         errorInfo: message.info?.error ? message.info : null, modelInfo: message.info, skillUse: message.skillUse });
     }
     let previousDay = "";
-    for (const message of displayMessages) {
+    for (const [messageIndex, message] of displayMessages.entries()) {
       const day = messageDay(message);
       if (day !== previousDay) {
         content.append(el("div", { class: "wsp-date-divider", text: day }));
@@ -1115,6 +1279,12 @@ function renderWorkspace(view) {
         }
       }
       flushTools();
+      const laterReply = displayMessages.slice(messageIndex + 1).some(item =>
+        item.info?.role === "assistant" && item.info.parentID === message.info?.parentID);
+      if (role === "assistant" && !laterReply) {
+        const diffs = workspaceTurnDiffs(state.messages, message, activeProject()?.path);
+        if (diffs.length) body.append(changeSummary(message.info.parentID, diffs));
+      }
       const column = el("div", { class: "wsp-message-column" }, body, messageActions(message));
       row.append(column);
       content.append(row);
@@ -1171,8 +1341,8 @@ function renderWorkspace(view) {
       }).slice(0, 240);
     }
     if (typeof diff.before !== "string" || typeof diff.after !== "string") return [];
-    const before = diff.before.split("\n");
-    const after = diff.after.split("\n");
+    const before = diff.before ? diff.before.split("\n") : [];
+    const after = diff.after ? diff.after.split("\n") : [];
     let prefix = 0;
     while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix++;
     let suffix = 0;
@@ -1191,6 +1361,7 @@ function renderWorkspace(view) {
   }
 
   function diffLineCounts(diff) {
+    if (diff.countsUnknown) return null;
     const additions = Number(diff.additions);
     const deletions = Number(diff.deletions);
     if (diff.additions != null && diff.deletions != null && Number.isFinite(additions) && Number.isFinite(deletions))
@@ -1208,6 +1379,147 @@ function renderWorkspace(view) {
     return null;
   }
 
+  function changeTotals(diffs) {
+    const counts = diffs.map(diffLineCounts).filter(Boolean);
+    const prefix = counts.length < diffs.length ? "≥" : "";
+    return { additions: counts.length ? `${prefix}+${counts.reduce((sum, item) => sum + item.additions, 0)}` : "—",
+      deletions: counts.length ? `${prefix}−${counts.reduce((sum, item) => sum + item.deletions, 0)}` : "—" };
+  }
+
+  function changeStats(diffs) {
+    const totals = changeTotals(diffs);
+    return el("span", { class: "wsp-change-stats" },
+      el("span", { class: "add", text: totals.additions, title: "新增行" }),
+      el("span", { class: "remove", text: totals.deletions, title: "删除行" }));
+  }
+
+  function changeFileIcon() {
+    return el("svg", { viewBox: "0 0 20 20", "aria-hidden": "true" },
+      el("path", { d: "M11.5 2.5H5a1.5 1.5 0 0 0-1.5 1.5v12A1.5 1.5 0 0 0 5 17.5h10a1.5 1.5 0 0 0 1.5-1.5V7.5L11.5 2.5Z" }),
+      el("path", { d: "M11.5 2.5v5h5M7 11h6M7 14h4" }));
+  }
+
+  function closeChangePopover(restoreFocus = false) {
+    if (!changePopover) return;
+    const { trigger, panel } = changePopover;
+    trigger.setAttribute("aria-expanded", "false");
+    panel.remove();
+    changePopover = null;
+    if (restoreFocus && trigger.isConnected) trigger.focus({ preventScroll: true });
+  }
+
+  function positionChangePopover() {
+    if (!changePopover) return;
+    const { trigger, panel } = changePopover;
+    const anchor = trigger.getBoundingClientRect();
+    const area = scroll.getBoundingClientRect();
+    if (anchor.bottom < area.top || anchor.top > area.bottom) { closeChangePopover(); return; }
+    const below = window.innerHeight - anchor.bottom - 20;
+    const above = anchor.top - 20;
+    const downward = below >= Math.min(panel.scrollHeight, 300) || below >= above;
+    panel.style.maxHeight = `${Math.min(360, Math.max(80, downward ? below : above))}px`;
+    panel.style.left = `${Math.max(12, Math.min(anchor.left, window.innerWidth - panel.offsetWidth - 12))}px`;
+    panel.style.top = `${downward ? anchor.bottom + 8 : Math.max(12, anchor.top - panel.offsetHeight - 8)}px`;
+  }
+
+  function populateChangePopover(diffs) {
+    const { panel, messageId } = changePopover;
+    const focusedFile = document.activeElement?.dataset.changeFile;
+    panel.replaceChildren(el("div", { class: "wsp-change-popover-head" },
+      el("strong", { text: "本轮改动" }), changeStats(diffs),
+      el("button", { class: "wsp-change-close", type: "button", "aria-label": "关闭文件列表", text: "×",
+        onclick: () => closeChangePopover(true) })));
+    const list = el("div", { class: "wsp-change-list" });
+    for (const diff of diffs) {
+      const path = diff.file || diff.path;
+      const separator = path.lastIndexOf("/");
+      list.append(el("button", { class: "wsp-change-file", type: "button", "data-change-file": path,
+        title: path, onclick: () => openMessageChange(messageId, diffs, path) },
+        changeFileIcon(),
+        el("span", { class: "wsp-change-file-copy" },
+          el("strong", { text: path.slice(separator + 1) }),
+          separator >= 0 ? el("small", { text: path.slice(0, separator) }) : null),
+        changeStats([diff]), el("span", { class: "wsp-change-arrow", text: "›", "aria-hidden": "true" })));
+    }
+    panel.append(list);
+    if (focusedFile) Array.from(list.querySelectorAll("button")).find(button =>
+      button.dataset.changeFile === focusedFile)?.focus({ preventScroll: true });
+    changePopover.signature = JSON.stringify(diffs);
+  }
+
+  function openChangePopover(messageId, trigger, diffs) {
+    closeChangePopover();
+    const panel = el("div", { class: "wsp-change-popover", id: "wsp-change-popover",
+      role: "dialog", "aria-label": "本轮修改的文件" });
+    changePopover = { messageId, trigger, panel, signature: "" };
+    root.append(panel);
+    trigger.setAttribute("aria-expanded", "true");
+    populateChangePopover(diffs);
+    positionChangePopover();
+    panel.addEventListener("keydown", event => {
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const buttons = Array.from(panel.querySelectorAll(".wsp-change-file"));
+      const index = buttons.indexOf(document.activeElement);
+      const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 :
+        (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next]?.focus({ preventScroll: true });
+    });
+  }
+
+  function changeSummary(messageId, diffs) {
+    const totals = changeTotals(diffs);
+    const trigger = el("button", { class: "wsp-change-summary", type: "button", "data-change-message": messageId,
+      "aria-haspopup": "dialog", "aria-expanded": "false", "aria-controls": "wsp-change-popover",
+      "aria-label": `已修改 ${diffs.length} 个文件，新增 ${totals.additions} 行，删除 ${totals.deletions} 行，查看文件列表`,
+      onclick: () => changePopover?.messageId === messageId ? closeChangePopover() : openChangePopover(messageId, trigger, diffs),
+      onkeydown: event => {
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          openChangePopover(messageId, trigger, diffs);
+          changePopover.panel.querySelector(".wsp-change-file")?.focus({ preventScroll: true });
+        }
+      } },
+      changeFileIcon(), el("span", { text: `已修改 ${diffs.length} 个文件` }),
+      el("span", { class: "wsp-change-divider", "aria-hidden": "true" }), changeStats(diffs),
+      el("svg", { class: "wsp-change-chevron", viewBox: "0 0 20 20", "aria-hidden": "true" },
+        el("path", { d: "m6 8 4 4 4-4" })));
+    changeTriggers.set(messageId, { trigger, diffs });
+    return trigger;
+  }
+
+  async function openMessageChange(messageId, diffs, file) {
+    closeChangePopover();
+    const selection = { messageId, diffs, file, loading: true, error: "" };
+    state.selectedChange = selection;
+    state.tab = workspaceSelection.tab = "changes";
+    renderHeader(); renderMain();
+    focusSelectedChange();
+    const projectId = state.projectId;
+    const sessionId = state.sessionId;
+    try {
+      const result = await api(`${sessionPath(projectId, sessionId)}/diff?message_id=${encodeURIComponent(messageId)}`, { silent: true });
+      if (!alive() || state.selectedChange !== selection || state.projectId !== projectId || state.sessionId !== sessionId) return;
+      if (Array.isArray(result)) selection.diffs = result.map(diff => ({ ...diff,
+        file: workspaceRelativeFile(diff.file || diff.path, activeProject()?.path) }));
+    } catch (error) {
+      if (state.selectedChange === selection) selection.error = detail(error);
+    } finally {
+      if (state.selectedChange === selection) selection.loading = false;
+      if (alive() && state.selectedChange === selection && state.tab === "changes") {
+        renderMain(); focusSelectedChange();
+      }
+    }
+  }
+
+  function focusSelectedChange() {
+    const card = Array.from(content.querySelectorAll(".wsp-diff-file")).find(item =>
+      item.dataset.changeFile === state.selectedChange?.file);
+    if (!card) { scroll.scrollTop = 0; return; }
+    scroll.scrollTop += card.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 16;
+    card.focus({ preventScroll: true });
+  }
+
   function changedFiles() {
     const writtenFiles = new Map();
     if (state.sessionId && !state.diffs.length) {
@@ -1223,8 +1535,21 @@ function renderWorkspace(view) {
   }
 
   function renderChanges() {
-    content.append(panelIntro("文件改动", "在同一处查看当前对话涉及的文件与代码差异。"));
-    const diffs = changedFiles();
+    const selection = state.selectedChange;
+    content.append(el("div", { class: "wsp-changes-heading" },
+      el("h2", { text: "文件改动" }), selection ? el("span", { class: "wsp-change-scope", text: "本轮" }) : null,
+      selection ? el("button", { class: "wsp-change-back", type: "button", text: "返回对话", onclick: () => {
+        state.tab = workspaceSelection.tab = "chat";
+        renderHeader(); renderMain();
+        const trigger = changeTriggers.get(selection.messageId)?.trigger;
+        if (trigger) {
+          scroll.scrollTop += trigger.getBoundingClientRect().top - scroll.getBoundingClientRect().top - scroll.clientHeight / 2;
+          trigger.focus({ preventScroll: true });
+        }
+      } }) : null));
+    const diffs = selection ? selection.diffs : changedFiles();
+    if (selection?.loading) content.append(el("div", { class: "wsp-change-loading", role: "status", text: "正在加载差异…" }));
+    if (selection?.error) content.append(el("div", { class: "wsp-error", role: "status", text: `差异加载失败：${selection.error}` }));
     if (!state.sessionId || !diffs.length) {
       content.append(empty("暂无文件改动", "Sona Code 修改文件后，这里会显示改动摘要。"));
       return;
@@ -1241,14 +1566,16 @@ function renderWorkspace(view) {
         el("strong", { text: String(value) }), el("span", { text: label })));
     }
     content.append(overview);
-    for (const [index, diff] of diffs.entries()) {
-      const lineCounts = counts[index];
-      const title = diff.file || diff.path || "文件";
-      const card = el("section", { class: "wsp-diff-file" },
+    for (const diff of diffs) {
+      const title = workspaceRelativeFile(diff.file || diff.path || "文件", activeProject()?.path);
+      const status = diff.status || (diff.before === "" && diff.after ? "added" : diff.before && diff.after === "" ? "deleted" : "modified");
+      const label = diff.derived ? "已写入" : status === "added" ? "新增" : status === "deleted" ? "删除" : "修改";
+      const card = el("section", { class: `wsp-diff-file${selection?.file === title ? " selected" : ""}`,
+        "data-change-file": title, tabindex: "-1", "aria-label": title },
         el("div", { class: "wsp-diff-head" },
-          el("span", { class: "wsp-file-badge", text: diff.derived ? "已写入" : "修改" }),
+          el("span", { class: "wsp-file-badge", text: label }),
           el("span", { class: "wsp-diff-path", title, text: title }),
-          el("span", { class: "wsp-diff-stats", text: lineCounts ? `+${lineCounts.additions}  −${lineCounts.deletions}` : "" })));
+          changeStats([diff])));
       const rows = diffRows(diff);
       if (rows.length) {
         if (diff.derived) card.append(el("p", { class: "wsp-diff-preview-label", text: "写入内容预览 · Sona Code 未返回完整逐行差异" }));
@@ -1376,6 +1703,8 @@ function renderWorkspace(view) {
           start: active.selectionStart, end: active.selectionEnd } : null;
     const keepTrajectory = state.tab === "trajectory" && !state.recordingError &&
       trajectoryView?.parentNode === content && trajectorySignature === JSON.stringify(state.recordingData);
+    const focusedChangeTrigger = changePopover?.trigger === document.activeElement;
+    changeTriggers.clear();
     if (!keepTrajectory) content.replaceChildren();
     content.classList.remove("wsp-content-trajectory");
     const changeCount = view.querySelector("#wsp-change-count");
@@ -1386,9 +1715,20 @@ function renderWorkspace(view) {
     if (state.tab === "changes") renderChanges();
     if (state.tab === "activity") renderActivity();
     if (state.tab === "tasks") renderTasks();
+    if (changePopover) {
+      const updated = changeTriggers.get(changePopover.messageId);
+      if (!updated) closeChangePopover();
+      else {
+        changePopover.trigger = updated.trigger;
+        updated.trigger.setAttribute("aria-expanded", "true");
+        if (changePopover.signature !== JSON.stringify(updated.diffs)) populateChangePopover(updated.diffs);
+        if (focusedChangeTrigger) updated.trigger.focus({ preventScroll: true });
+      }
+    }
     renderStatsLine();
     followLatest = stickToBottom;
     scroll.scrollTop = stickToBottom ? scroll.scrollHeight : previousTop;
+    positionChangePopover();
     if (stickToBottom) {
       const sessionId = state.sessionId;
       requestAnimationFrame(() => {
@@ -1962,8 +2302,9 @@ function renderWorkspace(view) {
     const projectId = state.projectId;
     const sessionId = state.sessionId;
     const base = sessionPath(projectId, sessionId);
+    const queueVersion = queueUpdateVersion;
     try {
-      const [messages, statuses, permissions, questions, diffs, todos, children, session, recording] = await Promise.allSettled([
+      const [messages, statuses, permissions, questions, diffs, todos, children, session, recording, queue] = await Promise.allSettled([
         api(`${base}/messages`, { silent: true }),
         api(`workspace/projects/${encodeURIComponent(projectId)}/status`, { silent: true }),
         api(`workspace/projects/${encodeURIComponent(projectId)}/permissions`, { silent: true }),
@@ -1973,8 +2314,10 @@ function renderWorkspace(view) {
         state.tab === "tasks" ? api(`${base}/children`, { silent: true }) : Promise.resolve(state.children),
         api(base, { silent: true }),
         ["trajectory", "activity"].includes(state.tab) ? api(`${base}/trajectory`, { silent: true }) : Promise.resolve(state.recordingData),
+        api(`${base}/queue`, { silent: true }),
       ]);
       if (!alive() || state.projectId !== projectId || state.sessionId !== sessionId) return;
+      if (queue.status === "fulfilled" && queueVersion === queueUpdateVersion) { state.queue = queue.value; state.queueLoaded = true; }
       if (recording.status === "fulfilled") { state.recordingData = recording.value; state.recordingError = ""; }
       else state.recordingError = detail(recording.reason);
       if (messages.status === "fulfilled") state.messages = Array.isArray(messages.value) ? messages.value : [];
@@ -2004,6 +2347,7 @@ function renderWorkspace(view) {
     hideAutocomplete();
     scrollToLatestOnLoad = true;
     state.projectId = projectId;
+    state.queue = { items: [], paused: false, error: "" }; state.queueLoaded = false;
     state.skills = []; state.commands = []; updateSkillInput();
     composer.clearFileReferences();
     state.attachments = [];
@@ -2015,6 +2359,8 @@ function renderWorkspace(view) {
     }
     const remembered = workspaceSelection.projectId === projectId ? workspaceSelection.sessionId : null;
     state.sessionId = remembered || (state.sessions.get(projectId) || [])[0]?.id || null;
+    closeChangePopover();
+    state.selectedChange = null;
     state.messages = []; state.permissions = []; state.questions = []; state.questionDrafts.clear(); state.diffs = []; state.todos = []; state.children = [];
     state.recordingData = null; state.recordingError = ""; trajectoryView = null; trajectorySignature = "";
     state.tab = remembered ? workspaceSelection.tab || "chat" : "chat";
@@ -2038,6 +2384,7 @@ function renderWorkspace(view) {
     hideAutocomplete();
     scrollToLatestOnLoad = true;
     state.projectId = projectId;
+    state.queue = { items: [], paused: false, error: "" }; state.queueLoaded = false;
     state.skills = []; state.commands = []; updateSkillInput();
     composer.clearFileReferences();
     state.attachments = [];
@@ -2048,6 +2395,8 @@ function renderWorkspace(view) {
       catch (_) { state.chosenModels.set(projectId, ""); }
     }
     state.sessionId = sessionId;
+    closeChangePopover();
+    state.selectedChange = null;
     state.messages = []; state.permissions = []; state.questions = []; state.questionDrafts.clear(); state.diffs = []; state.todos = []; state.children = [];
     state.recordingData = null; state.recordingError = ""; trajectoryView = null; trajectorySignature = "";
     state.tab = "chat";
@@ -2079,17 +2428,21 @@ function renderWorkspace(view) {
   }
 
   async function ensureSessionForSend() {
-    if (state.sessionId) return;
-    const session = await api(`workspace/projects/${encodeURIComponent(state.projectId)}/sessions`, {
+    const projectId = state.projectId;
+    if (state.sessionId) return { projectId, sessionId: state.sessionId };
+    const session = await api(`workspace/projects/${encodeURIComponent(projectId)}/sessions`, {
       method: "POST", body: {}, silent: true,
     });
-    const items = state.sessions.get(state.projectId) || [];
-    state.sessions.set(state.projectId, [session, ...items.filter((item) => item.id !== session.id)]);
+    const items = state.sessions.get(projectId) || [];
+    state.sessions.set(projectId, [session, ...items.filter((item) => item.id !== session.id)]);
+    if (!alive() || state.projectId !== projectId || state.sessionId) return { projectId, sessionId: session.id };
     state.sessionId = session.id;
+    state.queue = { items: [], paused: false, error: "" }; state.queueLoaded = true;
     workspaceSelection = { projectId: state.projectId, sessionId: session.id };
     persistWorkspaceSelection();
     connectEvents(state.projectId);
     renderSidebar(); renderHeader();
+    return { projectId, sessionId: session.id };
   }
 
   async function replyPermission(permissionId, reply) {
@@ -2228,6 +2581,8 @@ function renderWorkspace(view) {
       state.errors.delete(project.id);
       if (state.projectId === project.id) {
         state.projectId = null; state.sessionId = null; state.messages = [];
+        state.selectedChange = null;
+        closeChangePopover();
         workspaceSelection = { projectId: null, sessionId: null };
         persistWorkspaceSelection();
         connectEvents(null);
@@ -2238,6 +2593,22 @@ function renderWorkspace(view) {
   }
 
   view.querySelector("#wsp-new").addEventListener("click", openAddProject);
+  const outsideChanges = event => {
+    if (!event.target.closest(".wsp-change-summary, .wsp-change-popover")) closeChangePopover();
+  };
+  const changeKeydown = event => {
+    if (event.key === "Escape" && changePopover) { event.preventDefault(); closeChangePopover(true); }
+  };
+  document.addEventListener("pointerdown", outsideChanges);
+  document.addEventListener("keydown", changeKeydown);
+  window.addEventListener("resize", positionChangePopover);
+  scroll.addEventListener("scroll", positionChangePopover, { passive: true });
+  addCleanup(() => {
+    closeChangePopover();
+    document.removeEventListener("pointerdown", outsideChanges);
+    document.removeEventListener("keydown", changeKeydown);
+    window.removeEventListener("resize", positionChangePopover);
+  });
   const outsideActions = (event) => {
     if (!event.target.closest(".wsp-row-menu-wrap, .wsp-action-menu")) closeRowMenus();
   };
@@ -2340,6 +2711,8 @@ function renderWorkspace(view) {
     renderVariantPicker();
   });
   view.querySelectorAll(".wsp-tab").forEach((button) => button.addEventListener("click", () => {
+    closeChangePopover();
+    if (button.dataset.wspTab === "changes") state.selectedChange = null;
     state.tab = button.dataset.wspTab;
     workspaceSelection.tab = state.tab;
     scroll.scrollTop = 0;
@@ -2365,41 +2738,50 @@ function renderWorkspace(view) {
     if (slash && !builtInCommands.some((item) => item.name === slash[1]) && !state.commands.some((item) => item.name === slash[1])) {
       toast(`未知命令：/${slash[1]}`, "error"); return;
     }
+    if (shell && (waitingForReply() || state.queue.items.length)) {
+      toast("请等待当前任务和消息队列结束后运行终端命令", "error"); return;
+    }
+    const model = selectedModel();
+    const variant = variantSelect.hidden || !variantSelect.value ? {} : { variant: variantSelect.value };
+    const agent = agentSelect.value || "build";
+    const files = state.attachments.map(({ filename, mime, url }) => ({ filename, mime, url }));
+    const references = state.fileReferences.map(({ path }) => ({ path }));
     state.sending = true; renderHeader();
     hideAutocomplete();
     state.actionError = "";
     try {
       if (slash && await executeBuiltIn(slash[1])) return;
-      await ensureSessionForSend();
-      const model = selectedModel();
-      const variant = variantSelect.hidden || !variantSelect.value ? {} : { variant: variantSelect.value };
-      const agent = agentSelect.value || "build";
-      if (slash || shell) {
-        state.pendingAction = slash ? `/${slash[1]}` : `!${shell}`;
+      const { projectId, sessionId } = await ensureSessionForSend();
+      const base = sessionPath(projectId, sessionId);
+      if (shell) {
+        state.pendingAction = `!${shell}`;
         state.actionError = "";
         renderMain();
       }
       if (slash) {
-        await api(`${sessionPath(state.projectId, state.sessionId)}/command`, {
-          method: "POST", body: { command: slash[1], arguments: slash[2] || "", agent, ...model, ...variant }, silent: true,
+        const queue = await api(`${base}/queue`, {
+          method: "POST", body: { kind: "command", payload: { command: slash[1], arguments: slash[2] || "", agent, ...model, ...variant } }, silent: true,
         });
+        applyQueue(queue, projectId, sessionId);
       } else if (shell) {
-        await api(`${sessionPath(state.projectId, state.sessionId)}/shell`, {
+        await api(`${base}/shell`, {
           method: "POST", body: { command: shell, agent, ...model }, silent: true,
         });
       } else {
-        await api(`${sessionPath(state.projectId, state.sessionId)}/prompt`, {
-          method: "POST", body: { text, files: state.attachments.map(({ filename, mime, url }) => ({ filename, mime, url })),
-            references: state.fileReferences.map(({ path }) => ({ path })), agent, ...model, ...variant }, silent: true,
+        const queue = await api(`${base}/queue`, {
+          method: "POST", body: { kind: "prompt", payload: { text, files, references, agent, ...model, ...variant } }, silent: true,
         });
+        applyQueue(queue, projectId, sessionId);
       }
       if (!alive()) return;
-      composer.value = "";
-      updateSkillInput();
-      state.attachments = [];
-      state.fileReferences = [];
-      renderAttachments();
-      await loadSessions(activeProject());
+      if (state.projectId === projectId && state.sessionId === sessionId) {
+        if (composer.value.trim() === text) composer.value = "";
+        updateSkillInput();
+        state.attachments = [];
+        state.fileReferences = composer.fileReferences;
+        renderAttachments();
+      }
+      await loadSessions(state.projects.find((project) => project.id === projectId));
       await refreshSelected();
     } catch (error) {
       state.actionError = `操作失败：${detail(error)}`;
