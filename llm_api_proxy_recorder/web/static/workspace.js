@@ -2987,7 +2987,7 @@ function renderWorkspace(view) {
       toast("请等待当前任务和消息队列结束后运行终端命令", "error"); return;
     }
     const model = selectedModel();
-    const variant = variantSelect.hidden || !variantSelect.value ? {} : { variant: variantSelect.value };
+    const variant = variantSelect.value ? { variant: variantSelect.value } : {};
     const agent = agentSelect.value || "build";
     const files = state.attachments.map(({ filename, mime, url }) => ({ filename, mime, url }));
     const references = state.fileReferences.map(({ path }) => ({ path }));

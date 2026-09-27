@@ -222,10 +222,13 @@ def test_queue_routes_validate_and_revalidate_v1_payloads(tmp_path):
     with TestClient(app) as client:
         project_id = client.get("/__recorder/api/workspace/projects").json()["items"][0]["id"]
         base = f"/__recorder/api/workspace/projects/{project_id}/sessions/ses_test"
-        payload = {"text": "queued", "references": [{"path": "file.txt"}], "provider_id": "native", "model_id": "model-a", "agent": "build"}
+        payload = {"text": "queued", "references": [{"path": "file.txt"}],
+                   "provider_id": "native", "model_id": "model-a",
+                   "agent": "build", "variant": "max"}
         response = client.post(base + "/queue", json={"kind": "prompt", "payload": payload})
         assert response.status_code == 202
         item = response.json()["items"][0]
+        assert item["payload"]["variant"] == "max"
         assert not any(endpoint.endswith("prompt_async") for _, endpoint, _ in calls)
         assert client.post(base + "/queue", json={"payload": {"text": ""}}).status_code == 400
         assert client.post(base + "/queue", json={"payload": {"references": [{"path": "../outside"}]}}).status_code == 400
@@ -240,6 +243,7 @@ def test_queue_routes_validate_and_revalidate_v1_payloads(tmp_path):
         native = next(body for method, endpoint, body in reversed(calls) if endpoint.endswith("prompt_async"))
         assert native["messageID"] == item["id"]
         assert native["model"] == {"providerID": "native", "modelID": "model-a"}
+        assert native["variant"] == "max"
         assert native["parts"][1]["url"] == (project / "file.txt").as_uri()
         (project / "file.txt").unlink()
         with pytest.raises(HTTPException):
