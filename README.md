@@ -1,4 +1,4 @@
-# llm-api-proxy-recorder
+# Sona Code
 
 本地大模型 API 代理记录器：**透明转发**所有 LLM API 请求/响应（含流式 SSE），同时**旁路落盘**完整调用明细，并提供 Web 管理界面与轨迹分析。
 
