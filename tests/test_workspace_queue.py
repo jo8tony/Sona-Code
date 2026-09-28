@@ -198,7 +198,7 @@ async def test_queue_limit_and_ambiguous_submission_can_be_removed_after_pause(q
 
 def test_queue_routes_validate_and_revalidate_v1_payloads(tmp_path):
     config = AppConfig(upstreams=[UpstreamConfig(name="main", base_url="http://127.0.0.1:9001")],
-                       default_upstream="main", model_settings={"show_native_models": True})
+                       default_upstream="main", model_settings={"source": "native", "show_native_models": True})
     app = create_app(config, str(tmp_path / "config.json"))
     project = tmp_path / "project"
     project.mkdir()

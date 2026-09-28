@@ -76,7 +76,7 @@ async def _opencode(
                         body.update(choice)
                     else:
                         body["model"] = f"{choice['providerID']}/{choice['modelID']}" if endpoint.endswith("/command") else choice
-                    provider = next((p for p in runtime.config.upstreams if native_provider_id(p.name) == choice["providerID"]), None)
+                    provider = next((p for p in runtime.provider_config().upstreams if native_provider_id(p.name) == choice["providerID"]), None)
                     model = next((m for m in provider.models if m.id == choice["modelID"]), None) if provider else None
                     if model:
                         for part in body.get("parts", []):
@@ -85,9 +85,9 @@ async def _opencode(
                             if required and required not in model.input_modalities:
                                 raise HTTPException(400, "所选模型不支持该附件类型")
                 return await runtime.workspace.request(
-                    project, runtime.config, method, endpoint, body=body, params=params)
+                    project, runtime.provider_config(), method, endpoint, body=body, params=params)
         return await runtime.workspace.request(
-            project, runtime.config, method, endpoint, body=body, params=params)
+            project, runtime.provider_config(), method, endpoint, body=body, params=params)
 
     except WorkspaceError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
@@ -326,13 +326,14 @@ async def project_status(project_id: str, request: Request):
 @router.get("/workspace/projects/{project_id}/models")
 async def project_models(project_id: str, request: Request):
     path = _project_path(request, project_id)
-    cfg = request.app.state.runtime.config
-    providers = application_catalog(cfg)
+    cfg = request.app.state.runtime.provider_config()
+    source = cfg.model_settings.source
+    providers = [item for item in application_catalog(cfg) if item["source"] == source]
     connected = []
     try:
         data = await _opencode(request, path, "GET", "/config/providers")
     except HTTPException:
-        if cfg.model_settings.show_native_models:
+        if source == "native":
             raise
         data = {}
     native = {item.get("id"): item for item in data.get("providers", []) if isinstance(item, dict)}
@@ -343,16 +344,16 @@ async def project_models(project_id: str, request: Request):
             context = models.get(model_id, {}).get("limit", {}).get("context")
             if isinstance(context, (int, float)) and not isinstance(context, bool) and context > 0:
                 model.setdefault("limit", {})["context"] = context
-    if cfg.model_settings.show_native_models:
+    if source == "native":
         auth = await _opencode(request, path, "GET", "/provider")
         providers.extend(public_native_catalog(data))
         connected = auth.get("connected", []) if isinstance(auth, dict) else []
-    choice = cfg.model_settings.default_model
+    choice = cfg.model_settings.default_model if source == "custom" else None
     default = {"providerID": native_provider_id(choice.provider), "modelID": choice.model} if choice else None
     if not default and providers and providers[0]["models"]:
         default = {"providerID": providers[0]["id"], "modelID": next(iter(providers[0]["models"]))}
     return {"providers": providers, "connected": connected, "default_model": default,
-            "show_native_models": cfg.model_settings.show_native_models}
+            "source": source, "sona_environment": cfg.sona_site.environment}
 
 
 
@@ -475,29 +476,32 @@ def _prompt_file_part(file: PromptFile) -> tuple[dict, int]:
 
 def _model_choice(provider_id: str | None, model_id: str | None, request: Request,
                   variant: str | None = None) -> dict | None:
-    cfg = request.app.state.runtime.config
+    cfg = request.app.state.runtime.provider_config()
+    source = cfg.model_settings.source
     if bool(provider_id) != bool(model_id):
         raise HTTPException(400, "请选择完整的提供商与模型")
     if not provider_id:
-        choice = cfg.model_settings.default_model
+        choice = cfg.model_settings.default_model if source == "custom" else None
         if choice:
             provider_id, model_id = native_provider_id(choice.provider), choice.model
         else:
-            first = next((p for p in cfg.upstreams if p.models), None)
+            first = next((p for p in cfg.upstreams if p.source == source and p.models), None)
             if first:
                 provider_id, model_id = native_provider_id(first.name), first.models[0].id
-            elif cfg.model_settings.show_native_models:
+            elif source == "native":
                 return None
             else:
-                raise HTTPException(409, "暂无可用模型，请前往模型页面添加模型")
+                raise HTTPException(409, "当前来源暂无可用模型，请前往模型页面检查")
     provider = next((p for p in cfg.upstreams if native_provider_id(p.name) == provider_id), None)
     if provider:
+        if provider.source != source:
+            raise HTTPException(409, "所选模型不属于当前来源，请重新选择")
         model = next((m for m in provider.models if m.id == model_id), None)
         if not model:
             raise HTTPException(409, "所选模型已删除，请重新选择")
         if variant and variant not in model.reasoning_efforts:
             raise HTTPException(400, "该模型不支持所选思考强度")
-    elif provider_id.startswith("llmpr-") or not cfg.model_settings.show_native_models:
+    elif provider_id.startswith("llmpr-") or source != "native":
         raise HTTPException(409, "所选提供商不可用，请重新选择模型")
     return {"providerID": provider_id, "modelID": model_id}
 
@@ -856,11 +860,11 @@ async def reply_permission(project_id: str, permission_id: str, body: Permission
 async def project_events(project_id: str, request: Request) -> StreamingResponse:
     path = _project_path(request, project_id)
     try:
-        await request.app.state.runtime.workspace.ensure(path, request.app.state.runtime.config)
+        await request.app.state.runtime.workspace.ensure(path, request.app.state.runtime.provider_config())
     except WorkspaceError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
     return StreamingResponse(
-        request.app.state.runtime.workspace.events(path, request.app.state.runtime.config),
+        request.app.state.runtime.workspace.events(path, request.app.state.runtime.provider_config()),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

@@ -54,7 +54,8 @@ async def put_catalog(body: CatalogUpdate, request: Request) -> dict:
             names = [p.get("name") for p in data["upstreams"]]
             data["default_upstream"] = body.default_upstream or (names[0] if names else "")
             data["model_settings"] = {"default_model": body.default_model,
-                                      "show_native_models": body.show_native_models}
+                                      "show_native_models": body.show_native_models,
+                                      "source": current.model_settings.source}
             cfg = validate_config(data)
             result = await commit_config(request, cfg)
             return {**catalog_view(cfg), **result}

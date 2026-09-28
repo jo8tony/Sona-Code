@@ -27,6 +27,8 @@ from llm_api_proxy_recorder.terminal.routes import router as terminal_router
 from llm_api_proxy_recorder.workspace import WorkspaceManager
 from llm_api_proxy_recorder.workspace.routes import router as workspace_router, configure_workspace_queue
 from llm_api_proxy_recorder.workspace.queue import WorkspaceQueue
+from llm_api_proxy_recorder.sona_site import SonaSiteManager
+from llm_api_proxy_recorder.admin.sona_routes import router as sona_router
 
 logger = logging.getLogger("llm_api_proxy_recorder")
 
@@ -73,9 +75,16 @@ class RuntimeState:
         self.store = CallStore(resolved_records_dir(config))
         self.terminal = TerminalManager()
         self.terminal_projects = TerminalProjectStore(config_path)
-        self.workspace = WorkspaceManager(lambda: self.config)
+        self.sona_site = SonaSiteManager()
+        self.workspace = WorkspaceManager(self.provider_config)
         self.workspace_queue = WorkspaceQueue(config_path)
         self.skills = SkillStore()
+
+    def provider_config(self) -> AppConfig:
+        """Combine editable local providers with the current website catalog in memory."""
+        session = self.sona_site.session(self.config.sona_site)
+        remote = session.providers if session and self.config.model_settings.source == "sona" else []
+        return self.config.model_copy(update={"upstreams": [*self.config.upstreams, *remote]})
 
     async def apply_config(self, new_cfg: AppConfig, *, restart_workspace: bool = True) -> None:
         """热更新：换 config 引用；出站代理变化时重建客户端；记录目录变化时重建 store。"""
@@ -83,6 +92,10 @@ class RuntimeState:
         old_proxy = self.config.outbound.proxy_url
         old_dir = resolved_records_dir(self.config)
         self.config = new_cfg
+        for environment in ("uat", "prod"):
+            field = f"{environment}_url"
+            if getattr(new_cfg.sona_site, field) != getattr(old_cfg.sona_site, field):
+                self.sona_site.clear_environment(environment)
         if new_cfg.outbound.proxy_url != old_proxy:
             await self.upstream_client.rebuild(new_cfg.outbound.proxy_url)
         if resolved_records_dir(new_cfg) != old_dir:
@@ -92,6 +105,7 @@ class RuntimeState:
             or new_cfg.terminal != old_cfg.terminal
             or new_cfg.upstreams != old_cfg.upstreams
             or new_cfg.default_upstream != old_cfg.default_upstream
+            or new_cfg.sona_site != old_cfg.sona_site
             or new_cfg.server.port != old_cfg.server.port
         ):
             await self.workspace_queue.shutdown()
@@ -154,6 +168,7 @@ def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
     app.include_router(admin_router, prefix=f"{cfg.server.admin_prefix}/api")
     app.include_router(models_router, prefix=f"{cfg.server.admin_prefix}/api")
     app.include_router(skills_router, prefix=f"{cfg.server.admin_prefix}/api")
+    app.include_router(sona_router, prefix=f"{cfg.server.admin_prefix}/api")
 
     # 终端 API（REST + WebSocket，同样先于兜底代理路由注册）
     app.include_router(terminal_router, prefix=f"{cfg.server.admin_prefix}/api")

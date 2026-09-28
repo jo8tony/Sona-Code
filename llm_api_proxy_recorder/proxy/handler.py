@@ -248,7 +248,7 @@ def _process_and_finalize(store: CallStore, record: CallRecord, ctx: dict) -> No
 
 async def proxy_endpoint(request: Request):
     runtime = request.app.state.runtime
-    cfg = runtime.config  # 每次请求现取，支持热更新
+    cfg = runtime.provider_config()  # 每次请求现取，支持远端目录热更新
     store: CallStore = runtime.store
     rc = cfg.recording
     t_start = time.perf_counter()

@@ -21,7 +21,7 @@ def cfg(tmp_path):
     return AppConfig(upstreams=[UpstreamConfig(name="company", base_url="http://example.com/v1", api_key="provider-secret",
         models=[UpstreamModelConfig(id="model/one", api_key="model-secret", context_length=64000, output_length=8000),
                 UpstreamModelConfig(id="two", context_length=32000, output_length=4000)])], default_upstream="company",
-        recording={"dir": str(tmp_path / "records")})
+        recording={"dir": str(tmp_path / "records")}, model_settings={"source": "custom"})
 
 
 def test_catalog_keys_revision_and_partial_settings(cfg, tmp_path):
@@ -152,7 +152,7 @@ def test_workspace_catalog_defaults_filter_and_sanitize(cfg, tmp_path):
         cfg.model_settings.show_native_models = True
         response = client.get(base + "/models")
         assert "native-secret" not in response.text
-        assert len(response.json()["providers"]) == 2
+        assert len(response.json()["providers"]) == 1
 
 
 @pytest.mark.asyncio

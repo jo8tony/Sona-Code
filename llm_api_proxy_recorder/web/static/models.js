@@ -1,7 +1,130 @@
 "use strict";
 
+async function saveModelSource(source, updates, view) {
+  try {
+    await api("models/source", { method: "PUT", body: {
+      source: updates.source || source.source,
+      environment: updates.environment || source.environment,
+      uat_url: updates.uat_url === undefined ? source.uat_url : updates.uat_url,
+      prod_url: updates.prod_url === undefined ? source.prod_url : updates.prod_url,
+    }, silent: true });
+    await renderModels(view);
+  } catch (error) {
+    toast(error.detail || error.message, "error");
+  }
+}
+
+function modelSourceTabs(view, source) {
+  const labels = [["sona", "Sona 网站"], ["custom", "用户自己配置"], ["native", "本地 OpenCode"]];
+  return el("section", { class: "card models-top" },
+    el("h1", { text: "模型来源" }),
+    el("div", { class: "inline-controls" }, ...labels.map(([value, label]) =>
+      el("button", { type: "button", class: "btn" + (source.source === value ? " btn-primary" : ""),
+        "aria-pressed": String(source.source === value), text: label,
+        onclick: () => { if (source.source !== value) saveModelSource(source, { source: value }, view); } }))));
+}
+
+async function renderSonaModels(view, source, tabs) {
+  const error = el("p", { class: "banner banner-err", hidden: true });
+  const environment = el("select", { "aria-label": "网站环境" },
+    el("option", { value: "prod", text: "生产" }), el("option", { value: "uat", text: "UAT" }));
+  environment.value = source.environment;
+  environment.addEventListener("change", () => saveModelSource(source, { environment: environment.value }, view));
+  const uatUrl = el("input", { type: "url", value: source.uat_url, placeholder: "https://..." });
+  const prodUrl = el("input", { type: "url", value: source.prod_url, placeholder: "https://..." });
+  const urls = el("section", { class: "card" },
+    el("h2", { text: "网站环境" }),
+    el("label", { class: "field" }, el("span", { class: "f-label", text: "当前环境" }), environment),
+    el("label", { class: "field" }, el("span", { class: "f-label", text: "UAT 前端地址" }), uatUrl),
+    el("label", { class: "field" }, el("span", { class: "f-label", text: "生产前端地址" }), prodUrl),
+    el("button", { type: "button", class: "btn", text: "保存地址", onclick: () =>
+      saveModelSource(source, { uat_url: uatUrl.value.trim(), prod_url: prodUrl.value.trim() }, view) }));
+  const account = el("section", { class: "card" }, el("h2", { text: "网站登录" }),
+    el("p", { text: source.connected
+      ? `已登录：${source.user?.userName || source.user?.userId || "当前用户"}`
+      : "当前环境尚未登录。登录后将读取你创建的场景和已获批订阅。" }));
+  account.append(el("p", { class: "f-hint", text: "网站凭据仅保存在本次 App 运行期间；重启后需要重新登录。已有 OpenCode 终端切换来源后需要重启。" }));
+  async function action(path) {
+    error.hidden = true;
+    try {
+      await api(path, { method: "POST", silent: true });
+      await renderModels(view);
+    } catch (cause) { error.hidden = false; error.textContent = cause.detail || cause.message; }
+  }
+  if (source.connected) {
+    account.append(el("div", { class: "inline-controls" },
+      el("button", { type: "button", class: "btn", text: "刷新模型", onclick: () => action("models/sona/refresh") }),
+      el("button", { type: "button", class: "btn", text: "退出登录", onclick: () => action("models/sona/logout") })));
+  } else {
+    account.append(el("button", { type: "button", class: "btn btn-primary", text: "在浏览器中登录", onclick: async () => {
+      error.hidden = true;
+      try {
+        const { url } = await api("models/sona/login/start", { method: "POST", silent: true });
+        if (window.__TAURI__?.core?.invoke) await window.__TAURI__.core.invoke("open_website_login", { url });
+        else window.open(url, "_blank", "noopener");
+        const expires = Date.now() + 5 * 60 * 1000;
+        const timer = setInterval(async () => {
+          if (!view.isConnected || location.hash !== "#/models" || Date.now() > expires) { clearInterval(timer); return; }
+          try {
+            const latest = await api("models/source", { silent: true });
+            if (latest.source !== "sona") { clearInterval(timer); return; }
+            if (latest.connected && latest.environment === source.environment) {
+              clearInterval(timer);
+              await renderModels(view);
+            }
+          } catch (_) { /* Retry while browser login is pending. */ }
+        }, 2000);
+      } catch (cause) { error.hidden = false; error.textContent = cause.detail || cause.message; }
+    } }));
+  }
+  const catalog = el("section", { class: "card" }, el("h2", { text: "已订阅模型" }));
+  if (!source.connected) catalog.append(el("p", { class: "empty-hint", text: "登录后显示模型。" }));
+  else if (!source.providers.length) catalog.append(el("p", { class: "empty-hint", text: "当前环境没有可用的场景订阅。" }));
+  else for (const provider of source.providers) catalog.append(el("div", { class: "models-model" },
+    el("strong", { text: provider.name }),
+    el("p", { text: provider.models.map((model) => model.name).join("、") })));
+  view.replaceChildren(tabs, error, urls, account, catalog);
+}
+
+async function renderNativeModels(view, tabs) {
+  const panel = el("section", { class: "card" }, el("h2", { text: "本地 OpenCode 模型" }),
+    el("p", { class: "f-hint", text: "模型和凭据沿用本机 OpenCode 配置；在工作区模型选择器中设置提供商 Key。" }));
+  view.replaceChildren(tabs, panel);
+  try {
+    const projects = await api("workspace/projects", { silent: true });
+    if (!projects.items?.length) {
+      panel.append(el("p", { class: "empty-hint", text: "请先在工作区添加项目。" }));
+      return;
+    }
+    const select = el("select", { "aria-label": "项目" }, ...projects.items.map((project) =>
+      el("option", { value: project.id, text: project.name })));
+    const list = el("div");
+    const load = async () => {
+      list.replaceChildren(el("p", { class: "empty-hint", text: "正在读取 OpenCode 模型…" }));
+      try {
+        const data = await api(`workspace/projects/${encodeURIComponent(select.value)}/models`, { silent: true });
+        list.replaceChildren();
+        for (const provider of data.providers || []) list.append(el("div", { class: "models-model" },
+          el("strong", { text: provider.name }),
+          el("p", { text: Object.values(provider.models || {}).map((model) => model.name || model.id).join("、") })));
+        if (!data.providers?.length) list.append(el("p", { class: "empty-hint", text: "没有可用的本地模型。" }));
+      } catch (cause) { list.replaceChildren(el("p", { class: "banner banner-err", text: cause.detail || cause.message })); }
+    };
+    select.addEventListener("change", load);
+    panel.append(el("label", { class: "field" }, el("span", { class: "f-label", text: "项目" }), select), list);
+    await load();
+  } catch (cause) { panel.append(el("p", { class: "banner banner-err", text: cause.detail || cause.message })); }
+}
+
 async function renderModels(view) {
   view.replaceChildren(el("div", { class: "loading", text: "加载模型配置…" }));
+  let source;
+  try { source = await api("models/source", { silent: true }); }
+  catch (error) { view.replaceChildren(errorCard("加载模型来源失败：" + error.message, () => renderModels(view))); return; }
+  if (location.hash !== "#/models") return;
+  const tabs = modelSourceTabs(view, source);
+  if (source.source === "sona") { await renderSonaModels(view, source, tabs); return; }
+  if (source.source === "native") { await renderNativeModels(view, tabs); return; }
   let draft;
   try { draft = await api("models/config"); }
   catch (error) { view.replaceChildren(errorCard("加载模型配置失败：" + error.message, () => renderModels(view))); return; }
@@ -211,10 +334,9 @@ async function renderModels(view) {
       errorBox.textContent = (typeof error.detail === "string" ? error.detail : error.detail ? format422(error.detail) : error.message) + "；未保存的表单已保留。";
     } finally { save.disabled = false; }
   }
-  view.replaceChildren(el("section", { class: "card models-top" }, el("h1", { text: "模型" }),
+  view.replaceChildren(tabs, el("section", { class: "card models-top" }, el("h1", { text: "用户自己配置的模型" }),
     el("div", { class: "settings-grid" }, field("应用默认模型", defaultSelect),
-      field("外部代理默认上游", externalDefault)), el("label", { class: "model-toggle" }, nativeCheck, "显示 OpenCode 原有模型"),
-    el("p", { class: "f-hint", text: "原生模型以当前工作区项目为准，开启后在模型选择器合并显示，继续沿用原生配置。" })),
+      field("外部代理默认上游", externalDefault))),
     errorBox, el("div", { class: "models-layout" }, el("aside", { class: "card models-providers" },
       el("button", { type: "button", class: "btn", text: "＋ 添加提供商", onclick: () => {
         draft.providers.push({ name: "", display_name: "", base_url: "", api_type: "chat_completions", route_through_proxy: true,

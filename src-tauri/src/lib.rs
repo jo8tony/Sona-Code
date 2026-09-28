@@ -12,6 +12,21 @@ use std::os::windows::process::CommandExt;
 
 struct SidecarState(Mutex<Option<CommandChild>>);
 
+#[tauri::command]
+fn open_website_login(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    let parsed = url::Url::parse(&url).map_err(|_| "无效的网站地址".to_string())?;
+    let host = parsed.host_str().ok_or("网站地址缺少域名")?;
+    if parsed.scheme() != "https"
+        && !(parsed.scheme() == "http" && matches!(host, "127.0.0.1" | "localhost"))
+    {
+        return Err("登录网站必须使用 HTTPS".to_string());
+    }
+    if parsed.username() != "" || parsed.password().is_some() {
+        return Err("网站地址不能包含凭据".to_string());
+    }
+    app.shell().open(url, None).map_err(|error| error.to_string())
+}
+
 fn show_main_window(app: &tauri::AppHandle) {
     eprintln!("desktop: restoring main window");
     if let Some(window) = app.get_webview_window("main") {
@@ -138,6 +153,7 @@ pub fn run() {
     let app = builder
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![open_website_login])
         .on_window_event(|window, event| {
             if matches!(
                 event,

@@ -225,8 +225,11 @@
 .wsp-picker-head { display: flex; align-items: center; justify-content: space-between; padding: 11px 14px 7px; }
 .wsp-picker-head strong { font-size: 12px; }
 .wsp-picker-head button { border: 0; border-radius: 5px; background: transparent; color: var(--text-faint); font-size: 18px; line-height: 1; }
+.wsp-model-sources { display: flex; gap: 4px; padding: 5px 9px 9px; }
+.wsp-model-source { flex: 1; padding: 7px 4px; border: 1px solid var(--border); border-radius: 7px; background: #fff; color: var(--text-faint); cursor: pointer; font-size: 11px; }
+.wsp-model-source.selected { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 650; }
 #wsp-model-search { display: block; width: calc(100% - 28px); height: 34px; margin: 0 14px 8px; padding: 0 9px; border: 1px solid var(--border); border-radius: 7px; font-size: 11px; }
-.wsp-model-list { max-height: min(420px, 52vh); overflow: auto; padding: 0 6px 8px; }
+.wsp-model-list { max-height: min(390px, 44vh); overflow: auto; padding: 0 6px 8px; }
 .wsp-model-group { padding-top: 7px; border-top: 1px solid #f0f2f6; }
 .wsp-model-group-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 6px 9px; color: var(--text-dim); font-size: 11px; }
 .wsp-model-group-title span { color: var(--text-faint); font-size: 10px; }

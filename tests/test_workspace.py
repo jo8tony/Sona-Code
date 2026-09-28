@@ -34,7 +34,7 @@ def test_workspace_projects_and_session_routes(tmp_path):
         upstreams=[UpstreamConfig(name="main", base_url="http://127.0.0.1:9001")],
         default_upstream="main",
         terminal=TerminalConfig(route_through_proxy=False),
-        model_settings={"show_native_models": True},
+        model_settings={"source": "native", "show_native_models": True},
     )
     app = create_app(config, config_path=str(tmp_path / "config.json"))
     calls = []

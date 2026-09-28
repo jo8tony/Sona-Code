@@ -83,6 +83,7 @@ class UpstreamConfig(BaseModel):
     extra_headers: dict[str, str] = Field(default_factory=dict)
     # 默认 keep：完全透明透传客户端凭据头；显式配置 replace 才注入上游 key
     key_strategy: Literal["replace", "keep"] = "keep"
+    source: Literal["custom", "sona"] = "custom"
 
     @field_validator("api_key")
     @classmethod
@@ -189,6 +190,30 @@ class ModelChoice(BaseModel):
 class ModelSettings(BaseModel):
     default_model: ModelChoice | None = None
     show_native_models: bool = False
+    source: Literal["sona", "custom", "native"] = "sona"
+
+
+class SonaSiteConfig(BaseModel):
+    environment: Literal["uat", "prod"] = "prod"
+    uat_url: str = "https://sona.paasuat.cmbchina.cn"
+    prod_url: str = "https://sona.passoa.cmbchina.cn"
+
+    @field_validator("uat_url", "prod_url")
+    @classmethod
+    def _frontend_origin(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        if not value:
+            return ""
+        parsed = urlsplit(value)
+        if (parsed.scheme != "https" and not
+                (parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost"})):
+            raise ValueError("网站前端地址必须使用 HTTPS（本机开发地址可使用 HTTP）")
+        if not parsed.hostname or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
+            raise ValueError("网站前端地址只能填写域名和可选端口")
+        return value
+
+    def active_url(self) -> str:
+        return self.uat_url if self.environment == "uat" else self.prod_url
 
 
 class AppConfig(BaseModel):
@@ -199,6 +224,7 @@ class AppConfig(BaseModel):
     recording: RecordingConfig = Field(default_factory=RecordingConfig)
     terminal: TerminalConfig = Field(default_factory=TerminalConfig)
     model_settings: ModelSettings = Field(default_factory=ModelSettings)
+    sona_site: SonaSiteConfig = Field(default_factory=SonaSiteConfig)
 
     @model_validator(mode="before")
     @classmethod

@@ -207,6 +207,7 @@ def test_management_api_and_native_skill_commands(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     app = create_app(default_config(), str(tmp_path / "proxy.json"))
     app.state.runtime.config.model_settings.show_native_models = True
+    app.state.runtime.config.model_settings.source = "native"
     source = make_skill(tmp_path / "user")
     calls = []
 
@@ -257,6 +258,7 @@ def test_queued_skill_records_native_message_only_at_dispatch_and_rechecks_permi
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     app = create_app(default_config(), str(tmp_path / "proxy.json"))
     app.state.runtime.config.model_settings.show_native_models = True
+    app.state.runtime.config.model_settings.source = "native"
     app.state.runtime.skills.add(str(make_skill(tmp_path / "user")))
     calls = []
 
@@ -506,6 +508,7 @@ def test_project_native_skills_keep_selection_and_manual_history(tmp_path, monke
     monkeypatch.setenv("LLMPR_ORIGINAL_XDG_CONFIG_HOME", str(tmp_path / "original"))
     app = create_app(default_config(), str(tmp_path / "proxy.json"))
     app.state.runtime.config.model_settings.show_native_models = True
+    app.state.runtime.config.model_settings.source = "native"
     skill = make_skill(tmp_path / "project/.opencode/skills", "project-review")
     calls = []
     async def request(project, config, method, endpoint, *, body=None, **kwargs):

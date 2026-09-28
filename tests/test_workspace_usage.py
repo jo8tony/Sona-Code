@@ -17,7 +17,7 @@ def test_context_limit_uses_native_model_without_exposing_private_metadata(tmp_p
     config = AppConfig(upstreams=[UpstreamConfig(
         name="demo", base_url="http://127.0.0.1:1",
         models=[UpstreamModelConfig(id="model", context_length=32000)],
-    )], default_upstream="demo")
+    )], default_upstream="demo", model_settings={"source": "custom"})
     app = create_app(config, config_path=str(tmp_path / "config.json"))
     provider_id = native_provider_id("demo")
     unavailable = False

@@ -38,7 +38,7 @@ def _manager(request: Request):
 
 
 def _cfg(request: Request) -> AppConfig:
-    return request.app.state.runtime.config
+    return request.app.state.runtime.provider_config()
 
 
 def _err(e: TerminalError) -> JSONResponse:

@@ -218,7 +218,7 @@ function renderWorkspace(view) {
     get sending() { return sendingConversations.has(workspaceConversationKey(this.projectId, this.sessionId)); },
     get pendingAction() { return pendingActions.get(workspaceConversationKey(this.projectId, this.sessionId)) || ""; },
     queue: { items: [], paused: false, error: "" }, queueLoaded: false,
-    chosenAgents: new Map(), chosenVariants: new Map(), providers: [], connectedProviders: new Set(), agents: [], commands: [], skills: [], modelLoadError: "",
+    chosenAgents: new Map(), chosenVariants: new Map(), providers: [], connectedProviders: new Set(), agents: [], commands: [], skills: [], modelLoadError: "", modelSource: "sona", sonaEnvironment: "prod",
     collapsedProjects: new Set(), sessionLimits: new Map(), expandedTools: new Map(), actionError: "", compactingSessionId: null,
     attachments: [], fileReferences: [], commandSelectedIndex: 0,
     get pendingImageCount() { return pendingImages.get(workspaceConversationKey(this.projectId, this.sessionId))?.count || 0; },
@@ -282,6 +282,9 @@ function renderWorkspace(view) {
   const modelPicker = view.querySelector("#wsp-model-picker");
   const modelSearch = view.querySelector("#wsp-model-search");
   const modelList = view.querySelector("#wsp-model-list");
+  const modelSourceBar = el("div", { class: "wsp-model-sources", "aria-label": "模型来源" });
+  modelSearch.before(modelSourceBar);
+  let modelLoadVersion = 0;
   const agentSelect = view.querySelector("#wsp-agent");
   const agentTrigger = view.querySelector("#wsp-agent-trigger");
   const agentPicker = view.querySelector("#wsp-agent-picker");
@@ -2031,7 +2034,7 @@ function renderWorkspace(view) {
       el("span", { class: "wsp-model-label", text: model ? model.name || choice.model_id : "选择模型" }),
       el("svg", { class: "wsp-model-chevron", viewBox: "0 0 24 24", "aria-hidden": "true" },
         el("path", { d: "m6 9 6 6 6-6" })));
-    modelButton.title = model?.source === "application" && !model.route_through_proxy
+    modelButton.title = model?.source === "custom" && !model.route_through_proxy
       ? "本次调用不会进入本地调用记录与代理轨迹；工作区对话和工具活动仍然可见。" : model ? `${provider.id} / ${choice.model_id}` : "请添加或选择模型";
     const variants = Object.keys(model?.variants || {});
     variantSelect.replaceChildren(el("option", { value: "", text: "默认" }),
@@ -2170,6 +2173,20 @@ function renderWorkspace(view) {
   }
 
   function renderModelPicker() {
+    modelSourceBar.replaceChildren(...[["sona", "Sona 网站"], ["custom", "自己配置"], ["native", "本地 OpenCode"]].map(([source, label]) =>
+      el("button", { type: "button", class: "wsp-model-source" + (state.modelSource === source ? " selected" : ""),
+        "aria-pressed": String(state.modelSource === source), text: label, onclick: async () => {
+          if (source === state.modelSource) return;
+          try {
+            const current = await api("models/source", { silent: true });
+            await api("models/source", { method: "PUT", body: {
+              source, environment: current.environment, uat_url: current.uat_url, prod_url: current.prod_url,
+            }, silent: true });
+            state.modelSource = source;
+            await loadModels(state.projectId);
+            if (source === "sona" && !current.connected) location.hash = "#/models";
+          } catch (error) { toast("切换模型来源失败：" + detail(error), "error"); }
+        } })));
     modelList.replaceChildren();
     if (state.modelLoadError) {
       modelList.append(el("p", { class: "wsp-picker-empty", text: `模型加载失败：${state.modelLoadError}` }));
@@ -2179,7 +2196,7 @@ function renderWorkspace(view) {
     const selected = state.chosenModels.get(state.projectId) || "";
     if (!query) modelList.append(el("button", { type: "button", class: "wsp-model-option" + (!selected ? " selected" : ""),
       onclick: () => chooseModel("") },
-      el("span", { text: "应用默认模型" }), el("small", { text: "使用模型页面配置的默认模型" })));
+      el("span", { text: "当前来源默认模型" }), el("small", { text: "使用当前来源的默认模型" })));
     let count = 0;
     for (const provider of state.providers) {
       const items = Object.entries(provider.models || {}).filter(([id, model]) =>
@@ -2188,8 +2205,8 @@ function renderWorkspace(view) {
       const group = el("section", { class: "wsp-model-group" },
         el("div", { class: "wsp-model-group-title" },
           el("strong", { text: provider.name || provider.id }),
-          el("span", { text: `${items.length} 个模型 · ${provider.source === "application" ? (provider.route_through_proxy ? "应用配置 · 代理记录" : "应用配置 · 直连") : "Sona Code 原生配置"}` })));
-      if (provider.source !== "application") {
+          el("span", { text: `${items.length} 个模型 · ${provider.source === "custom" ? (provider.route_through_proxy ? "应用配置 · 代理记录" : "应用配置 · 直连") : provider.source === "sona" ? `Sona ${state.sonaEnvironment.toUpperCase()}` : "OpenCode 原生配置"}` })));
+      if (provider.source === "native") {
         group.append(el("button", { type: "button", class: "wsp-provider-key", text: "设置 API Key", onclick: () => openProviderKeyDialog(provider) }));
       }
       for (const [id, model] of items) {
@@ -2198,14 +2215,16 @@ function renderWorkspace(view) {
           title: `${provider.id} / ${id}`, onclick: () => chooseModel(value) },
           el("span", { text: model.name || id }),
           el("small", { text: [id, model.capabilities?.input?.image ? "图片" : "", model.capabilities?.reasoning ? "思考" : "",
-            model.source === "application" ? (model.route_through_proxy ? "代理记录" : "直连 · 不记录代理轨迹") : "原生路由",
+            model.source === "custom" ? (model.route_through_proxy ? "代理记录" : "直连 · 不记录代理轨迹") : model.source === "sona" ? "Sona 网站" : "原生路由",
             model.capabilities?.toolcall === false ? "不支持工具调用" : ""].filter(Boolean).join(" · ") })));
         count++;
       }
       modelList.append(group);
     }
     if (!count && query) modelList.append(el("p", { class: "wsp-picker-empty", text: "没有匹配的模型" }));
-    else if (!state.providers.length) modelList.append(el("p", { class: "wsp-picker-empty", text: "暂无可用模型，请前往模型页面添加。" }));
+    else if (!state.providers.length) modelList.append(
+      el("p", { class: "wsp-picker-empty", text: state.modelSource === "sona" ? "请先登录 Sona 网站并订阅模型。" : "暂无可用模型。" }),
+      el("a", { href: "#/models", class: "wsp-model-option", text: state.modelSource === "sona" ? "前往网站登录和环境设置" : "前往模型页面" }));
     if (!modelPicker.hidden) positionPicker(modelPicker, modelButton, "right");
   }
 
@@ -2224,15 +2243,18 @@ function renderWorkspace(view) {
   }
 
   async function loadModels(projectId) {
+    const version = ++modelLoadVersion;
     state.providers = [];
     state.defaultModel = null;
     state.modelLoadError = "";
     updateModelButton(false);
     try {
       const data = await api(`workspace/projects/${encodeURIComponent(projectId)}/models`, { silent: true });
-      if (!alive() || state.projectId !== projectId) return;
+      if (!alive() || state.projectId !== projectId || version !== modelLoadVersion) return;
       state.providers = Array.isArray(data.providers) ? data.providers.slice().sort((a, b) =>
         (a.id === "opencode" ? -1 : b.id === "opencode" ? 1 : (a.name || a.id).localeCompare(b.name || b.id))) : [];
+      state.modelSource = data.source || "sona";
+      state.sonaEnvironment = data.sona_environment || "prod";
       state.defaultModel = data.default_model || null;
       state.connectedProviders = new Set(Array.isArray(data.connected) ? data.connected : []);
       const value = state.chosenModels.get(projectId) || "";
@@ -2249,7 +2271,7 @@ function renderWorkspace(view) {
       renderStatsLine();
       if (!modelPicker.hidden) renderModelPicker();
     } catch (error) {
-      if (alive() && state.projectId === projectId) {
+      if (alive() && state.projectId === projectId && version === modelLoadVersion) {
         state.modelLoadError = detail(error);
         if (!modelPicker.hidden) renderModelPicker();
       }

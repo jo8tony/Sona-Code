@@ -67,6 +67,8 @@ def merge_providers(items: list[dict], cfg: AppConfig, *, require_limits: bool =
         if not isinstance(item, dict):
             raise HTTPException(422, "提供商必须是对象")
         item = dict(item)
+        if item.get("source", "custom") != "custom":
+            raise HTTPException(422, "网站模型不能在本地配置中编辑")
         if not isinstance(item.get("name"), str):
             raise HTTPException(422, "提供商名称必须是字符串")
         prior = old.get(item.get("name"))
@@ -178,11 +180,11 @@ def application_catalog(cfg: AppConfig) -> list[dict]:
                 "capabilities": {"reasoning": model.reasoning, "toolcall": model.tool_call,
                                  "input": {kind: kind in ["text", *model.input_modalities]
                                            for kind in ("text", "image", "pdf", "audio", "video")}},
-                "source": "application", "route_through_proxy": provider.route_through_proxy,
+                "source": provider.source, "route_through_proxy": provider.route_through_proxy,
                 "key_source": "model" if model.api_key else "provider" if provider.api_key else "none",
                 "api_type": model.api_type or provider.api_type,
             }
-        result.append({"id": pid, "name": compiled[pid]["name"], "source": "application",
+        result.append({"id": pid, "name": compiled[pid]["name"], "source": provider.source,
                        "route_through_proxy": provider.route_through_proxy, "models": models})
     return result
 

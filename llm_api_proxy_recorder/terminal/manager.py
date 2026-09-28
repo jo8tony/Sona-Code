@@ -302,9 +302,14 @@ def _build_env(cfg: AppConfig, kind: str) -> dict[str, str]:
             providers.update(managed)
             inline["provider"] = providers
             env["OPENCODE_DISABLE_MODELS_FETCH"] = "1"
-        choice = cfg.model_settings.default_model
+        choice = cfg.model_settings.default_model if cfg.model_settings.source == "custom" else None
         if choice:
             inline["model"] = f"{native_provider_id(choice.provider)}/{choice.model}"
+        elif cfg.model_settings.source == "sona":
+            first = next((provider for provider in cfg.upstreams
+                          if provider.source == "sona" and provider.models), None)
+            if first:
+                inline["model"] = f"{native_provider_id(first.name)}/{first.models[0].id}"
         if inline:
             env["OPENCODE_CONFIG_CONTENT"] = json.dumps(inline, ensure_ascii=False)
         from llm_api_proxy_recorder.admin.skills import SkillStore
