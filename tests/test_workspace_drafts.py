@@ -13,7 +13,7 @@ def test_drafts_restore_per_project_session_and_ignore_stale_refresh():
         pytest.skip('Node.js is required for workspace draft coverage')
     script = r'''
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
-const source = fs.readFileSync('llm_api_proxy_recorder/web/static/workspace.js', 'utf8');
+const source = fs.readFileSync('sona_code/web/static/workspace.js', 'utf8');
 const storage = new Map();
 global.sessionStorage = {getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key)};
 vm.runInThisContext(source.slice(0, source.indexOf('function renderWorkspace(')));

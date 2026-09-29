@@ -61,7 +61,7 @@ OpenCode 服务只监听 `127.0.0.1`，使用每次启动随机生成的 HTTP Ba
 
 顶部「模型」页面独立管理应用提供商和手动模型，不依赖工作区项目或 OpenCode 服务启动。模型定义、真实密钥、应用默认模型和原生目录显示开关保存在应用配置；`GET /models/config` 仅返回密钥状态和 revision，`PUT /models/config` 使用 revision 防止覆盖其他页面的修改。省略 `api_key` 表示保留，空字符串表示清除。旧模型可保持未填写的限制；新增或修改模型必须填写正整数的 `context_length`、`output_length`。
 
-共享环境构造器把提供商编译成 `llmpr-<base64url-name>`，通过 `OPENCODE_CONFIG_CONTENT` 注入两个 V1 原生适配器、模型限制、modalities 与明确配置的 variants。模型 `provider.api` 决定实际 API 根地址，`provider.npm` 决定 Chat Completions 或 Responses；不能用模型 `options.apiKey` 覆盖 SDK 密钥。直连通过模型 headers 使用有效密钥，空凭据显式覆盖环境/认证回退；代理模式不把真实 Key 放进 OpenCode，而使用 `/managed/<provider-token>/<model-token>/…` 路由由应用注入有效 Key。路径令牌不含密钥，未知标识返回 404；原 `/up/{name}/…` 路由和默认上游保留。
+共享环境构造器把提供商编译成 `sonacode-<base64url-name>`，通过 `OPENCODE_CONFIG_CONTENT` 注入两个 V1 原生适配器、模型限制、modalities 与明确配置的 variants。模型 `provider.api` 决定实际 API 根地址，`provider.npm` 决定 Chat Completions 或 Responses；不能用模型 `options.apiKey` 覆盖 SDK 密钥。直连通过模型 headers 使用有效密钥，空凭据显式覆盖环境/认证回退；代理模式不把真实 Key 放进 OpenCode，而使用 `/managed/<provider-token>/<model-token>/…` 路由由应用注入有效 Key。路径令牌不含密钥，未知标识返回 404；原 `/up/{name}/…` 路由和默认上游保留。
 
 原生模型默认不显示；打开后按当前项目合并显示，其接口及路由保持原生行为。应用模型不可通过旧 OpenCode `/auth` 写入端点修改密钥。后台发送也校验模型是否仍存在、思考强度和附件是否支持，防止陈旧选择继续发送。
 

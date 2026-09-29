@@ -13,7 +13,7 @@ def test_workspace_submit_preserves_reasoning_variants_for_prompts_and_commands(
         pytest.skip("Node.js is required for workspace variant coverage")
     script = r'''
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
-const source = fs.readFileSync("llm_api_proxy_recorder/web/static/workspace.js", "utf8");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
 const state = {projectId: "project", sessionId: "session", attachments: [], commands: [{name: "review"}],
   check: {found: true}, chosenModels: new Map(), chosenVariants: new Map(),
   providers: [{id: "provider", models: {

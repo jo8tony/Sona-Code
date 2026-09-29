@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "llm-api-proxy-recorder"
+name = "sona-code"
 version = "2.2.1"
-description = "本地大模型 API 代理记录器：透明转发并落盘调用明细"
+description = "Sona Code：透明转发并记录大模型 API 调用"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.110",
@@ -28,14 +28,14 @@ desktop = [
 socks = ["httpx[socks]"]
 
 [project.scripts]
-llm-api-proxy-recorder = "llm_api_proxy_recorder.cli:main"
+sona-code = "sona_code.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["llm_api_proxy_recorder*"]
+include = ["sona_code*"]
 exclude = ["tests*"]
 
 [tool.setuptools.package-data]
-llm_api_proxy_recorder = [
+sona_code = [
     "web/static/*",
     "web/static/vendor/*",
 ]

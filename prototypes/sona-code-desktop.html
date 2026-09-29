@@ -325,7 +325,7 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script>
     const projects = [
-      { id: "proxy", name: "llm-proxy", initials: "LP", tint: "#e9efff", ink: "#426ac2", path: "~/Desktop/projs/llm-proxy", open: true, conversations: [
+      { id: "proxy", name: "SonaCode", initials: "SC", tint: "#e9efff", ink: "#426ac2", path: "~/Desktop/projs/Sona-Code", open: true, conversations: [
         { id: "proxy-timeout", title: "整理代理超时配置", preview: "等待确认完整测试", time: "刚刚", prompt: "帮我把代理请求的超时配置收拢到设置页，并在请求超时时显示清晰的错误提示。", featured: true },
         { id: "proxy-stream", title: "排查 SSE 流式中断", preview: "定位响应转发问题", time: "昨天", prompt: "排查 SSE 流式响应在客户端断开连接后的清理问题。" },
         { id: "proxy-redaction", title: "完善敏感请求头脱敏", preview: "补充录制用例", time: "周二", prompt: "检查调用记录中的敏感请求头是否已正确脱敏。" }
@@ -546,14 +546,14 @@
         overview.append(metric);
       }
       container.append(overview);
-      container.append(diffFile("llm_api_proxy_recorder/config.py", "+10  −2", [
+      container.append(diffFile("sona_code/config.py", "+10  −2", [
         ["106", "context", " class ProxyConfig(BaseModel):"],
         ["107", "removed", "-    timeout: float = 60.0"],
         ["107", "added", "+    connect_timeout_seconds: float = 15.0"],
         ["108", "added", "+    response_timeout_seconds: float = 120.0"],
         ["109", "context", "     retry_count: int = 0"]
       ]));
-      container.append(diffFile("llm_api_proxy_recorder/web/static/settings.js", "+8  −2", [
+      container.append(diffFile("sona_code/web/static/settings.js", "+8  −2", [
         ["242", "context", " // 连接设置"],
         ["243", "removed", "-field(\"请求超时\", timeoutInput),"],
         ["243", "added", "+field(\"连接超时\", connectTimeoutInput),"],

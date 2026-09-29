@@ -87,12 +87,12 @@ jobs:
         run: |
           $Installer = (Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1).FullName
           if (-not $Installer) { throw "NSIS installer not found" }
-          $InstallDir = Join-Path $env:RUNNER_TEMP "llm-proxy-recorder-smoke"
+          $InstallDir = Join-Path $env:RUNNER_TEMP "sona-code-smoke"
           $Process = Start-Process -FilePath $Installer -ArgumentList @("/S", "/D=$InstallDir") -Wait -PassThru
           if ($Process.ExitCode -ne 0) { throw "Silent install failed: $($Process.ExitCode)" }
           $OpenCode = Get-ChildItem $InstallDir -Recurse -File -Filter "opencode.exe" | Select-Object -First 1
-          $Recorder = Get-ChildItem $InstallDir -Recurse -File -Filter "llm-api-proxy-recorder-sidecar.exe" | Select-Object -First 1
-          $Desktop = Get-ChildItem $InstallDir -Recurse -File -Filter "llm-api-proxy-recorder-desktop.exe" | Select-Object -First 1
+          $Recorder = Get-ChildItem $InstallDir -Recurse -File -Filter "sona-code-sidecar.exe" | Select-Object -First 1
+          $Desktop = Get-ChildItem $InstallDir -Recurse -File -Filter "sona-code-desktop.exe" | Select-Object -First 1
           $License = Get-ChildItem $InstallDir -Recurse -File -Filter "OpenCode-LICENSE.txt" | Select-Object -First 1
           if (-not $OpenCode) { throw "Installed opencode.exe not found" }
           if (-not $Recorder) { throw "Installed recorder sidecar not found" }

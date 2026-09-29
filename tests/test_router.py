@@ -1,7 +1,7 @@
 """上游路由与 URL 拼接测试。"""
 
-from llm_api_proxy_recorder.config import AppConfig, UpstreamConfig
-from llm_api_proxy_recorder.proxy.router import build_upstream_url, resolve_upstream
+from sona_code.config import AppConfig, UpstreamConfig
+from sona_code.proxy.router import build_upstream_url, resolve_upstream
 
 
 def make_cfg() -> AppConfig:

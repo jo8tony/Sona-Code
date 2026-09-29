@@ -5,8 +5,8 @@ import stat
 
 from fastapi.testclient import TestClient
 
-from llm_api_proxy_recorder.app import create_app
-from llm_api_proxy_recorder.config import default_config
+from sona_code.app import create_app
+from sona_code.config import default_config
 
 
 def test_opencode_jsonc_editor_preserves_comments_and_checks_revision(tmp_path, monkeypatch):
@@ -36,8 +36,8 @@ def test_opencode_import_is_allowlisted_idempotent_and_never_overwrites(tmp_path
     target_data = tmp_path / "app-data"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(target_config))
     monkeypatch.setenv("XDG_DATA_HOME", str(target_data))
-    monkeypatch.setenv("LLMPR_ORIGINAL_XDG_CONFIG_HOME", str(source_config))
-    monkeypatch.setenv("LLMPR_ORIGINAL_XDG_DATA_HOME", str(source_data))
+    monkeypatch.setenv("SONACODE_ORIGINAL_XDG_CONFIG_HOME", str(source_config))
+    monkeypatch.setenv("SONACODE_ORIGINAL_XDG_DATA_HOME", str(source_data))
 
     source_root = source_config / "opencode"
     (source_root / "agents").mkdir(parents=True)

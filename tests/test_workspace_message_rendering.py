@@ -15,7 +15,7 @@ def test_refresh_retains_unchanged_messages_and_updates_changed_rows():
 const fs = require("node:fs");
 const vm = require("node:vm");
 const assert = require("node:assert/strict");
-const source = fs.readFileSync("llm_api_proxy_recorder/web/static/workspace.js", "utf8");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
 vm.runInThisContext(source);
 vm.runInThisContext(source.slice(source.indexOf("  function renderMessages("), source.indexOf("  function panelIntro(")));
 class Element {

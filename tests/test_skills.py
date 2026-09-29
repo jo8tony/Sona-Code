@@ -8,10 +8,10 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from llm_api_proxy_recorder.admin.skills import SkillStore
-from llm_api_proxy_recorder.app import create_app
-from llm_api_proxy_recorder.config import default_config
-from llm_api_proxy_recorder.workspace.manager import OpenCodeServer, WorkspaceError, WorkspaceManager
+from sona_code.admin.skills import SkillStore
+from sona_code.app import create_app
+from sona_code.config import default_config
+from sona_code.workspace.manager import OpenCodeServer, WorkspaceError, WorkspaceManager
 
 
 def make_skill(root: Path, name: str = "code-review") -> Path:
@@ -106,7 +106,7 @@ def test_symlink_resources_are_not_followed(tmp_path):
 
 
 def test_copy_failure_keeps_existing_skill_and_cleans_staging(tmp_path, monkeypatch):
-    import llm_api_proxy_recorder.admin.skills as skills
+    import sona_code.admin.skills as skills
 
     source = make_skill(tmp_path / "user")
     store = SkillStore(tmp_path / "app")
@@ -397,7 +397,7 @@ def test_old_disabled_copy_migrates_once_with_permission(tmp_path):
     '{"permission": {/* retain permission */ "skill": {"*": "ask", /* retain skill */}},}',
 ])
 def test_official_permission_patch_preserves_other_config(tmp_path, content):
-    from llm_api_proxy_recorder.admin.opencode_config import parse_jsonc
+    from sona_code.admin.opencode_config import parse_jsonc
     root = tmp_path / "app"
     root.mkdir()
     config = root / "opencode.jsonc"
@@ -433,7 +433,7 @@ def test_manual_skill_annotations_persist_and_do_not_modify_native_parts(tmp_pat
 
 def test_agent_specific_skill_denial_blocks_picker_and_command(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    monkeypatch.setenv("LLMPR_ORIGINAL_XDG_CONFIG_HOME", str(tmp_path / "original"))
+    monkeypatch.setenv("SONACODE_ORIGINAL_XDG_CONFIG_HOME", str(tmp_path / "original"))
     app = create_app(default_config(), str(tmp_path / "proxy.json"))
     app.state.runtime.config.model_settings.show_native_models = True
     skill = app.state.runtime.skills.add(str(make_skill(tmp_path / "user")))
@@ -461,9 +461,9 @@ def test_agent_specific_skill_denial_blocks_picker_and_command(tmp_path, monkeyp
 
 def test_terminal_injects_external_paths_without_provider_changes(tmp_path, monkeypatch):
     import json
-    from llm_api_proxy_recorder.terminal.manager import _build_env
+    from sona_code.terminal.manager import _build_env
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "app"))
-    monkeypatch.setenv("LLMPR_ORIGINAL_XDG_CONFIG_HOME", str(tmp_path / "original"))
+    monkeypatch.setenv("SONACODE_ORIGINAL_XDG_CONFIG_HOME", str(tmp_path / "original"))
     monkeypatch.delenv("OPENCODE_CONFIG_CONTENT", raising=False)
     external = make_skill(tmp_path / "original/opencode/skills")
     cfg = default_config()
@@ -505,7 +505,7 @@ async def test_skill_changes_are_blocked_during_command_preflight():
 
 def test_project_native_skills_keep_selection_and_manual_history(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    monkeypatch.setenv("LLMPR_ORIGINAL_XDG_CONFIG_HOME", str(tmp_path / "original"))
+    monkeypatch.setenv("SONACODE_ORIGINAL_XDG_CONFIG_HOME", str(tmp_path / "original"))
     app = create_app(default_config(), str(tmp_path / "proxy.json"))
     app.state.runtime.config.model_settings.show_native_models = True
     app.state.runtime.config.model_settings.source = "native"

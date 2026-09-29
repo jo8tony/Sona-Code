@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from llm_api_proxy_recorder.admin.api import _load_index_rows
-from llm_api_proxy_recorder.recording.store import CallStore
+from sona_code.admin.api import _load_index_rows
+from sona_code.recording.store import CallStore
 
 
 def make_rec(cid: str, **over) -> dict:

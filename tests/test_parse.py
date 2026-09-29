@@ -4,7 +4,7 @@ import gzip
 import json
 import zlib
 
-from llm_api_proxy_recorder.recording.parse import (
+from sona_code.recording.parse import (
     chunks_to_raw_texts,
     diff_new_messages,
     extract_session_header,

@@ -1,12 +1,12 @@
 """Responses parsing, usage, arbitrary SSE chunking and history references."""
 import json
 
-from llm_api_proxy_recorder.recording.parse import parse_request_body, parse_nonsse_body, parse_sse_captured
-from llm_api_proxy_recorder.recording.sse import SSEParser
-from llm_api_proxy_recorder.recording.models import CallRecord, RequestInfo
-from llm_api_proxy_recorder.recording.store import CallStore
-from llm_api_proxy_recorder.proxy.handler import _process_and_finalize
-from llm_api_proxy_recorder.config import RecordingConfig
+from sona_code.recording.parse import parse_request_body, parse_nonsse_body, parse_sse_captured
+from sona_code.recording.sse import SSEParser
+from sona_code.recording.models import CallRecord, RequestInfo
+from sona_code.recording.store import CallStore
+from sona_code.proxy.handler import _process_and_finalize
+from sona_code.config import RecordingConfig
 
 OUTPUT = [
     {"type": "reasoning", "id": "r", "summary": [{"type": "summary_text", "text": "考虑一下"}]},

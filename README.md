@@ -26,7 +26,7 @@
 ## 安装
 
 ```bash
-cd llm-proxy  # 进入含 pyproject.toml 的项目根目录
+cd Sona-Code  # 进入含 pyproject.toml 的项目根目录
 
 # 创建虚拟环境并安装（含开发依赖）
 python3.10 -m venv .venv  # 也可使用其他 Python 3.10+ 版本
@@ -85,8 +85,8 @@ python3.10 -m venv .venv  # 也可使用其他 Python 3.10+ 版本
 ### 2. 启动
 
 ```bash
-.venv/bin/llm-api-proxy-recorder --config .runtime/config.json
-# 等价：.venv/bin/python -m llm_api_proxy_recorder --config .runtime/config.json
+.venv/bin/sona-code --config .runtime/config.json
+# 等价：.venv/bin/python -m sona_code --config .runtime/config.json
 ```
 
 CLI 参数：
@@ -95,7 +95,7 @@ CLI 参数：
 |---|---|
 | `--host` | 监听地址（默认 `127.0.0.1`） |
 | `--port` | 监听端口（默认 `8117`） |
-| `--config` | 配置文件路径（默认 `~/.llm-api-proxy-recorder/config.json`） |
+| `--config` | 配置文件路径（默认 `~/.sona-code/config.json`） |
 | `--records-dir` | 记录目录（覆盖 `recording.dir`，仅本次生效） |
 | `--admin-prefix` | 管理路径前缀（默认 `/__recorder`） |
 
@@ -210,7 +210,7 @@ curl http://127.0.0.1:8117/up/deepseek/v1/chat/completions -H "Content-Type: app
 
 ## 数据存储
 
-记录文件存放于 `recording.dir`（默认 `~/.llm-api-proxy-recorder/records`，本仓库为 `.runtime/records`）：
+记录文件存放于 `recording.dir`（默认 `~/.sona-code/records`，本仓库为 `.runtime/records`）：
 
 ```
 records/
@@ -278,10 +278,12 @@ npm run desktop:build:windows
 
 Windows 构建会根据 `packaging/opencode.json` 下载并校验固定的 OpenCode x64 baseline 发布资产，并将其与 Python sidecar 一起写入 NSIS 安装包。构建机需能访问 GitHub Releases，安装与首次运行不需联网下载 OpenCode。
 
+桌面版配置文件位于 `%APPDATA%\SonaCode\config.json`，记录目录位于 `%APPDATA%\SonaCode\records`。新版使用独立的 SonaCode 数据目录，不读取旧版目录。
+
 ## 目录结构
 
 ```
-llm_api_proxy_recorder/
+sona_code/
 ├── admin/api.py        # 管理端 API
 ├── app.py              # FastAPI 应用工厂 + 保留清理后台任务
 ├── cli.py              # CLI 入口

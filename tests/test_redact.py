@@ -1,7 +1,7 @@
 """请求/响应头脱敏测试。"""
 
-from llm_api_proxy_recorder.config import RecordingConfig
-from llm_api_proxy_recorder.recording.redact import redact_headers
+from sona_code.config import RecordingConfig
+from sona_code.recording.redact import redact_headers
 
 
 def _cfg(**over) -> RecordingConfig:

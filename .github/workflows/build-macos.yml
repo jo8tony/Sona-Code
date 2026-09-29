@@ -89,8 +89,8 @@ jobs:
       - name: Verify macOS package
         run: |
           app="src-tauri/target/release/bundle/macos/Sona Code.app"
-          sidecar="$app/Contents/MacOS/llm-api-proxy-recorder-sidecar"
-          desktop="$app/Contents/MacOS/llm-api-proxy-recorder-desktop"
+          sidecar="$app/Contents/MacOS/sona-code-sidecar"
+          desktop="$app/Contents/MacOS/sona-code-desktop"
           test -x "$sidecar"
           test -x "$desktop"
           lipo "$sidecar" -verify_arch "${{ matrix.arch }}"

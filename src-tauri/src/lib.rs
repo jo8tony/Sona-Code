@@ -185,10 +185,10 @@ pub fn run() {
             // Fail before launching the backend if the tray cannot be created.
             #[cfg(windows)]
             setup_tray(app)?;
-            let config_dir = app.path().app_config_dir()?;
-            let data_dir = app.path().app_data_dir()?;
-            let cache_dir = app.path().app_cache_dir()?;
-            let log_dir = app.path().app_log_dir()?;
+            let config_dir = app.path().config_dir()?.join("SonaCode");
+            let data_dir = app.path().data_dir()?.join("SonaCode");
+            let cache_dir = app.path().cache_dir()?.join("SonaCode");
+            let log_dir = data_dir.join("logs");
             let state_dir = data_dir.join("state");
             std::fs::create_dir_all(&config_dir)?;
             std::fs::create_dir_all(&data_dir)?;
@@ -225,7 +225,7 @@ pub fn run() {
                 std::process::id(),
                 SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
             );
-            let mut sidecar = app.shell().sidecar("llm-api-proxy-recorder-sidecar")?;
+            let mut sidecar = app.shell().sidecar("sona-code-sidecar")?;
             for key in [
                 "XDG_CONFIG_HOME",
                 "XDG_DATA_HOME",
@@ -233,14 +233,14 @@ pub fn run() {
                 "XDG_STATE_HOME",
             ] {
                 sidecar = sidecar.env(
-                    format!("LLMPR_ORIGINAL_{key}"),
+                    format!("SONACODE_ORIGINAL_{key}"),
                     std::env::var_os(key).unwrap_or_default(),
                 );
             }
             sidecar = sidecar
                 .env("PYTHONIOENCODING", "utf-8")
-                .env("LLMPR_DESKTOP_INSTANCE_ID", &instance_id)
-                .env("LLMPR_BUNDLED_OPENCODE", bundled_opencode)
+                .env("SONACODE_DESKTOP_INSTANCE_ID", &instance_id)
+                .env("SONACODE_BUNDLED_OPENCODE", bundled_opencode)
                 .env("XDG_CONFIG_HOME", &config_dir)
                 .env("XDG_DATA_HOME", &data_dir)
                 .env("XDG_CACHE_HOME", &cache_dir)

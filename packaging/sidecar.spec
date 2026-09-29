@@ -7,9 +7,9 @@ from PyInstaller.utils.hooks import collect_submodules
 
 
 ROOT = Path(SPEC).resolve().parent.parent
-STATIC_DIR = ROOT / "llm_api_proxy_recorder" / "web" / "static"
+STATIC_DIR = ROOT / "sona_code" / "web" / "static"
 
-datas = [(str(STATIC_DIR), "llm_api_proxy_recorder/web/static")]
+datas = [(str(STATIC_DIR), "sona_code/web/static")]
 hiddenimports = collect_submodules("uvicorn")
 binaries = []
 
@@ -24,7 +24,7 @@ if sys.platform == "win32":
         binaries.append((str(runtime_path), "winpty"))
 
 a = Analysis(
-    [str(ROOT / "llm_api_proxy_recorder" / "__main__.py")],
+    [str(ROOT / "sona_code" / "__main__.py")],
     pathex=[str(ROOT)],
     binaries=binaries,
     datas=datas,
@@ -44,7 +44,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="llm-api-proxy-recorder-sidecar",
+    name="sona-code-sidecar",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -21,7 +21,7 @@ esac
 
 output_dir="$project_dir/build/sidecar"
 binary_dir="$project_dir/src-tauri/binaries"
-binary_name="llm-api-proxy-recorder-sidecar"
+binary_name="sona-code-sidecar"
 
 mkdir -p "$output_dir" "$binary_dir"
 "$build_python" -m PyInstaller \

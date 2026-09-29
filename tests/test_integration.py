@@ -21,10 +21,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
-from llm_api_proxy_recorder.app import create_app
-from llm_api_proxy_recorder.config import AppConfig, RecordingConfig, ServerConfig, UpstreamConfig
-from llm_api_proxy_recorder.recording.sse import SSEParser
-from llm_api_proxy_recorder.recording.store import CallStore
+from sona_code.app import create_app
+from sona_code.config import AppConfig, RecordingConfig, ServerConfig, UpstreamConfig
+from sona_code.recording.sse import SSEParser
+from sona_code.recording.store import CallStore
 
 ADMIN = "/__recorder"
 UPSTREAM_KEY = "sk-upstream-main-9x8y7z"
@@ -533,7 +533,7 @@ async def test_concurrent_streams(stack):
 
 # ================================================= 9. 管理端点
 def test_ping_identifies_desktop_sidecar(tmp_path, monkeypatch):
-    monkeypatch.setenv("LLMPR_DESKTOP_INSTANCE_ID", "test-instance")
+    monkeypatch.setenv("SONACODE_DESKTOP_INSTANCE_ID", "test-instance")
     cfg = AppConfig(
         upstreams=[UpstreamConfig(name="main", base_url="http://127.0.0.1:9001")],
         default_upstream="main",

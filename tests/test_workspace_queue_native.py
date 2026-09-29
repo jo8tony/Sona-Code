@@ -11,9 +11,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpx
 import pytest
 
-from llm_api_proxy_recorder.admin.models import compile_providers, native_provider_id
-from llm_api_proxy_recorder.config import AppConfig, UpstreamConfig, UpstreamModelConfig
-from llm_api_proxy_recorder.workspace.queue import WorkspaceQueue
+from sona_code.admin.models import compile_providers, native_provider_id
+from sona_code.config import AppConfig, UpstreamConfig, UpstreamModelConfig
+from sona_code.workspace.queue import WorkspaceQueue
 
 BINARIES = [path for path in os.environ.get("OPENCODE_TEST_BINARIES", "").split(os.pathsep) if path]
 

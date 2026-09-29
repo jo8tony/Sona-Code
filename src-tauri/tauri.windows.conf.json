@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
     "externalBin": [
-      "binaries/llm-api-proxy-recorder-sidecar",
+      "binaries/sona-code-sidecar",
       "binaries/opencode"
     ],
     "resources": {

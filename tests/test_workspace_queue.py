@@ -7,10 +7,10 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from llm_api_proxy_recorder.app import create_app
-from llm_api_proxy_recorder.config import AppConfig, UpstreamConfig
-from llm_api_proxy_recorder.workspace.manager import WorkspaceError
-from llm_api_proxy_recorder.workspace.queue import WorkspaceQueue
+from sona_code.app import create_app
+from sona_code.config import AppConfig, UpstreamConfig
+from sona_code.workspace.manager import WorkspaceError
+from sona_code.workspace.queue import WorkspaceQueue
 
 
 @pytest.fixture
@@ -149,7 +149,7 @@ async def test_background_queue_runs_without_browser_and_shutdown_keeps_drafts(t
 
 
 async def test_native_id_is_minted_at_delivery_and_restored_submission_is_not_resent(queue, monkeypatch):
-    from llm_api_proxy_recorder.workspace import queue as queue_module
+    from sona_code.workspace import queue as queue_module
     monkeypatch.setattr(queue_module.time, "time", lambda: 100)
     admitted = (await queue.add("p", "/project", "s1", "prompt", {"text": "queued early"}))["items"][0]
     delivered = []

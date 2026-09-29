@@ -14,8 +14,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpx
 import pytest
 
-from llm_api_proxy_recorder.admin.models import compile_providers, native_provider_id
-from llm_api_proxy_recorder.config import AppConfig, UpstreamConfig, UpstreamModelConfig
+from sona_code.admin.models import compile_providers, native_provider_id
+from sona_code.config import AppConfig, UpstreamConfig, UpstreamModelConfig
 
 BINARIES = [p for p in os.environ.get("OPENCODE_TEST_BINARIES", "").split(os.pathsep) if p]
 
@@ -73,7 +73,7 @@ def test_native_provider_protocol_keys_and_variants(binary, proxied, provider_ke
     proxy = None
     if proxied:
         from tests.test_integration import ServerThread
-        from llm_api_proxy_recorder.app import create_app
+        from sona_code.app import create_app
         cfg.upstreams[0].route_through_proxy = True
         cfg.recording.dir = str(tmp_path / "records")
         proxy_app = create_app(cfg, str(tmp_path / "cfg.json"))

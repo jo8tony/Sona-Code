@@ -3,7 +3,7 @@
 import json
 import random
 
-from llm_api_proxy_recorder.recording.sse import SSEParser, extract_usage
+from sona_code.recording.sse import SSEParser, extract_usage
 
 
 def _sse(obj) -> bytes:

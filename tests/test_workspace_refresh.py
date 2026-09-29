@@ -13,7 +13,7 @@ def test_workspace_refresh_does_not_block_switches_or_discard_streamed_parts():
         pytest.skip("Node.js is required for workspace refresh coverage")
     script = r'''
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
-const source = fs.readFileSync("llm_api_proxy_recorder/web/static/workspace.js", "utf8");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
 const requests = [], rendered = [];
 const state = {projectId: "p", sessionId: "a", tab: "chat", messages: [],
   sessionDetails: new Map(), projectStatuses: new Map(), statuses: {}, permissions: [], questions: [],
@@ -98,7 +98,7 @@ def test_workspace_events_refresh_only_the_selected_conversation():
         pytest.skip("Node.js is required for workspace event coverage")
     script = r'''
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
-const source = fs.readFileSync("llm_api_proxy_recorder/web/static/workspace.js", "utf8");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
 let refreshes = 0, sidebars = 0;
 const context = vm.createContext({
   events: null, eventProjectId: null, EventSource: class {},

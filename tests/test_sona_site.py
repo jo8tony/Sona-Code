@@ -7,12 +7,12 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
-from llm_api_proxy_recorder.admin.models import route_token
-from llm_api_proxy_recorder.app import create_app
-from llm_api_proxy_recorder.config import default_config
-from llm_api_proxy_recorder.proxy.handler import _build_forward_headers
-from llm_api_proxy_recorder.proxy.router import build_upstream_url, resolve_upstream
-from llm_api_proxy_recorder.sona_site import SiteSession, SonaSiteManager
+from sona_code.admin.models import route_token
+from sona_code.app import create_app
+from sona_code.config import default_config
+from sona_code.proxy.handler import _build_forward_headers
+from sona_code.proxy.router import build_upstream_url, resolve_upstream
+from sona_code.sona_site import SiteSession, SonaSiteManager
 
 
 @pytest.mark.asyncio
@@ -36,7 +36,7 @@ async def test_catalog_uses_frontend_origin_and_scene_keys(monkeypatch):
         return httpx.Response(200, json={"returnCode": "SUC0000", "body": bodies[request.url.path]})
 
     real_client = httpx.AsyncClient
-    monkeypatch.setattr("llm_api_proxy_recorder.sona_site.httpx.AsyncClient",
+    monkeypatch.setattr("sona_code.sona_site.httpx.AsyncClient",
                         lambda **kwargs: real_client(transport=httpx.MockTransport(respond), **kwargs))
     session = await SonaSiteManager().load_catalog("https://sona.example.test", "site-token", "uat")
     assert [request.url.path for request in calls] == [

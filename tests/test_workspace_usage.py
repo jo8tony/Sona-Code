@@ -8,9 +8,9 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from llm_api_proxy_recorder.admin.models import native_provider_id
-from llm_api_proxy_recorder.app import create_app
-from llm_api_proxy_recorder.config import AppConfig, UpstreamConfig, UpstreamModelConfig
+from sona_code.admin.models import native_provider_id
+from sona_code.app import create_app
+from sona_code.config import AppConfig, UpstreamConfig, UpstreamModelConfig
 
 
 def test_context_limit_uses_native_model_without_exposing_private_metadata(tmp_path):
@@ -54,7 +54,7 @@ def test_native_usage_events_preserve_last_valid_sample_and_reject_stale_history
         pytest.skip("Node.js is required for workspace usage coverage")
     script = r'''
 const fs = require('node:fs'), assert = require('node:assert/strict');
-const source = fs.readFileSync('llm_api_proxy_recorder/web/static/workspace.js','utf8');
+const source = fs.readFileSync('sona_code/web/static/workspace.js','utf8');
 function el(tag, props={}, ...children) {
   return {tag,...props,children, get textContent() {return this.text || this.children.map(x => x.textContent).join('');},
     replaceChildren(...items) {this.children=items;}};

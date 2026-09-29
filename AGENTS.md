@@ -2,13 +2,13 @@
 
 ## Project Structure & Module Organization
 
-`llm_api_proxy_recorder/` contains the Python application. Keep HTTP forwarding in `proxy/`, persistence and parsing in `recording/`, management endpoints in `admin/`, terminal support in `terminal/`, and browser assets in `web/static/`. Tests live in `tests/` and mirror these responsibilities through files such as `test_router.py` and `test_store.py`.
+`sona_code/` contains the Python application. Keep HTTP forwarding in `proxy/`, persistence and parsing in `recording/`, management endpoints in `admin/`, terminal support in `terminal/`, and browser assets in `web/static/`. Tests live in `tests/` and mirror these responsibilities through files such as `test_router.py` and `test_store.py`.
 
 The desktop shell is split across `src-tauri/` (Rust/Tauri), `desktop/` (startup page), `packaging/` (PyInstaller spec), and `scripts/` (platform build helpers). Generated data belongs in `.runtime/`; build outputs under `build/`, `dist/`, and `src-tauri/target/` must remain untracked.
 
 ## OpenCode Integration & API Compatibility
 
-The workspace uses the OpenCode V1 `opencode serve` HTTP API, not the V2 API documented at https://opencode.ai/v2/docs/api. `llm_api_proxy_recorder/workspace/manager.py` starts one local subprocess per project on demand with `opencode serve --hostname 127.0.0.1 --port <random-port>`. Each server uses a randomly generated HTTP Basic password. The browser calls this application's FastAPI workspace routes; the backend forwards requests with `httpx` and relays SSE from `/event`. OpenCode owns conversation persistence.
+The workspace uses the OpenCode V1 `opencode serve` HTTP API, not the V2 API documented at https://opencode.ai/v2/docs/api. `sona_code/workspace/manager.py` starts one local subprocess per project on demand with `opencode serve --hostname 127.0.0.1 --port <random-port>`. Each server uses a randomly generated HTTP Basic password. The browser calls this application's FastAPI workspace routes; the backend forwards requests with `httpx` and relays SSE from `/event`. OpenCode owns conversation persistence.
 
 Current API paths include `/global/health`, `/session`, `/agent`, `/config/providers`, and `/session/{id}/prompt_async`. V2 uses paths such as `/api/info`, `/api/session`, and `/api/agent`, and is not a drop-in replacement. A V2 migration must adapt endpoints, request/response structures, and event formats, with compatibility coverage; do not assume replacing the executable or adding an `/api` prefix is sufficient. Treat the running version's `/doc` OpenAPI description as the API contract.
 
@@ -27,7 +27,7 @@ Native deny permissions hide skills from the AI skill tool, but native slash com
 ## Build, Test, and Development Commands
 
 - `python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]"` installs the Python app and test dependencies.
-- `.venv/bin/python -m llm_api_proxy_recorder --config .runtime/config.json` starts the local proxy and admin UI.
+- `.venv/bin/python -m sona_code --config .runtime/config.json` starts the local proxy and admin UI.
 - `.venv/bin/python -m pytest tests/ -q` runs the full test suite.
 - `npm ci` installs the pinned Tauri CLI dependencies.
 - `npm run desktop:build` builds the macOS sidecar, `.app`, and `.dmg`.

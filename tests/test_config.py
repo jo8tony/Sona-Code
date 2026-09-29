@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from llm_api_proxy_recorder.config import (
+from sona_code.config import (
     AppConfig,
     OutboundConfig,
     RecordingConfig,

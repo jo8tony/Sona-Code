@@ -18,7 +18,7 @@ $TargetTriple = switch ($Architecture) {
 
 $OutputDir = Join-Path $ProjectDir "build\sidecar"
 $BinaryDir = Join-Path $ProjectDir "src-tauri\binaries"
-$BinaryName = "llm-api-proxy-recorder-sidecar"
+$BinaryName = "sona-code-sidecar"
 
 New-Item -ItemType Directory -Force -Path $OutputDir, $BinaryDir | Out-Null
 & $BuildPython -m PyInstaller `

@@ -6,10 +6,10 @@ from types import SimpleNamespace
 import httpx
 from fastapi.testclient import TestClient
 
-from llm_api_proxy_recorder.app import create_app
-from llm_api_proxy_recorder.config import AppConfig, UpstreamConfig
-from llm_api_proxy_recorder.workspace.manager import OpenCodeServer, WorkspaceManager
-from llm_api_proxy_recorder.workspace.queue import WorkspaceQueue
+from sona_code.app import create_app
+from sona_code.config import AppConfig, UpstreamConfig
+from sona_code.workspace.manager import OpenCodeServer, WorkspaceManager
+from sona_code.workspace.queue import WorkspaceQueue
 
 
 async def test_existing_server_statuses_parallel_without_starting_projects():

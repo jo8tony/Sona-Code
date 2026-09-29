@@ -15,7 +15,7 @@ def test_json_tree_controls_and_lazy_children():
 const fs = require("node:fs");
 const vm = require("node:vm");
 const assert = require("node:assert/strict");
-const source = fs.readFileSync("llm_api_proxy_recorder/web/static/app.js", "utf8");
+const source = fs.readFileSync("sona_code/web/static/app.js", "utf8");
 vm.runInThisContext(source.slice(source.indexOf("function jsonViewer("),
   source.indexOf("/* ============================================================ 响应内容")));
 class Element {

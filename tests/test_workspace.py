@@ -6,8 +6,8 @@ import pytest
 
 from fastapi.testclient import TestClient
 
-from llm_api_proxy_recorder.app import create_app
-from llm_api_proxy_recorder.config import AppConfig, TerminalConfig, UpstreamConfig
+from sona_code.app import create_app
+from sona_code.config import AppConfig, TerminalConfig, UpstreamConfig
 
 
 def test_open_project_directory_uses_registered_path(tmp_path, monkeypatch):
@@ -19,7 +19,7 @@ def test_open_project_directory_uses_registered_path(tmp_path, monkeypatch):
     project_dir = tmp_path / "project"
     project_dir.mkdir()
     app.state.runtime.terminal_projects.add(str(project_dir), "opencode")
-    from llm_api_proxy_recorder.workspace import routes
+    from sona_code.workspace import routes
     launched = []
     monkeypatch.setattr(routes.subprocess, "Popen", lambda command, **kwargs: launched.append(command))
     with TestClient(app) as client:
@@ -274,8 +274,8 @@ def test_withdraw_last_turn_deletes_all_replies_only(tmp_path, failed):
 
 
 def test_workspace_trajectory_reuses_recorded_session_ledger(tmp_path):
-    from llm_api_proxy_recorder.config import RecordingConfig
-    from llm_api_proxy_recorder.recording.parse import session_key_from_header
+    from sona_code.config import RecordingConfig
+    from sona_code.recording.parse import session_key_from_header
 
     config = AppConfig(
         upstreams=[UpstreamConfig(name="main", base_url="http://127.0.0.1:9001")],
@@ -325,7 +325,7 @@ def test_workspace_activity_call_ownership_handles_retries_and_ambiguity():
 const fs = require("node:fs");
 const vm = require("node:vm");
 const assert = require("node:assert/strict");
-vm.runInThisContext(fs.readFileSync("llm_api_proxy_recorder/web/static/workspace.js", "utf8"));
+vm.runInThisContext(fs.readFileSync("sona_code/web/static/workspace.js", "utf8"));
 const assistant = (id, created, completed) => ({info: {id, time: {created, completed}}});
 const call = (id, time) => ({call_id: id, started_at: new Date(time).toISOString()});
 const messages = [assistant("first", 1000, 3000), assistant("second", 4000, 5000), assistant("pending", 6000)];
@@ -382,7 +382,7 @@ def test_workspace_turn_changes_preserve_ownership_and_native_totals():
 const fs = require("node:fs");
 const vm = require("node:vm");
 const assert = require("node:assert/strict");
-const source = fs.readFileSync("llm_api_proxy_recorder/web/static/workspace.js", "utf8");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
 vm.runInThisContext(source);
 vm.runInThisContext(source.slice(source.indexOf("  function diffRows("), source.indexOf("  function diffLineCounts(")));
 assert.deepEqual(diffRows({before: "", after: "new"}), [{type: "added", number: 1, text: "+new"}]);
@@ -461,7 +461,7 @@ def test_workspace_placeholder_hides_during_ime_composition():
 const fs = require("node:fs");
 const vm = require("node:vm");
 const assert = require("node:assert/strict");
-const source = fs.readFileSync("llm_api_proxy_recorder/web/static/workspace.js", "utf8");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
 const update = source.slice(source.indexOf("  function updateSkillInput() {"), source.indexOf("  function skillForTool("));
 const input = {dataset: {}, setAttribute() {}};
 let highlights = 0;
@@ -492,7 +492,7 @@ assert.equal(input.dataset.empty, "true");
 context.composer.value = "a";
 refresh();
 assert.equal(input.dataset.empty, "false");
-const css = fs.readFileSync("llm_api_proxy_recorder/web/static/workspace.css", "utf8");
+const css = fs.readFileSync("sona_code/web/static/workspace.css", "utf8");
 assert.equal(css.includes(":empty::before"), false);
 '''
     subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
@@ -510,7 +510,7 @@ def test_workspace_remembers_selection_and_pages_project_sessions():
 const fs = require("node:fs");
 const vm = require("node:vm");
 const assert = require("node:assert/strict");
-const source = fs.readFileSync("llm_api_proxy_recorder/web/static/workspace.js", "utf8");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
 let stored = JSON.stringify({projectId: "project", sessionId: "session-8"});
 const storage = {getItem() {return stored;}, setItem(key, value) {stored = value;}};
 const selectionSource = source.slice(0, source.indexOf("// Link only calls"));
@@ -619,7 +619,7 @@ def test_project_directory_browser_navigation_and_stale_results():
         pytest.skip("Node.js is required for browser interaction coverage")
     script = r'''
 const fs = require("fs"), vm = require("vm"), assert = require("assert");
-const source = fs.readFileSync("llm_api_proxy_recorder/web/static/workspace.js", "utf8");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
 const nodes = [];
 function el(tag, props = {}, ...children) {
   const classes = new Set((props.class || "").split(" "));

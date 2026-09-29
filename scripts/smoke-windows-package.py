@@ -18,7 +18,7 @@ from pathlib import Path
 import websockets
 
 
-MARKER = "llmpr_packaged_pty_input_ok"
+MARKER = "sonacode_packaged_pty_input_ok"
 
 
 def _desktop_subsystem(path: Path) -> int:
@@ -86,7 +86,7 @@ async def _verify_terminal_input(base_url: str, session_id: str) -> None:
 
             # The expected marker must not appear in echoed input: require actual execution.
             await websocket.send(json.dumps({
-                "type": "input", "data": "Write-Output ('llmpr_' + 'packaged_pty_input_ok')\r",
+                "type": "input", "data": "Write-Output ('sonacode_' + 'packaged_pty_input_ok')\r",
             }))
             while asyncio.get_running_loop().time() < deadline:
                 message = await asyncio.wait_for(websocket.recv(), timeout=5)
@@ -158,6 +158,14 @@ def _verify_desktop_lifecycle(desktop: Path) -> None:
         original = _request_json(base_url, "GET", "/__recorder/api/ping")
         if not original.get("instance_id", "").startswith(f"{process.pid}-"):
             raise RuntimeError("desktop did not start its own backend instance")
+        settings = _request_json(base_url, "GET", "/__recorder/api/settings")
+        app_dir = Path(os.environ["APPDATA"]) / "SonaCode"
+        for key, expected in (
+            ("config_path", app_dir / "config.json"),
+            ("records_dir", app_dir / "records"),
+        ):
+            if os.path.normcase(os.path.normpath(settings[key])) != os.path.normcase(str(expected)):
+                raise RuntimeError(f"unexpected desktop {key}: {settings[key]}")
         wait_for(lambda: find_window(process.pid), "create main window")
         hwnd = find_window(process.pid)
         wait_for(lambda: user32.IsWindowVisible(hwnd), "show main window")
@@ -202,13 +210,13 @@ def main() -> None:
         raise RuntimeError(f"desktop executable is not Windows GUI subsystem: {subsystem}")
 
     with tempfile.TemporaryDirectory(
-        prefix="llmpr-package-smoke-", ignore_cleanup_errors=True
+        prefix="sonacode-package-smoke-", ignore_cleanup_errors=True
     ) as temp_value:
         temp = Path(temp_value)
         env = os.environ.copy()
         env.update(
             {
-                "LLMPR_BUNDLED_OPENCODE": str(args.opencode),
+                "SONACODE_BUNDLED_OPENCODE": str(args.opencode),
                 "XDG_CONFIG_HOME": str(temp / "config"),
                 "XDG_DATA_HOME": str(temp / "data"),
                 "XDG_CACHE_HOME": str(temp / "cache"),

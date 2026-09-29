@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from llm_api_proxy_recorder.workspace import manager
+from sona_code.workspace import manager
 
 
 @pytest.mark.parametrize("failure", [None, OSError("blocked"), subprocess.TimeoutExpired("taskkill", 5)])

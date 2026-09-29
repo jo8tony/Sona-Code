@@ -8,11 +8,11 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from llm_api_proxy_recorder.app import create_app
-from llm_api_proxy_recorder.config import AppConfig, TerminalConfig, UpstreamConfig, UpstreamModelConfig
+from sona_code.app import create_app
+from sona_code.config import AppConfig, TerminalConfig, UpstreamConfig, UpstreamModelConfig
 
 pytestmark = pytest.mark.skipif(
-    sys.platform not in ("win32", "darwin") or os.environ.get("LLMPR_SKIP_TERMINAL_TESTS"),
+    sys.platform not in ("win32", "darwin") or os.environ.get("SONACODE_SKIP_TERMINAL_TESTS"),
     reason="终端模块仅支持 Windows ConPTY 或 macOS PTY",
 )
 
@@ -47,7 +47,7 @@ class TestTerminalConfig:
 # ------------------------------------------------------------------ 命令解析
 class TestResolve:
     def test_resolve_cmd_shim_wrapping(self):
-        from llm_api_proxy_recorder.terminal.manager import _build_argv
+        from sona_code.terminal.manager import _build_argv
 
         argv = _build_argv(r"C:\npm\opencode.CMD", ["--x"])
         assert argv[0] == "cmd.exe"
@@ -56,13 +56,13 @@ class TestResolve:
         assert argv[3] == "--x"
 
     def test_resolve_exe_direct(self):
-        from llm_api_proxy_recorder.terminal.manager import _build_argv
+        from sona_code.terminal.manager import _build_argv
 
         argv = _build_argv(r"C:\bin\opencode.exe", [])
         assert argv == [r"C:\bin\opencode.exe"]
 
     def test_resolve_executable(self):
-        from llm_api_proxy_recorder.terminal.manager import resolve_executable
+        from sona_code.terminal.manager import resolve_executable
 
         assert resolve_executable("") is None
         assert resolve_executable("definitely-not-exist-xyz") is None
@@ -70,11 +70,11 @@ class TestResolve:
         assert resolve_executable(os.path.join(os.sep, "definitely", "not", "exist")) is None
 
     def test_build_env_proxy_injection(self, monkeypatch):
-        from llm_api_proxy_recorder.terminal.manager import _build_env
+        from sona_code.terminal.manager import _build_env
         for key in ("OPENAI_BASE_URL", "ANTHROPIC_BASE_URL", "OPENCODE_CONFIG_CONTENT"):
             monkeypatch.delenv(key, raising=False)
 
-        from llm_api_proxy_recorder.admin.models import native_provider_id
+        from sona_code.admin.models import native_provider_id
         cfg = make_cfg()
         cfg.upstreams[0].models = [UpstreamModelConfig(id="one")]
         env = _build_env(cfg, "opencode")
@@ -101,19 +101,19 @@ class TestResolve:
         assert env7["OPENCODE_DISABLE_AUTOUPDATE"] == "1"
 
     def test_shell_restores_original_xdg_environment(self, monkeypatch):
-        from llm_api_proxy_recorder.terminal.manager import _build_env
+        from sona_code.terminal.manager import _build_env
 
         monkeypatch.setenv("XDG_CONFIG_HOME", "/app/config")
         monkeypatch.setenv("XDG_DATA_HOME", "/app/data")
-        monkeypatch.setenv("LLMPR_ORIGINAL_XDG_CONFIG_HOME", "/user/config")
-        monkeypatch.setenv("LLMPR_ORIGINAL_XDG_DATA_HOME", "")
+        monkeypatch.setenv("SONACODE_ORIGINAL_XDG_CONFIG_HOME", "/user/config")
+        monkeypatch.setenv("SONACODE_ORIGINAL_XDG_DATA_HOME", "")
         shell_env = _build_env(make_cfg(), "shell")
         assert shell_env["XDG_CONFIG_HOME"] == "/user/config"
         assert "XDG_DATA_HOME" not in shell_env
-        assert "LLMPR_ORIGINAL_XDG_CONFIG_HOME" not in shell_env
+        assert "SONACODE_ORIGINAL_XDG_CONFIG_HOME" not in shell_env
 
     def test_opencode_resolution_precedence(self, tmp_path, monkeypatch):
-        import llm_api_proxy_recorder.terminal.manager as manager
+        import sona_code.terminal.manager as manager
 
         bundled = tmp_path / "opencode.exe"
         bundled.write_bytes(b"binary")
@@ -136,7 +136,7 @@ class TestResolve:
         assert resolved.source == "missing"
 
     def test_macos_gui_finds_opencode_from_login_shell_path(self, tmp_path, monkeypatch):
-        import llm_api_proxy_recorder.terminal.manager as manager
+        import sona_code.terminal.manager as manager
 
         executable = tmp_path / "opencode"
         executable.write_text("#!/bin/sh\nexit 0\n")
@@ -151,7 +151,7 @@ class TestResolve:
 
     def test_version_probe_timeout_is_non_fatal(self, monkeypatch):
         import subprocess
-        import llm_api_proxy_recorder.terminal.manager as manager
+        import sona_code.terminal.manager as manager
 
         manager._version_cache.clear()
 
@@ -162,7 +162,7 @@ class TestResolve:
         assert manager.executable_version("opencode", timeout=0.01) is None
 
     def test_version_probe_is_cached_and_hidden_on_windows(self, monkeypatch):
-        import llm_api_proxy_recorder.terminal.manager as manager
+        import sona_code.terminal.manager as manager
 
         manager._version_cache.clear()
         calls = []
@@ -184,7 +184,7 @@ class TestResolve:
         assert calls[0][1]["creationflags"] == 0x08000000
 
     def test_manual_models_and_image_support_in_offline_opencode(self, monkeypatch):
-        from llm_api_proxy_recorder.terminal.manager import _build_env
+        from sona_code.terminal.manager import _build_env
 
         monkeypatch.delenv("OPENCODE_CONFIG_CONTENT", raising=False)
         monkeypatch.delenv("OPENCODE_DISABLE_MODELS_FETCH", raising=False)
@@ -196,7 +196,7 @@ class TestResolve:
             default_upstream="private",
         )
         env = _build_env(cfg, "opencode")
-        from llm_api_proxy_recorder.admin.models import native_provider_id
+        from sona_code.admin.models import native_provider_id
         provider = json.loads(env["OPENCODE_CONFIG_CONTENT"])["provider"][native_provider_id("private")]
         assert env["OPENCODE_DISABLE_MODELS_FETCH"] == "1"
         assert provider["npm"] == "@ai-sdk/openai-compatible"
@@ -268,7 +268,7 @@ class TestSessionsApi:
             assert r.status_code == 400
 
     def test_max_sessions_limit(self, tmp_path):
-        from llm_api_proxy_recorder.terminal.manager import detect_shell
+        from sona_code.terminal.manager import detect_shell
         with make_client(make_cfg(max_sessions=2, shell_command=detect_shell()), str(tmp_path / "config.json")) as c:
             for _ in range(2):
                 r = c.post(
@@ -311,7 +311,7 @@ class TestWebSocket:
                 pass
 
     async def test_attach_replay_then_live_without_duplicate(self):
-        from llm_api_proxy_recorder.terminal.manager import TerminalManager, TerminalSession
+        from sona_code.terminal.manager import TerminalManager, TerminalSession
 
         class Socket:
             def __init__(self):
@@ -334,7 +334,7 @@ class TestWebSocket:
         ]
 
     async def test_input_write_failure_is_reported_without_raising(self):
-        from llm_api_proxy_recorder.terminal.manager import TerminalManager, TerminalSession
+        from sona_code.terminal.manager import TerminalManager, TerminalSession
 
         class BrokenProcess:
             def write(self, _text):

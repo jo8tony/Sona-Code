@@ -8,12 +8,12 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from llm_api_proxy_recorder.app import create_app
-from llm_api_proxy_recorder.admin.models import compile_providers, native_provider_id, route_token
-from llm_api_proxy_recorder.config import AppConfig, UpstreamConfig, UpstreamModelConfig, ModelSettings, ModelChoice
-from llm_api_proxy_recorder.proxy.router import resolve_upstream
-from llm_api_proxy_recorder.proxy.handler import _build_forward_headers
-from llm_api_proxy_recorder.workspace.manager import WorkspaceError, WorkspaceManager
+from sona_code.app import create_app
+from sona_code.admin.models import compile_providers, native_provider_id, route_token
+from sona_code.config import AppConfig, UpstreamConfig, UpstreamModelConfig, ModelSettings, ModelChoice
+from sona_code.proxy.router import resolve_upstream
+from sona_code.proxy.handler import _build_forward_headers
+from sona_code.workspace.manager import WorkspaceError, WorkspaceManager
 
 
 @pytest.fixture
@@ -253,7 +253,7 @@ def test_request_schema_validation_never_echoes_credentials(cfg, tmp_path):
 
 
 def test_provider_key_replacement_persists_and_inherits_after_reload(cfg, tmp_path):
-    from llm_api_proxy_recorder.config import load_config
+    from sona_code.config import load_config
     path = tmp_path / "saved.json"
     app = create_app(cfg, str(path))
     with TestClient(app) as client:

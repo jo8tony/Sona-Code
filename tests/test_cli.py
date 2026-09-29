@@ -3,7 +3,7 @@
 import io
 import sys
 
-from llm_api_proxy_recorder.cli import _banner, _harden_stdio
+from sona_code.cli import _banner, _harden_stdio
 
 
 def test_banner_survives_non_utf8_stdio(monkeypatch):
@@ -19,7 +19,7 @@ def test_banner_survives_non_utf8_stdio(monkeypatch):
     stream.flush()
 
     data = raw.getvalue()
-    assert b"llm-api-proxy-recorder" in data
+    assert b"Sona Code" in data
     assert "本地大模型".encode("utf-8") in data
 
 
