@@ -11,6 +11,7 @@ import logging
 import time
 import zlib
 from typing import AsyncIterator
+from uuid import uuid4
 
 from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -59,7 +60,7 @@ HOP_BY_HOP_HEADERS = {
 
 
 def _build_forward_headers(request: Request, upstream: UpstreamConfig) -> list[tuple[str, str]]:
-    """客户端头剔除逐跳头 → （可选）key 注入 → 合并 extra_headers（同名覆盖）。
+    """客户端头剔除逐跳头 → 凭据处理 → 合并额外头 → 注入代理客户端标识。
 
     key_strategy 默认 keep：头原样透传；仅显式配置 replace 时才改写/注入凭据。
     """
@@ -91,6 +92,8 @@ def _build_forward_headers(request: Request, upstream: UpstreamConfig) -> list[t
         headers = [(k, v) for k, v in headers if k.lower() not in {"authorization", "x-api-key", "api-key"}]
         if upstream.api_key:
             headers.append(("authorization", f"Bearer {upstream.api_key}"))
+    headers = [(k, v) for k, v in headers if k.lower() != "sona-code-client"]
+    headers.append(("Sona-Code-Client", str(uuid4())))
     return headers
 
 

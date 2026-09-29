@@ -32,6 +32,7 @@ const context = vm.createContext({state, variantSelect, variantTrigger, composer
   view: {querySelector: () => ({addEventListener: (event, handler) => {submit = handler;}})},
   consumeMenuCommand: () => false, builtInCommands: [],
   executeBuiltIn: async () => false,
+  workspacePrepareNotifications: () => {},
   workspaceConversationKey: (project, session) => `${project}:${session}`,
   sendingConversations: new Set(), pendingActions: new Map(),
   saveDraft: noop, renderHeader: noop, hideAutocomplete: noop, applyQueue: noop,

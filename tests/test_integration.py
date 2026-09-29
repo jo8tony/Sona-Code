@@ -11,6 +11,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from uuid import UUID
 
 import httpx
 import pytest
@@ -106,6 +107,7 @@ async def echo(request: Request):
         "body_b64": base64.b64encode(body).decode("ascii"),
         "authorization": request.headers.get("authorization"),
         "x_api_key": request.headers.get("x-api-key"),
+        "sona_code_client": request.headers.get("sona-code-client"),
         "content_type": request.headers.get("content-type"),
     })
 
@@ -388,12 +390,14 @@ async def test_up_second_routing_and_key_strategy(stack):
         # second 上游 + keep：保留客户端原值
         r = await client.post(
             f"{stack['proxy']}/up/second/v1/echo", json={"k": 1},
-            headers={"Authorization": "Bearer sk-client-keep-42"},
+            headers={"Authorization": "Bearer sk-client-keep-42", "Sona-Code-Client": "spoofed"},
         )
         d = r.json()
         assert d["server"] == "mock2"
         assert d["path"] == "/v1/echo"  # /up/second 前缀已剥
         assert d["authorization"] == "Bearer sk-client-keep-42"
+        UUID(d["sona_code_client"])
+        assert d["sona_code_client"] != "spoofed"
 
         # 默认路由 main + replace：mock 收到配置 key
         r2 = await client.post(
@@ -403,6 +407,8 @@ async def test_up_second_routing_and_key_strategy(stack):
         d2 = r2.json()
         assert d2["server"] == "mock1"
         assert d2["authorization"] == f"Bearer {UPSTREAM_KEY}"
+        UUID(d2["sona_code_client"])
+        assert d2["sona_code_client"] != d["sona_code_client"]
 
         # 客户端无凭据头：replace 注入配置 key
         r3 = await client.post(f"{stack['proxy']}/v1/echo", json={"k": 1})

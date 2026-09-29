@@ -225,9 +225,6 @@
 .wsp-picker-head { display: flex; align-items: center; justify-content: space-between; padding: 11px 14px 7px; }
 .wsp-picker-head strong { font-size: 12px; }
 .wsp-picker-head button { border: 0; border-radius: 5px; background: transparent; color: var(--text-faint); font-size: 18px; line-height: 1; }
-.wsp-model-sources { display: flex; gap: 4px; padding: 5px 9px 9px; }
-.wsp-model-source { flex: 1; padding: 7px 4px; border: 1px solid var(--border); border-radius: 7px; background: #fff; color: var(--text-faint); cursor: pointer; font-size: 11px; }
-.wsp-model-source.selected { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 650; }
 #wsp-model-search { display: block; width: calc(100% - 28px); height: 34px; margin: 0 14px 8px; padding: 0 9px; border: 1px solid var(--border); border-radius: 7px; font-size: 11px; }
 .wsp-model-list { max-height: min(390px, 44vh); overflow: auto; padding: 0 6px 8px; }
 .wsp-model-group { padding-top: 7px; border-top: 1px solid #f0f2f6; }
@@ -317,7 +314,8 @@
 .wsp-action-menu { position: absolute; z-index: 50; top: calc(100% + 5px); right: 0; width: 176px; padding: 5px; border: 1px solid var(--border); border-radius: 9px; background: #fff; box-shadow: 0 12px 32px rgba(30,45,70,.17); }
 .wsp-action-menu[hidden] { display: none; }
 .wsp-action-menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; font-size: 11px; cursor: pointer; }
-.wsp-action-icon { display: inline-grid; place-items: center; width: 17px; flex: none; color: #8191aa; font-size: 16px; }
+.wsp-icon { display: block; width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.wsp-action-icon { display: inline-grid; place-items: center; width: 17px; flex: none; color: #8191aa; }
 .wsp-action-menu button:hover { background: #f2f6ff; }
 .wsp-action-menu button.danger { color: var(--red); }
 .wsp-model-trigger { display: inline-flex; align-items: center; justify-content: space-between; gap: 7px; padding-right: 8px; cursor: pointer; }
@@ -634,7 +632,7 @@
 .wsp-change-file-row { display: flex; align-items: center; gap: 2px; border-radius: 7px; }
 .wsp-change-file-row .wsp-change-file { min-width: 0; flex: 1; }
 .wsp-change-file-row:hover { background: #f4f7fc; }
-.wsp-change-locate { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: none; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #8795aa; font-size: 17px; cursor: pointer; }
+.wsp-change-locate { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: none; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #8795aa; cursor: pointer; }
 .wsp-change-locate:hover, .wsp-change-locate:focus-visible { background: #e5efff; color: var(--accent); }
 .wsp-diff-head .wsp-change-locate { align-self: center; }
 .wsp-change-file:hover, .wsp-change-file:focus-visible { background: #f4f7fc; }
@@ -693,9 +691,9 @@
 .wsp-tree-row:hover { background: #edf3fc; }
 .wsp-tree-row.selected { background: #e5efff; color: #245abb; }
 .wsp-tree-toggle { width: 13px; flex: none; text-align: center; color: #8796ac; font-size: 17px; }
-.wsp-tree-kind { width: 17px; flex: none; text-align: center; color: #8b9cb7; font-size: 15px; }
+.wsp-tree-kind { display: grid; place-items: center; width: 17px; flex: none; color: #8b9cb7; }
 .wsp-tree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wsp-tree-browser { width: 24px; height: 24px; flex: none; padding: 0; border: 0; border-radius: 4px; background: transparent; cursor: pointer; font-size: 13px; }
+.wsp-tree-browser { display: grid; place-items: center; width: 24px; height: 24px; flex: none; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #8b9cb7; cursor: pointer; }
 .wsp-tree-browser:hover { background: #d9e8ff; }
 .wsp-tree-empty { padding: 8px 13px; color: var(--text-faint); font-size: 11px; }
 .wsp-tree-menu { position: fixed; z-index: 80; min-width: 165px; padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: #fff; box-shadow: 0 10px 32px rgba(30,45,70,.17); }
@@ -723,7 +721,8 @@
 .wsp-directory-heading > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-dim); }
 .wsp-directory-heading > button { flex-shrink: 0; }
 .wsp-directory-list { max-height: 220px; overflow-y: auto; padding: 4px; }
-.wsp-directory-item { display: block; width: 100%; padding: 8px; border: 0; border-radius: 5px; background: transparent; color: inherit; text-align: left; font: inherit; font-size: 12px; cursor: pointer; overflow-wrap: anywhere; }
+.wsp-directory-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; border: 0; border-radius: 5px; background: transparent; color: inherit; text-align: left; font: inherit; font-size: 12px; cursor: pointer; overflow-wrap: anywhere; }
+.wsp-directory-item .wsp-icon { flex: none; color: #8b9cb7; }
 .wsp-directory-item:hover, .wsp-directory-item:focus-visible { background: var(--blue-soft, #edf3ff); }
 .wsp-directory-status { padding: 10px; color: var(--text-dim); font-size: 11.5px; }
 

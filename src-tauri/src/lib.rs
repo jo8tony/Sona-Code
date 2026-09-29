@@ -153,6 +153,7 @@ pub fn run() {
     let app = builder
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![open_website_login])
         .on_window_event(|window, event| {
             if matches!(

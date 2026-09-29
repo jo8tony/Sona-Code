@@ -117,7 +117,8 @@ def test_managed_routes_do_not_fallback_or_parse_body(cfg):
     cfg.upstreams[0].api_key = ""
     path = f"/managed/{route_token('company')}/{route_token('two')}/responses"
     upstream, _ = resolve_upstream(path, cfg)
-    assert not _build_forward_headers(Request({"type": "http", "path": path, "headers": []}), upstream)
+    headers = dict(_build_forward_headers(Request({"type": "http", "path": path, "headers": []}), upstream))
+    assert set(headers) == {"Sona-Code-Client"}
     with pytest.raises(HTTPException) as error:
         resolve_upstream("/managed/missing/model/chat/completions", cfg)
     assert error.value.status_code == 404

@@ -630,7 +630,7 @@ function el(tag, props = {}, ...children) {
   nodes.push(node); return node;
 }
 let pending = [], timers = [];
-const context = vm.createContext({el, window: {}, document: {body: {append() {}}},
+const context = vm.createContext({el, workspaceIcon: () => ({tag: "svg"}), window: {}, document: {body: {append() {}}},
   setTimeout(fn) {timers.push(fn); return fn;}, clearTimeout(fn) {timers = timers.filter(x => x !== fn);},
   api(url) {return new Promise((resolve, reject) => pending.push({url, resolve, reject}));},
   detail: e => e.message, encodeURIComponent});
@@ -655,7 +655,7 @@ const type = path => {input.value = path; input.input(); timers.shift()();};
   assert.ok(pending[5].url.endsWith(encodeURIComponent("/projects/")));
   pending[5].resolve({path: "/projects/", parent: "/", entries: [{name: "alpha", path: "/projects/alpha"}, {name: "beta", path: "/projects/beta"}]}); await flush();
   assert.equal(browser.children[1].children.length, 1);
-  assert.equal(browser.children[1].children[0].text, "📁 alpha");
+  assert.equal(browser.children[1].children[0].children[1].text, "alpha");
   type("/closed"); nodes.find(n => n.class === "wsp-modal-mask").remove();
   pending[6].resolve({path: "/closed", parent: "/", entries: []}); await flush();
   assert.equal(browser.children[0].text, "正在读取目录…");

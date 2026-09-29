@@ -105,6 +105,7 @@ const context = vm.createContext({
   alive: () => true, scheduleRefresh: () => refreshes++, applyMessageEvent() {},
   state: {projectId: "p", sessionId: "a", statuses: {}, projectStatuses: new Map()},
   statusVersions: new Map(), renderSidebar: () => sidebars++, renderHeader() {}, renderMain() {},
+  observeSessionStatus() {},
   lastSessionListRefresh: Date.now(), activeProject: () => null, loadSessions() {}, loadModels() {},
 });
 vm.runInContext(source.slice(source.indexOf("  function connectEvents("), source.indexOf("  function scheduleRefresh(")), context);
@@ -121,5 +122,53 @@ emit("message.part.updated", {part: {sessionID: "a"}});
 assert.equal(refreshes, 1);
 emit("permission.asked", {sessionID: "a"});
 assert.equal(refreshes, 2);
+'''
+    subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
+
+
+def test_completion_notification_requires_blur_finished_reply_and_empty_queue():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for workspace notification coverage")
+    script = r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
+const notices = [];
+let focused = false, queue = {items: []}, answerError = null;
+const key = JSON.stringify(["p", "a"]);
+const context = vm.createContext({
+  completionWatches: new Map(), workspaceConversationKey: (p, s) => JSON.stringify([p, s]),
+  setTimeout: () => 1, clearTimeout() {}, Date,
+  document: {hasFocus: () => focused}, alive: () => true,
+  sessionPath: (p, s) => `${p}/${s}`,
+  api(path) {
+    if (path.endsWith("/status")) return Promise.resolve({});
+    if (path.endsWith("/queue")) return Promise.resolve(queue);
+    return Promise.resolve([{info: {role: "assistant", time: {completed: Date.now() + 1000}, error: answerError}}]);
+  },
+  timestamp: value => value, state: {projects: [{id: "p", name: "示例项目"}]},
+  workspaceNotifyAnswerComplete: body => {notices.push(body);},
+});
+vm.runInContext(source.slice(source.indexOf("  function observeSessionStatus("),
+  source.indexOf("  function connectEvents(")), context);
+async function complete() {
+  context.observeSessionStatus("p", "a", undefined, "busy");
+  context.observeSessionStatus("p", "a", "busy", "idle");
+  const watch = context.completionWatches.get(key);
+  if (watch) await context.confirmAnswerComplete("p", "a", watch);
+}
+(async () => {
+  await complete();
+  assert.deepEqual(notices, ["示例项目的 AI 回复已完成"]);
+  focused = true;
+  await complete();
+  assert.equal(notices.length, 1);
+  focused = false; queue = {items: [{id: "pending"}]};
+  await complete();
+  assert.equal(notices.length, 1);
+  queue = {items: []}; answerError = {name: "APIError"};
+  await complete();
+  assert.equal(notices.length, 1);
+})().catch(error => {console.error(error); process.exitCode = 1;});
 '''
     subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)

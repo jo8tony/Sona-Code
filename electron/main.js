@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, dialog, ipcMain, shell, Tray, Menu, nativeImage } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell, Tray, Menu, nativeImage, Notification } = require("electron");
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -65,6 +65,11 @@ if (!app.requestSingleInstanceLock()) {
         (url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname))) ||
         url.username || url.password) throw new Error("登录网站必须使用 HTTPS");
       await shell.openExternal(url.toString());
+    });
+    ipcMain.handle("sona:notify-answer-complete", (event, body) => {
+      if (!allowedSender(event)) throw new Error("Invalid desktop request origin");
+      if (window?.isFocused() || !Notification.isSupported() || typeof body !== "string") return;
+      new Notification({ title: "Sona Code", body: body.slice(0, 160) }).show();
     });
 
     window = new BrowserWindow({

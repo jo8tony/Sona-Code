@@ -24,6 +24,25 @@ function workspaceWriteDraft(key, draft) {
     else sessionStorage.removeItem(`sona-code:draft:${key}`);
   } catch (_) { /* Large image drafts still survive conversation switches in memory. */ }
 }
+
+let workspaceNotificationPermissionRequested = false;
+async function workspacePrepareNotifications() {
+  const notification = window.__TAURI__?.notification;
+  if (!notification || workspaceNotificationPermissionRequested) return;
+  workspaceNotificationPermissionRequested = true;
+  try {
+    if (!(await notification.isPermissionGranted())) await notification.requestPermission();
+  } catch (_) { /* Notifications are optional when the OS denies permission. */ }
+}
+
+async function workspaceNotifyAnswerComplete(body) {
+  const notification = window.__TAURI__?.notification;
+  if (!notification || document.hasFocus()) return;
+  try {
+    if (!(await notification.isPermissionGranted())) return;
+    if (!document.hasFocus()) await notification.sendNotification({ title: "Sona Code", body });
+  } catch (_) { /* Notification failures must not interrupt the workspace. */ }
+}
 try {
   const saved = JSON.parse(localStorage.getItem("sona-code:workspace-selection") || "null");
   if (saved && typeof saved.projectId === "string") {
@@ -208,6 +227,11 @@ function renderWorkspace(view) {
   const pendingActions = new Map();
   const pendingImages = new Map();
   const statusVersions = new Map();
+  const completionWatches = new Map();
+  addCleanup(() => {
+    for (const watch of completionWatches.values()) if (watch.timer) clearTimeout(watch.timer);
+    completionWatches.clear();
+  });
   let messageVersion = 0;
   const messageInfoVersions = new Map();
   const conversationViews = new Map();
@@ -344,8 +368,6 @@ function renderWorkspace(view) {
   const modelPicker = view.querySelector("#wsp-model-picker");
   const modelSearch = view.querySelector("#wsp-model-search");
   const modelList = view.querySelector("#wsp-model-list");
-  const modelSourceBar = el("div", { class: "wsp-model-sources", "aria-label": "模型来源" });
-  modelSearch.before(modelSourceBar);
   let modelLoadVersion = 0;
   const agentSelect = view.querySelector("#wsp-agent");
   const agentTrigger = view.querySelector("#wsp-agent-trigger");
@@ -855,13 +877,13 @@ function renderWorkspace(view) {
 
   function rowMenu(actions) {
     const menu = el("div", { class: "wsp-action-menu", role: "menu", hidden: true });
-    const icons = { "重命名": "✎", "打开目录": "▣", "打开目录树": "▤",
-      "删除工作区": "⌫", "分叉会话": "⑂", "删除": "⌫" };
+    const icons = { "重命名": "pencil", "打开目录": "folder", "打开目录树": "tree",
+      "删除工作区": "trash", "分叉会话": "fork", "删除": "trash" };
     for (const [label, action] of actions) {
       menu.append(el("button", { type: "button", role: "menuitem",
         class: label.startsWith("删除") ? "danger" : "",
         onclick: () => { closeRowMenus(); action(); } },
-        el("span", { class: "wsp-action-icon", text: icons[label] || "•", "aria-hidden": "true" }),
+        el("span", { class: "wsp-action-icon" }, workspaceIcon(icons[label])),
         el("span", { text: label })));
     }
     const trigger = el("button", { class: "wsp-row-action", type: "button",
@@ -1733,10 +1755,10 @@ function renderWorkspace(view) {
           changeStats([diff]), el("span", { class: "wsp-change-arrow", text: "›", "aria-hidden": "true" })),
         browserPreviewFile(path) ? el("button", { class: "wsp-change-locate", type: "button",
           title: "在浏览器中打开", "aria-label": "在浏览器中打开 " + path,
-          onclick: () => openTreePath(path, "browser") }, "🌐") : null,
+          onclick: () => openTreePath(path, "browser") }, workspaceIcon("globe")) : null,
         el("button", { class: "wsp-change-locate", type: "button", title: "在目录树中定位",
           "aria-label": "在目录树中定位 " + path,
-          onclick: () => { closeChangePopover(); void tree.locate(activeProject(), path); } }, "⌖")));
+          onclick: () => { closeChangePopover(); void tree.locate(activeProject(), path); } }, workspaceIcon("locate"))));
     }
     panel.append(list);
     if (focusedFile) Array.from(list.querySelectorAll("button")).find(button =>
@@ -1876,10 +1898,10 @@ function renderWorkspace(view) {
           el("span", { class: "wsp-diff-path", title, text: title }),
           browserPreviewFile(title) ? el("button", { class: "wsp-change-locate", type: "button",
             title: "在浏览器中打开", "aria-label": "在浏览器中打开 " + title,
-            onclick: () => openTreePath(title, "browser") }, "🌐") : null,
+            onclick: () => openTreePath(title, "browser") }, workspaceIcon("globe")) : null,
           el("button", { class: "wsp-change-locate", type: "button", title: "在目录树中定位",
             "aria-label": "在目录树中定位 " + title,
-            onclick: () => void tree.locate(activeProject(), title) }, "⌖"),
+            onclick: () => void tree.locate(activeProject(), title) }, workspaceIcon("locate")),
           changeStats([diff])));
       const rows = diffRows(diff);
       if (rows.length) {
@@ -2259,20 +2281,6 @@ function renderWorkspace(view) {
   }
 
   function renderModelPicker() {
-    modelSourceBar.replaceChildren(...[["sona", "Sona 网站"], ["custom", "自己配置"], ["native", "本地 OpenCode"]].map(([source, label]) =>
-      el("button", { type: "button", class: "wsp-model-source" + (state.modelSource === source ? " selected" : ""),
-        "aria-pressed": String(state.modelSource === source), text: label, onclick: async () => {
-          if (source === state.modelSource) return;
-          try {
-            const current = await api("models/source", { silent: true });
-            await api("models/source", { method: "PUT", body: {
-              source, environment: current.environment, uat_url: current.uat_url, prod_url: current.prod_url,
-            }, silent: true });
-            state.modelSource = source;
-            await loadModels(state.projectId);
-            if (source === "sona" && !current.connected) location.hash = "#/models";
-          } catch (error) { toast("切换模型来源失败：" + detail(error), "error"); }
-        } })));
     modelList.replaceChildren();
     if (state.modelLoadError) {
       modelList.append(el("p", { class: "wsp-picker-empty", text: `模型加载失败：${state.modelLoadError}` }));
@@ -2613,6 +2621,51 @@ function renderWorkspace(view) {
     messageInfoVersions.set(info.id, messageVersion);
   }
 
+  function observeSessionStatus(projectId, sessionId, previous, current) {
+    const key = workspaceConversationKey(projectId, sessionId);
+    const wasRunning = previous && previous !== "idle";
+    const running = current && current !== "idle";
+    if (running && !wasRunning) {
+      const old = completionWatches.get(key);
+      if (old?.timer) clearTimeout(old.timer);
+      // Allow for a small delay between OpenCode's timestamp and SSE delivery.
+      completionWatches.set(key, { startedAt: Date.now() - 2000, timer: null });
+    } else if (wasRunning && !running) {
+      const watch = completionWatches.get(key);
+      if (!watch) return;
+      if (document.hasFocus()) { completionWatches.delete(key); return; }
+      watch.timer = setTimeout(() => { void confirmAnswerComplete(projectId, sessionId, watch); }, 1200);
+    }
+  }
+
+  function observeProjectStatuses(projectId, previous, current) {
+    for (const sessionId of new Set([...Object.keys(previous || {}), ...Object.keys(current || {})])) {
+      observeSessionStatus(projectId, sessionId, previous?.[sessionId]?.type, current?.[sessionId]?.type);
+    }
+  }
+
+  async function confirmAnswerComplete(projectId, sessionId, watch) {
+    const key = workspaceConversationKey(projectId, sessionId);
+    if (!alive() || completionWatches.get(key) !== watch) return;
+    completionWatches.delete(key);
+    try {
+      const base = sessionPath(projectId, sessionId);
+      const [statuses, queue, messages] = await Promise.all([
+        api(`workspace/projects/${encodeURIComponent(projectId)}/status`, { silent: true }),
+        api(`${base}/queue`, { silent: true }),
+        api(`${base}/messages`, { silent: true }),
+      ]);
+      if (!alive() || completionWatches.has(key) || document.hasFocus() ||
+          (statuses?.[sessionId]?.type && statuses[sessionId].type !== "idle") ||
+          queue?.items?.length || !Array.isArray(messages)) return;
+      const lastAssistant = messages.filter((message) => message.info?.role === "assistant").at(-1)?.info;
+      if (!lastAssistant?.time?.completed || lastAssistant.error ||
+          timestamp(lastAssistant.time.completed) < watch.startedAt) return;
+      const project = state.projects.find((item) => item.id === projectId);
+      await workspaceNotifyAnswerComplete(`${project?.name || "工作区"}的 AI 回复已完成`);
+    } catch (_) { /* Missing completion details should not produce a notification. */ }
+  }
+
   function connectEvents(projectId) {
     if (eventProjectId === projectId) return;
     if (events) events.close();
@@ -2630,9 +2683,11 @@ function renderWorkspace(view) {
         if ((!sessionId || sessionId === state.sessionId) && !["server.heartbeat", "server.connected"].includes(update.type)) scheduleRefresh();
         applyMessageEvent(projectId, update);
         if (update.type === "session.status" && update.properties?.sessionID && update.properties?.status) {
-          const previous = state.statuses?.[update.properties.sessionID]?.type;
-          const statuses = { ...(state.projectStatuses.get(projectId) || {}),
+          const before = state.projectStatuses.get(projectId) || {};
+          const previous = before[update.properties.sessionID]?.type;
+          const statuses = { ...before,
             [update.properties.sessionID]: update.properties.status };
+          observeSessionStatus(projectId, update.properties.sessionID, previous, update.properties.status.type);
           state.projectStatuses.set(projectId, statuses);
           statusVersions.set(projectId, (statusVersions.get(projectId) || 0) + 1);
           state.statuses = statuses;
@@ -2689,6 +2744,7 @@ function renderWorkspace(view) {
         if (entry.error) continue;
         if (versions.get(projectId) !== statusVersions.get(projectId)) continue;
         const statuses = entry.statuses || {};
+        observeProjectStatuses(projectId, state.projectStatuses.get(projectId), statuses);
         if (JSON.stringify(state.projectStatuses.get(projectId)) !== JSON.stringify(statuses)) {
           changed = true;
           if (projectId === state.projectId) selectedChanged =
@@ -2751,6 +2807,7 @@ function renderWorkspace(view) {
         read(`workspace/projects/${encodeURIComponent(projectId)}/status`, value => {
           if (statusVersion !== statusVersions.get(projectId)) return false;
           const selectedChanged = JSON.stringify(state.statuses?.[sessionId]) !== JSON.stringify(value?.[sessionId]);
+          observeProjectStatuses(projectId, state.projectStatuses.get(projectId), value);
           state.statuses = value || {};
           const changed = JSON.stringify(state.projectStatuses.get(projectId)) !== JSON.stringify(state.statuses);
           state.projectStatuses.set(projectId, state.statuses);
@@ -3017,7 +3074,8 @@ function renderWorkspace(view) {
         const list = el("div", { class: "wsp-directory-list" });
         const entries = result.entries.filter((entry) => entry.name.toLocaleLowerCase().startsWith(prefix));
         for (const entry of entries) list.append(el("button", { class: "wsp-directory-item", type: "button",
-          text: "📁 " + entry.name, title: entry.path, onclick: () => navigateDirectory(entry.path) }));
+          title: entry.path, onclick: () => navigateDirectory(entry.path) },
+          workspaceIcon("folder"), el("span", { text: entry.name })));
         if (!entries.length) list.append(el("div", { class: "wsp-directory-status", text: prefix ? "没有匹配的子目录" : "此目录下没有子目录" }));
         directoryBrowser.replaceChildren(heading, list);
       } catch (error) {
@@ -3278,6 +3336,7 @@ function renderWorkspace(view) {
     state.actionError = "";
     try {
       if (slash && await executeBuiltIn(slash[1])) return;
+      if (!shell) void workspacePrepareNotifications();
       const { projectId, sessionId } = await ensureSessionForSend();
       model = selectedModel();
       operationKey = workspaceConversationKey(projectId, sessionId);

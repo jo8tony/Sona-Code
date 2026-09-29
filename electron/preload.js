@@ -15,4 +15,9 @@ contextBridge.exposeInMainWorld("__TAURI__", {
   dialog: {
     open(options) { return ipcRenderer.invoke("sona:choose-directory", options); },
   },
+  notification: {
+    isPermissionGranted() { return Promise.resolve(true); },
+    requestPermission() { return Promise.resolve("granted"); },
+    sendNotification(options) { return ipcRenderer.invoke("sona:notify-answer-complete", options.body); },
+  },
 });
