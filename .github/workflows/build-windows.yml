@@ -117,7 +117,7 @@ jobs:
           $Process = Start-Process -FilePath $Installer -ArgumentList @("/S", "/D=$InstallDir") -Wait -PassThru
           if ($Process.ExitCode -ne 0) { throw "Offline silent install failed: $($Process.ExitCode)" }
           $Desktop = Join-Path $InstallDir "Sona Code Offline.exe"
-          $Recorder = Join-Path $InstallDir "resources/llm-api-proxy-recorder-sidecar.exe"
+          $Recorder = Join-Path $InstallDir "resources/sona-code-sidecar.exe"
           $OpenCode = Join-Path $InstallDir "resources/opencode.exe"
           $License = Join-Path $InstallDir "resources/licenses/OpenCode-LICENSE.txt"
           foreach ($File in @($Desktop, $Recorder, $OpenCode, $License, (Join-Path $InstallDir "chrome_100_percent.pak"))) {

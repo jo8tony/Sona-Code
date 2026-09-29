@@ -28,9 +28,9 @@ if (!app.requestSingleInstanceLock()) {
   app.on("second-instance", showWindow);
 
   app.whenReady().then(async () => {
-    const dataRoot = path.join(app.getPath("appData"), "com.liaopeng.llm-proxy-recorder");
+    const dataRoot = path.join(app.getPath("appData"), "SonaCode");
     const localAppData = process.env.LOCALAPPDATA || path.resolve(app.getPath("appData"), "..", "Local");
-    const cacheRoot = path.join(localAppData, "com.liaopeng.llm-proxy-recorder");
+    const cacheRoot = path.join(localAppData, "SonaCode");
     const stateDir = path.join(dataRoot, "state");
     const logDir = path.join(cacheRoot, "logs");
     for (const dir of [dataRoot, cacheRoot, stateDir, logDir]) fs.mkdirSync(dir, { recursive: true });
@@ -91,18 +91,18 @@ if (!app.requestSingleInstanceLock()) {
     const configPath = path.join(dataRoot, "config.json");
     const resourceDir = app.isPackaged ? process.resourcesPath : path.join(__dirname, "..", "src-tauri", "binaries");
     const sidecarFile = app.isPackaged
-      ? path.join(resourceDir, "llm-api-proxy-recorder-sidecar.exe")
-      : path.join(resourceDir, "llm-api-proxy-recorder-sidecar-x86_64-pc-windows-msvc.exe");
+      ? path.join(resourceDir, "sona-code-sidecar.exe")
+      : path.join(resourceDir, "sona-code-sidecar-x86_64-pc-windows-msvc.exe");
     const opencodeFile = app.isPackaged
       ? path.join(resourceDir, "opencode.exe")
       : path.join(resourceDir, "opencode-x86_64-pc-windows-msvc.exe");
     const env = { ...process.env };
     for (const key of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"]) {
-      env[`LLMPR_ORIGINAL_${key}`] = env[key] || "";
+      env[`SONACODE_ORIGINAL_${key}`] = env[key] || "";
     }
     Object.assign(env, {
-      PYTHONIOENCODING: "utf-8", LLMPR_DESKTOP_INSTANCE_ID: instanceId,
-      LLMPR_BUNDLED_OPENCODE: opencodeFile,
+      PYTHONIOENCODING: "utf-8", SONACODE_DESKTOP_INSTANCE_ID: instanceId,
+      SONACODE_BUNDLED_OPENCODE: opencodeFile,
       XDG_CONFIG_HOME: dataRoot, XDG_DATA_HOME: dataRoot,
       XDG_CACHE_HOME: cacheRoot, XDG_STATE_HOME: stateDir,
     });
@@ -216,7 +216,7 @@ async function stopOrphanedBackend(instanceId) {
     `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}').ExecutablePath`,
   ], { encoding: "utf8", windowsHide: true, timeout: 5000 });
   if (pathResult.status !== 0 ||
-    path.win32.basename(pathResult.stdout.trim()).toLowerCase() !== "llm-api-proxy-recorder-sidecar.exe") return false;
+    path.win32.basename(pathResult.stdout.trim()).toLowerCase() !== "sona-code-sidecar.exe") return false;
   const killed = spawnSync("taskkill", ["/F", "/T", "/PID", String(pid)], {
     windowsHide: true, timeout: 10000,
   });

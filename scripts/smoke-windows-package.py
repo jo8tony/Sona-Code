@@ -204,15 +204,15 @@ def _verify_electron_orphan_recovery(desktop: Path, recorder: Path, opencode: Pa
         temp = Path(temp_value)
         roaming = temp / "roaming"
         local = temp / "local"
-        data_dir = roaming / "com.liaopeng.llm-proxy-recorder"
+        data_dir = roaming / "SonaCode"
         for directory in (data_dir, local):
             directory.mkdir(parents=True)
         env = os.environ.copy()
         env.update({
             "APPDATA": str(roaming),
             "LOCALAPPDATA": str(local),
-            "LLMPR_BUNDLED_OPENCODE": str(opencode),
-            "LLMPR_DESKTOP_INSTANCE_ID": "999999999-1",
+            "SONACODE_BUNDLED_OPENCODE": str(opencode),
+            "SONACODE_DESKTOP_INSTANCE_ID": "999999999-1",
             "XDG_CONFIG_HOME": str(data_dir),
             "XDG_DATA_HOME": str(data_dir),
             "XDG_CACHE_HOME": str(local),

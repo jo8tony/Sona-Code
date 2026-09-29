@@ -1,4 +1,4 @@
-appId: com.liaopeng.llm-proxy-recorder.electron
+appId: com.liaopeng.sonacode.electron
 productName: Sona Code Offline
 asar: true
 afterPack: electron/after-pack.cjs
@@ -11,8 +11,8 @@ files:
 extraResources:
   - from: src-tauri/icons/icon.ico
     to: icon.ico
-  - from: src-tauri/binaries/llm-api-proxy-recorder-sidecar-x86_64-pc-windows-msvc.exe
-    to: llm-api-proxy-recorder-sidecar.exe
+  - from: src-tauri/binaries/sona-code-sidecar-x86_64-pc-windows-msvc.exe
+    to: sona-code-sidecar.exe
   - from: src-tauri/binaries/opencode-x86_64-pc-windows-msvc.exe
     to: opencode.exe
   - from: third_party/opencode/LICENSE
