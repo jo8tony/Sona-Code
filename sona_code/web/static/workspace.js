@@ -235,6 +235,8 @@ function renderWorkspace(view) {
   let messageVersion = 0;
   const messageInfoVersions = new Map();
   const conversationViews = new Map();
+  const dismissedTodoPanels = new Set();
+  let renderedTodoSignature = "";
   const sidebarSections = new Map();
   const sidebarRows = new Map();
   const changeTriggers = new Map();
@@ -242,7 +244,7 @@ function renderWorkspace(view) {
     projects: [], sessions: new Map(), sessionDetails: new Map(), errors: new Map(), projectStatuses: new Map(),
     projectId: workspaceSelection.projectId, sessionId: workspaceSelection.sessionId,
     messages: [], messagesLoaded: false, messageLoadError: "", permissions: [], questions: [], questionDrafts: new Map(), questionPages: new Map(),
-    questionErrors: new Map(), diffs: [], selectedChange: null, todos: [], children: [], statuses: {},
+    questionErrors: new Map(), diffs: [], selectedChange: null, todos: [], todoVersion: 0, children: [], statuses: {},
     recordingData: null, recordingError: "", check: null, tab: workspaceSelection.tab || "chat", search: "", chosenModels: new Map(), defaultModel: null,
     get sending() { return sendingConversations.has(workspaceConversationKey(this.projectId, this.sessionId)); },
     get pendingAction() { return pendingActions.get(workspaceConversationKey(this.projectId, this.sessionId)) || ""; },
@@ -268,8 +270,10 @@ function renderWorkspace(view) {
       <aside class="wsp-tree" id="wsp-tree" aria-label="项目目录树" hidden><div class="wsp-tree-head"><strong id="wsp-tree-title">目录树</strong><button id="wsp-tree-refresh" type="button" title="刷新目录树" aria-label="刷新目录树">↻</button><button id="wsp-tree-close" type="button" title="关闭目录树" aria-label="关闭目录树">×</button></div><div class="wsp-tree-body" id="wsp-tree-body" role="tree"></div></aside>
       <div class="wsp-side-scrim" id="wsp-side-scrim"></div>
       <div class="wsp-main">
+        <button class="wsp-todo-trigger" id="wsp-todo-trigger" type="button" aria-label="打开任务进度" aria-controls="wsp-todo-panel" aria-expanded="false" title="打开任务进度" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3" width="15" height="14" rx="3"/><path d="m5.5 7.5 1.2 1.2 2-2M11 8h4M5.5 12l1.2 1.2 2-2M11 12.5h4"/></svg><span>任务进度</span><small id="wsp-todo-trigger-count"></small></button>
         <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="5" width="10" height="10" rx="2" fill="currentColor"/></svg></button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span></header>
         <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动<span class="wsp-tab-count" id="wsp-change-count" aria-label="修改文件数量">0</span></button><button class="wsp-tab" type="button" data-wsp-tab="trajectory">轨迹</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button><button class="wsp-tab" type="button" data-wsp-tab="tasks">任务</button></nav>
+        <aside class="wsp-todo-panel" id="wsp-todo-panel" aria-label="当前对话任务进度" hidden><div class="wsp-todo-panel-head"><span class="wsp-todo-panel-icon" aria-hidden="true">✓</span><div><strong>任务进度</strong><small>当前对话 · OpenCode</small></div><button class="wsp-todo-panel-close" id="wsp-todo-panel-close" type="button" aria-label="关闭任务进度" title="关闭任务进度">×</button></div><div class="wsp-todo-panel-summary"><span id="wsp-todo-summary"></span><strong id="wsp-todo-progress"></strong></div><div class="wsp-todo-progress-track"><span id="wsp-todo-progress-fill"></span></div><ol class="wsp-todo-panel-list" id="wsp-todo-panel-list"></ol><button class="wsp-todo-panel-link" id="wsp-todo-panel-link" type="button">查看任务页 <span aria-hidden="true">↗</span></button></aside>
         <div class="wsp-scroll" id="wsp-scroll"><div class="wsp-content" id="wsp-content"></div></div>
         <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" role="listbox" aria-label="命令与项目文件" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-close" aria-label="关闭模型选择">×</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><div class="wsp-attachment-list" id="wsp-attachment-list" aria-label="待发送附件" hidden></div><div class="wsp-input" id="wsp-input" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" aria-describedby="wsp-skill-error"></div><div id="wsp-skill-error" class="wsp-skill-error" role="status" aria-live="polite" hidden></div><div class="wsp-composer-bottom"><button class="wsp-attach" id="wsp-attach" type="button" title="选择 Sona Code 命令，也可输入 /" aria-label="选择 Sona Code 命令" aria-haspopup="listbox" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent" hidden><option value="build">Build · 执行</option></select><button class="wsp-agent-trigger" id="wsp-agent-trigger" type="button" aria-haspopup="menu" aria-expanded="false"><span id="wsp-agent-label">Build · 执行</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div class="wsp-agent-picker" id="wsp-agent-picker" role="menu" aria-label="选择 Agent" hidden></div><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">自动</button><select class="wsp-variant" id="wsp-variant" aria-label="选择模型强度" title="模型推理强度" hidden></select><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div></form><div class="wsp-stats" id="wsp-stats" aria-live="polite"></div></div>
       </div>
@@ -281,6 +285,10 @@ function renderWorkspace(view) {
   const sideList = view.querySelector("#wsp-projects");
   const content = view.querySelector("#wsp-content");
   const scroll = view.querySelector("#wsp-scroll");
+  const todoTrigger = view.querySelector("#wsp-todo-trigger");
+  const todoPanel = view.querySelector("#wsp-todo-panel");
+  const todoList = view.querySelector("#wsp-todo-panel-list");
+  view.querySelector(".wsp-head-text").after(todoTrigger);
   updateAdminMenus();
   const input = view.querySelector("#wsp-input");
   const composerDock = view.querySelector(".wsp-composer-dock");
@@ -1997,6 +2005,42 @@ function renderWorkspace(view) {
     else content.append(empty("暂无对话活动", "Sona Code 回复或调用工具后，这里会按顺序展示。"));
   }
 
+  function renderTodoPanel() {
+    const key = workspaceConversationKey(state.projectId, state.sessionId);
+    if (!state.todos.length) dismissedTodoPanels.delete(key);
+    const available = !!state.projectId && !!state.sessionId && state.tab === "chat" && state.todos.length > 0;
+    const open = available && !dismissedTodoPanels.has(key);
+    todoTrigger.hidden = !available;
+    todoTrigger.setAttribute("aria-expanded", String(open));
+    todoTrigger.setAttribute("aria-label", open ? "关闭任务进度" : "打开任务进度");
+    todoTrigger.title = open ? "关闭任务进度" : "打开任务进度";
+    todoTrigger.classList.toggle("active", open);
+    todoPanel.hidden = !open;
+    root.classList.toggle("todo-panel-open", open);
+    if (!available) { renderedTodoSignature = ""; return; }
+
+    const completed = state.todos.filter((todo) => todo.status === "completed").length;
+    view.querySelector("#wsp-todo-trigger-count").textContent = `${completed}/${state.todos.length}`;
+    if (!open) { renderedTodoSignature = ""; return; }
+    view.querySelector("#wsp-todo-summary").textContent = completed === state.todos.length ? "全部任务已完成" : "按计划逐步完成";
+    view.querySelector("#wsp-todo-progress").textContent = `${completed} / ${state.todos.length}`;
+    view.querySelector("#wsp-todo-progress-fill").style.width = `${completed / state.todos.length * 100}%`;
+    const signature = key + JSON.stringify(state.todos);
+    if (signature === renderedTodoSignature) return;
+    renderedTodoSignature = signature;
+    const listScrollTop = todoList.scrollTop;
+    todoList.replaceChildren(...state.todos.map((todo) => {
+      const status = ["completed", "in_progress", "cancelled"].includes(todo.status) ? todo.status : "pending";
+      const label = { completed: "已完成", in_progress: "进行中", cancelled: "已取消", pending: "待处理" }[status];
+      return el("li", { class: `wsp-todo-panel-item ${status}` },
+        el("span", { class: "wsp-todo-panel-mark", text: status === "completed" ? "✓" : status === "in_progress" ? "●" : status === "cancelled" ? "−" : "" }),
+        el("span", { class: "wsp-todo-panel-copy" },
+          el("span", { class: "wsp-todo-panel-text", text: todo.content || todo.title || "任务" }),
+          el("small", { text: label })));
+    }));
+    todoList.scrollTop = listScrollTop;
+  }
+
   function renderTasks() {
     content.append(el("h2", { class: "wsp-section-title", text: "任务与子对话" }),
       el("p", { class: "wsp-section-note", text: "Sona Code 在本轮对话中维护的待办和委派任务。" }));
@@ -2023,6 +2067,7 @@ function renderWorkspace(view) {
     const previousTop = scroll.scrollTop;
     const previousMaximum = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
     const nearBottom = previousMaximum - previousTop <= 80;
+    renderTodoPanel();
     const stickToBottom = state.tab === "chat" && (forceBottom || nearBottom);
     const active = document.activeElement;
     const editingQuestion = active?.classList?.contains("wsp-question-custom")
@@ -2682,6 +2727,11 @@ function renderWorkspace(view) {
           (update.type === "session.updated" ? properties.info?.id : null);
         if ((!sessionId || sessionId === state.sessionId) && !["server.heartbeat", "server.connected"].includes(update.type)) scheduleRefresh();
         applyMessageEvent(projectId, update);
+        if (update.type === "todo.updated" && sessionId === state.sessionId && Array.isArray(properties.todos)) {
+          state.todoVersion = (state.todoVersion || 0) + 1;
+          state.todos = properties.todos;
+          scheduleSelectedRender();
+        }
         if (update.type === "session.status" && update.properties?.sessionID && update.properties?.status) {
           const before = state.projectStatuses.get(projectId) || {};
           const previous = before[update.properties.sessionID]?.type;
@@ -2771,6 +2821,7 @@ function renderWorkspace(view) {
     const queueVersion = queueUpdateVersion;
     const statusVersion = statusVersions.get(projectId);
     const messagesVersion = messageVersion;
+    const currentTodoVersion = state.todoVersion || 0;
     const current = () => alive() && selectedRefresh === refresh && state.projectId === projectId && state.sessionId === sessionId;
     // Apply each response independently so a slow diff/queue cannot delay messages.
     const read = async (path, apply, failed = null) => {
@@ -2833,7 +2884,12 @@ function renderWorkspace(view) {
           state.diffs = diffs;
           return changed;
         }),
-        state.tab === "tasks" ? read(`${base}/todo`, value => { state.todos = Array.isArray(value) ? value : []; }) : null,
+        read(`${base}/todo`, value => {
+          if (currentTodoVersion !== (state.todoVersion || 0)) return false;
+          const todos = Array.isArray(value) ? value : [];
+          if (JSON.stringify(state.todos) === JSON.stringify(todos)) return false;
+          state.todos = todos;
+        }),
         state.tab === "tasks" ? read(`${base}/children`, value => {
           state.children = Array.isArray(value) ? value : [];
           for (const child of state.children) state.sessionDetails.set(workspaceConversationKey(projectId, child.id), child);
@@ -3300,6 +3356,20 @@ function renderWorkspace(view) {
     renderHeader(); renderMain(state.tab === "chat");
     if (state.tab !== "chat") refreshSelected();
   }));
+  todoTrigger.addEventListener("click", () => {
+    const key = workspaceConversationKey(state.projectId, state.sessionId);
+    if (dismissedTodoPanels.has(key)) dismissedTodoPanels.delete(key);
+    else dismissedTodoPanels.add(key);
+    renderTodoPanel();
+  });
+  view.querySelector("#wsp-todo-panel-close").addEventListener("click", () => {
+    dismissedTodoPanels.add(workspaceConversationKey(state.projectId, state.sessionId));
+    renderTodoPanel();
+    todoTrigger.focus();
+  });
+  view.querySelector("#wsp-todo-panel-link").addEventListener("click", () => {
+    view.querySelector('[data-wsp-tab="tasks"]').click();
+  });
   view.querySelector("#wsp-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (consumeMenuCommand()) return;

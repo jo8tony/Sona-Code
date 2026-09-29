@@ -99,11 +99,12 @@ def test_workspace_events_refresh_only_the_selected_conversation():
     script = r'''
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
 const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
-let refreshes = 0, sidebars = 0;
+let refreshes = 0, sidebars = 0, todoRenders = 0;
 const context = vm.createContext({
   events: null, eventProjectId: null, EventSource: class {},
   alive: () => true, scheduleRefresh: () => refreshes++, applyMessageEvent() {},
-  state: {projectId: "p", sessionId: "a", statuses: {}, projectStatuses: new Map()},
+  scheduleSelectedRender: () => todoRenders++,
+  state: {projectId: "p", sessionId: "a", statuses: {}, projectStatuses: new Map(), todos: [], todoVersion: 0},
   statusVersions: new Map(), renderSidebar: () => sidebars++, renderHeader() {}, renderMain() {},
   observeSessionStatus() {},
   lastSessionListRefresh: Date.now(), activeProject: () => null, loadSessions() {}, loadModels() {},
@@ -122,6 +123,63 @@ emit("message.part.updated", {part: {sessionID: "a"}});
 assert.equal(refreshes, 1);
 emit("permission.asked", {sessionID: "a"});
 assert.equal(refreshes, 2);
+emit("todo.updated", {sessionID: "b", todos: [{content: "unrelated", status: "completed"}]});
+assert.equal(todoRenders, 0); assert.equal(refreshes, 2);
+emit("todo.updated", {sessionID: "a", todos: [{content: "first step", status: "in_progress"}]});
+assert.equal(todoRenders, 1); assert.equal(refreshes, 3);
+assert.equal(context.state.todoVersion, 1);
+assert.equal(context.state.todos[0].content, "first step");
+'''
+    subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
+
+
+def test_todo_preview_only_appears_for_current_chat_with_native_todos():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for workspace todo coverage")
+    script = r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
+const fields = Object.fromEntries(["#wsp-todo-trigger-count", "#wsp-todo-summary", "#wsp-todo-progress",
+  "#wsp-todo-progress-fill"].map(key => [key, {textContent: "", style: {}}]));
+const trigger = {hidden: true, classList: {toggle() {}}, setAttribute() {}};
+const panel = {hidden: true};
+const list = {scrollTop: 0, children: [], replaceCount: 0,
+  replaceChildren(...items) {this.children = items; this.replaceCount++;}};
+const state = {projectId: "p", sessionId: "a", tab: "chat", todos: []};
+const dismissedTodoPanels = new Set();
+const context = vm.createContext({state, dismissedTodoPanels, todoTrigger: trigger,
+  todoPanel: panel, todoList: list, renderedTodoSignature: "",
+  root: {classList: {toggle() {}}}, view: {querySelector: key => fields[key]},
+  workspaceConversationKey: (p, s) => JSON.stringify([p, s]),
+  el: (tag, attrs, ...children) => ({tag, ...attrs, children}),
+});
+vm.runInContext(source.slice(source.indexOf("  function renderTodoPanel("),
+  source.indexOf("  function renderTasks(")), context);
+context.renderTodoPanel();
+assert.equal(trigger.hidden, true); assert.equal(panel.hidden, true);
+state.todos = [
+  {content: "设计", status: "completed"},
+  {content: "实现", status: "in_progress"},
+  {content: "检查", status: "pending"},
+];
+context.renderTodoPanel();
+assert.equal(trigger.hidden, false); assert.equal(panel.hidden, false);
+assert.equal(fields["#wsp-todo-trigger-count"].textContent, "1/3");
+assert.equal(fields["#wsp-todo-progress"].textContent, "1 / 3");
+assert.equal(list.children[1].children[1].children[1].text, "进行中");
+context.renderTodoPanel();
+assert.equal(list.replaceCount, 1, "Unchanged message renders should preserve todo scroll position");
+dismissedTodoPanels.add(JSON.stringify(["p", "a"]));
+context.renderTodoPanel();
+assert.equal(panel.hidden, true); assert.equal(trigger.hidden, false);
+dismissedTodoPanels.delete(JSON.stringify(["p", "a"]));
+context.renderTodoPanel();
+assert.equal(panel.hidden, false);
+state.tab = "tasks"; context.renderTodoPanel();
+assert.equal(panel.hidden, true); assert.equal(trigger.hidden, true);
+state.tab = "chat"; state.todos = []; context.renderTodoPanel();
+assert.equal(panel.hidden, true); assert.equal(trigger.hidden, true);
 '''
     subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
 

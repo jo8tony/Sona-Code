@@ -1,5 +1,5 @@
 appId: com.liaopeng.sonacode.electron
-productName: Sona Code Offline
+productName: Sona Code
 asar: true
 afterPack: electron/after-pack.cjs
 directories:
@@ -26,7 +26,7 @@ win:
       arch:
         - x64
   icon: src-tauri/icons/icon.ico
-  artifactName: Sona-Code-Offline-${version}-Setup.exe
+  artifactName: Sona-Code-${version}-Setup.exe
 nsis:
   include: electron/installer.nsh
   installerIcon: src-tauri/icons/icon.ico

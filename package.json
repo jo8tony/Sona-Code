@@ -2,7 +2,7 @@
   "name": "sona-code-desktop",
   "private": true,
   "version": "2.2.1",
-  "description": "Sona Code desktop application with a bundled offline Chromium runtime",
+  "description": "Sona Code desktop application with a bundled Chromium runtime",
   "main": "electron/main.js",
   "scripts": {
     "desktop:sidecar": "bash scripts/build-sidecar.sh",

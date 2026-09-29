@@ -751,3 +751,48 @@
 
 .wsp-thread-running { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 14px; width: 14px; height: 14px; color: var(--blue, #356be8); }
 .wsp-thread-running .wsp-status-icon { width: 14px; height: 14px; }
+
+/* Session todo preview, kept separate from the full Tasks tab. */
+.wsp-main { position: relative; }
+.wsp-todo-trigger[hidden], .wsp-todo-panel[hidden] { display: none; }
+.wsp-todo-trigger { flex: none; display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--text-dim); font-size: 11px; font-weight: 650; cursor: pointer; }
+.wsp-todo-trigger:hover, .wsp-todo-trigger.active { border-color: #cbdcfb; background: #f3f7ff; color: var(--accent); }
+.wsp-todo-trigger svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.wsp-todo-trigger small { padding: 2px 5px; border-radius: 5px; background: var(--accent-soft); color: var(--accent); font-size: 10px; font-variant-numeric: tabular-nums; }
+.wsp-todo-panel { box-sizing: border-box; position: absolute; z-index: 24; top: 132px; right: 18px; width: min(320px, calc(100% - 36px)); max-height: min(560px, calc(100% - 154px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid #e1e8f2; border-radius: 15px; background: #fff; box-shadow: 0 13px 36px rgba(36, 55, 85, .14), 0 2px 8px rgba(36, 55, 85, .05); }
+.wsp-todo-panel-head { display: flex; align-items: center; gap: 10px; padding: 15px 15px 10px; }
+.wsp-todo-panel-icon { flex: none; width: 31px; height: 31px; display: grid; place-items: center; border-radius: 9px; background: var(--accent-soft); color: var(--accent); font-size: 16px; font-weight: 800; }
+.wsp-todo-panel-head > div { flex: 1; min-width: 0; }
+.wsp-todo-panel-head strong, .wsp-todo-panel-head small { display: block; }
+.wsp-todo-panel-head strong { font-size: 13px; }
+.wsp-todo-panel-head small { margin-top: 1px; color: var(--text-faint); font-size: 10px; }
+.wsp-todo-panel-close { flex: none; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--text-faint); font-size: 20px; line-height: 1; cursor: pointer; }
+.wsp-todo-panel-close:hover { background: #f1f4f9; color: var(--text); }
+.wsp-todo-panel-summary { display: flex; justify-content: space-between; gap: 8px; padding: 0 16px; color: var(--text-dim); font-size: 10.5px; }
+.wsp-todo-panel-summary strong { color: var(--accent); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.wsp-todo-progress-track { height: 4px; margin: 8px 16px 12px; overflow: hidden; border-radius: 4px; background: #edf1f7; }
+.wsp-todo-progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .2s ease; }
+.wsp-todo-panel-list { min-height: 0; margin: 0; padding: 0 7px 4px; overflow-y: auto; list-style: none; scrollbar-width: thin; }
+.wsp-todo-panel-item { display: flex; align-items: flex-start; gap: 10px; padding: 9px 8px; border-top: 1px solid #f0f2f6; }
+.wsp-todo-panel-mark { flex: none; box-sizing: border-box; width: 18px; height: 18px; margin-top: 1px; display: grid; place-items: center; border: 1.5px solid #c6cfdd; border-radius: 50%; color: #fff; font-size: 11px; line-height: 1; }
+.wsp-todo-panel-item.completed .wsp-todo-panel-mark { border-color: var(--green); background: var(--green); }
+.wsp-todo-panel-item.in_progress .wsp-todo-panel-mark { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-size: 9px; }
+.wsp-todo-panel-item.cancelled .wsp-todo-panel-mark { border-color: #d9dee6; background: #f2f4f7; color: var(--text-faint); }
+.wsp-todo-panel-copy { min-width: 0; flex: 1; }
+.wsp-todo-panel-text { display: block; color: var(--text); font-size: 11.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.wsp-todo-panel-copy small { display: block; margin-top: 3px; color: var(--text-faint); font-size: 10px; }
+.wsp-todo-panel-item.in_progress .wsp-todo-panel-copy small { color: var(--accent); }
+.wsp-todo-panel-item.completed .wsp-todo-panel-copy small { color: var(--green); }
+.wsp-todo-panel-item.cancelled .wsp-todo-panel-text { color: var(--text-faint); text-decoration: line-through; }
+.wsp-todo-panel-link { flex: none; width: 100%; padding: 11px 16px; border: 0; border-top: 1px solid var(--border); background: #fbfcfe; color: var(--accent); text-align: left; font-size: 10.5px; font-weight: 650; cursor: pointer; }
+.wsp-todo-panel-link:hover { background: #f2f6ff; }
+.wsp-todo-panel-link span { float: right; font-size: 13px; line-height: 1; }
+@media (min-width: 1250px) {
+  .wsp.todo-panel-open .wsp-main > .wsp-scroll { box-sizing: border-box; padding-right: 338px; }
+  .wsp.todo-panel-open .wsp-main > .wsp-composer-dock { padding-right: 365px; }
+}
+@media (max-width: 700px) {
+  .wsp-todo-trigger { padding: 0 7px; }
+  .wsp-todo-trigger > span { display: none; }
+  .wsp-todo-panel { top: 122px; right: 10px; max-height: min(460px, calc(100% - 142px)); }
+}
