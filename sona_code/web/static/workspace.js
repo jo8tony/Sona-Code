@@ -65,6 +65,11 @@ function workspaceRelativeFile(path, projectPath = "") {
   return base && file.startsWith(`${base}/`) ? file.slice(base.length + 1) : file;
 }
 
+function workspaceDirectoryReference(part) {
+  if (part?.type !== "text") return "";
+  return part.text?.match(/^\n引用项目目录 @(.+)。请按需查看此目录下的文件。$/)?.[1] || "";
+}
+
 function workspaceMessageTurns(messages) {
   const turns = new Map();
   for (const message of messages) {
@@ -236,6 +241,7 @@ function renderWorkspace(view) {
         <div class="wsp-side-list"><div class="wsp-side-label"><span>项目与对话</span><span class="wsp-side-label-actions"><span id="wsp-project-count"></span></span></div><div id="wsp-projects"></div></div>
         <div class="wsp-side-bottom"><a class="wsp-settings" href="#/preferences" title="打开设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 3-.6 2.4-2 .9L4.2 5.6l-2 3.5 1.8 1.7v2.4l-1.8 1.7 2 3.5 2.2-.7 2 .9L9 21h6l.6-2.4 2-.9 2.2.7 2-3.5-1.8-1.7v-2.4l1.8-1.7-2-3.5-2.2.7-2-.9L15 3Z"/><circle cx="12" cy="12" r="3"/></svg><span>设置</span></a></div>
       </aside>
+      <aside class="wsp-tree" id="wsp-tree" aria-label="项目目录树" hidden><div class="wsp-tree-head"><strong id="wsp-tree-title">目录树</strong><button id="wsp-tree-refresh" type="button" title="刷新目录树" aria-label="刷新目录树">↻</button><button id="wsp-tree-close" type="button" title="关闭目录树" aria-label="关闭目录树">×</button></div><div class="wsp-tree-body" id="wsp-tree-body" role="tree"></div></aside>
       <div class="wsp-side-scrim" id="wsp-side-scrim"></div>
       <div class="wsp-main">
         <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="5" width="10" height="10" rx="2" fill="currentColor"/></svg></button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span></header>
@@ -256,6 +262,62 @@ function renderWorkspace(view) {
   const composerDock = view.querySelector(".wsp-composer-dock");
   composerDock.hidden = state.tab !== "chat";
   const composer = createWorkspaceComposer(input, skillMention, fileMention);
+  const browserPreviewFile = (path) => /\.(html?|svg|pdf|txt|xml|css|m?js|json|md|png|jpe?g|gif|webp)$/i.test(path);
+  async function openTreePath(path, mode) {
+    if (!state.projectId) return;
+    try {
+      await api("workspace/projects/" + encodeURIComponent(state.projectId) + "/entries/open?path=" +
+        encodeURIComponent(path) + "&mode=" + mode, { method: "POST", body: {}, silent: true });
+    } catch (error) { toast("打开路径失败：" + detail(error), "error"); }
+  }
+  const tree = createWorkspaceTree(view.querySelector("#wsp-tree"), {
+    list: (projectId, path) => api("workspace/projects/" + encodeURIComponent(projectId) +
+      "/tree?path=" + encodeURIComponent(path), { silent: true }),
+    open: async (projectId, path, mode) => {
+      try {
+        await api("workspace/projects/" + encodeURIComponent(projectId) + "/entries/open?path=" +
+          encodeURIComponent(path) + "&mode=" + mode, { method: "POST", body: {}, silent: true });
+      } catch (error) { toast("打开路径失败：" + detail(error), "error"); }
+    },
+    reference: (path) => addTreeReference(path),
+    error: (message) => toast(message, "error"),
+  });
+  addCleanup(() => tree.dispose());
+  function openProjectTree(project) {
+    if (state.projectId !== project.id) selectProject(project.id);
+    tree.open(project);
+  }
+  function addTreeReference(path) {
+    const refs = composer.fileReferences;
+    if (state.attachments.length + refs.length >= 8 && !refs.some(item => item.path === path)) {
+      toast("一条消息最多添加 8 个附件或文件引用", "error"); return;
+    }
+    let end = composer.value.length;
+    if (end && !/\s$/.test(composer.value)) {
+      input.focus();
+      composer.setSelectionRange(end);
+      document.execCommand("insertText", false, " ");
+      end++;
+    }
+    composer.insertFileReference(path, end, end);
+    updateSkillInput(); scheduleDraftSave(); input.focus();
+  }
+  const treeDropForm = view.querySelector("#wsp-form");
+  treeDropForm.addEventListener("dragover", (event) => {
+    if (event.dataTransfer.types.includes("application/x-sona-project-reference")) {
+      event.preventDefault(); event.dataTransfer.dropEffect = "copy";
+    }
+  });
+  treeDropForm.addEventListener("drop", (event) => {
+    const raw = event.dataTransfer.getData("application/x-sona-project-reference");
+    if (!raw) return;
+    event.preventDefault();
+    try {
+      const item = JSON.parse(raw);
+      if (item.projectId !== state.projectId) { toast("只能引用当前项目的路径", "error"); return; }
+      addTreeReference(item.path);
+    } catch (_) { /* Ignore invalid drag data. */ }
+  });
   function saveDraft() {
     if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
     if (!state.projectId || !draftContextReady) return;
@@ -498,11 +560,12 @@ function renderWorkspace(view) {
   function recallUserMessage(message) {
     if (!message) return;
     const text = message.skillUse ? `/${message.skillUse.name} ${message.skillUse.arguments || ""}` :
-      (message.parts || []).filter((part) => part.type === "text" && !part.synthetic)
+      (message.parts || []).filter((part) => part.type === "text" && !part.synthetic && !workspaceDirectoryReference(part))
         .map((part) => isInitCommandPrompt(part.text) ? "/init" : part.text || "").join("\n");
     composer.value = text;
-    const references = (message.parts || []).filter((part) => part.type === "file" &&
-      part.url?.startsWith("file:") && part.filename).map((part) => part.filename);
+    const references = (message.parts || []).flatMap((part) => workspaceDirectoryReference(part) ?
+      [workspaceDirectoryReference(part)] : part.type === "file" && part.url?.startsWith("file:") && part.filename ?
+        [part.filename] : []);
     const pattern = fileReferencePattern(references);
     if (pattern) {
       const matches = [...text.matchAll(pattern)].reverse();
@@ -526,7 +589,7 @@ function renderWorkspace(view) {
     const sessionId = state.sessionId;
     const info = message.modelInfo || message.info || {};
     const actions = el("div", { class: "wsp-message-actions" });
-    const text = (message.parts || []).filter((part) => part.type === "text" && !part.synthetic)
+    const text = (message.parts || []).filter((part) => part.type === "text" && !part.synthetic && !workspaceDirectoryReference(part))
       .map((part) => part.text || "").join("\n\n");
     function actionButton(label, path, handler) {
       return el("button", { class: "wsp-message-action", type: "button", title: label, "aria-label": label, onclick: handler },
@@ -792,9 +855,14 @@ function renderWorkspace(view) {
 
   function rowMenu(actions) {
     const menu = el("div", { class: "wsp-action-menu", role: "menu", hidden: true });
+    const icons = { "重命名": "✎", "打开目录": "▣", "打开目录树": "▤",
+      "删除工作区": "⌫", "分叉会话": "⑂", "删除": "⌫" };
     for (const [label, action] of actions) {
-      menu.append(el("button", { type: "button", role: "menuitem", class: action === "delete" ? "danger" : "",
-        text: label, onclick: () => { closeRowMenus(); action(); } }));
+      menu.append(el("button", { type: "button", role: "menuitem",
+        class: label.startsWith("删除") ? "danger" : "",
+        onclick: () => { closeRowMenus(); action(); } },
+        el("span", { class: "wsp-action-icon", text: icons[label] || "•", "aria-hidden": "true" }),
+        el("span", { text: label })));
     }
     const trigger = el("button", { class: "wsp-row-action", type: "button",
       "aria-label": "更多操作", "aria-haspopup": "menu", "aria-expanded": "false",
@@ -973,6 +1041,7 @@ function renderWorkspace(view) {
         el("span", { class: "wsp-project-count", text: all ? String(all.length) : "…" }));
       const projectRow = el("div", { class: "wsp-project-row" }, heading,
         rowMenu([["重命名", () => openRenameProject(project)], ["打开目录", () => openProjectDirectory(project)],
+          ["打开目录树", () => openProjectTree(project)],
           ["删除工作区", () => removeProject(project)]]),
         el("button", { class: "wsp-row-action wsp-row-plus", type: "button", text: "+",
           title: `在 ${project.name} 中新建对话`, "aria-label": `在 ${project.name} 中新建对话`,
@@ -1455,8 +1524,9 @@ function renderWorkspace(view) {
         el("strong", { text: "Sona" }),
         modelLabel));
       const parts = message.parts || [];
-      const references = role === "user" ? parts.filter(part => part.type === "file" &&
-        part.url?.startsWith("file:") && part.filename).map(part => part.filename) : [];
+      const references = role === "user" ? parts.flatMap(part => workspaceDirectoryReference(part) ?
+        [workspaceDirectoryReference(part)] : part.type === "file" &&
+          part.url?.startsWith("file:") && part.filename ? [part.filename] : []) : [];
       if (message.skillUse) {
         body.append(el("div", { class: "wsp-text wsp-skill-message" }, skillMention(message.skillUse),
           message.skillUse.arguments ? ` ${message.skillUse.arguments}` : ""));
@@ -1476,7 +1546,7 @@ function renderWorkspace(view) {
         }
         if (!['text', 'reasoning', 'file'].includes(part.type)) continue;
         flushTools();
-        if (part.type === "text" && !part.synthetic && (role === "user" || part.text)) {
+        if (part.type === "text" && !part.synthetic && !workspaceDirectoryReference(part) && (role === "user" || part.text)) {
           if (message.skillUse) body.append(el("details", { class: "wsp-reasoning" }, el("summary", { text: "查看已加载技能内容" }), el("pre", { text: part.text })));
           else body.append(textPart(part, role, references));
         }
@@ -1653,13 +1723,20 @@ function renderWorkspace(view) {
     for (const diff of diffs) {
       const path = diff.file || diff.path;
       const separator = path.lastIndexOf("/");
-      list.append(el("button", { class: "wsp-change-file", type: "button", "data-change-file": path,
-        title: path, onclick: () => openMessageChange(messageId, diffs, path) },
-        changeFileIcon(),
-        el("span", { class: "wsp-change-file-copy" },
-          el("strong", { text: path.slice(separator + 1) }),
-          separator >= 0 ? el("small", { text: path.slice(0, separator) }) : null),
-        changeStats([diff]), el("span", { class: "wsp-change-arrow", text: "›", "aria-hidden": "true" })));
+      list.append(el("div", { class: "wsp-change-file-row" },
+        el("button", { class: "wsp-change-file", type: "button", "data-change-file": path,
+          title: path, onclick: () => openMessageChange(messageId, diffs, path) },
+          changeFileIcon(),
+          el("span", { class: "wsp-change-file-copy" },
+            el("strong", { text: path.slice(separator + 1) }),
+            separator >= 0 ? el("small", { text: path.slice(0, separator) }) : null),
+          changeStats([diff]), el("span", { class: "wsp-change-arrow", text: "›", "aria-hidden": "true" })),
+        browserPreviewFile(path) ? el("button", { class: "wsp-change-locate", type: "button",
+          title: "在浏览器中打开", "aria-label": "在浏览器中打开 " + path,
+          onclick: () => openTreePath(path, "browser") }, "🌐") : null,
+        el("button", { class: "wsp-change-locate", type: "button", title: "在目录树中定位",
+          "aria-label": "在目录树中定位 " + path,
+          onclick: () => { closeChangePopover(); void tree.locate(activeProject(), path); } }, "⌖")));
     }
     panel.append(list);
     if (focusedFile) Array.from(list.querySelectorAll("button")).find(button =>
@@ -1797,6 +1874,12 @@ function renderWorkspace(view) {
         el("div", { class: "wsp-diff-head" },
           el("span", { class: "wsp-file-badge", text: label }),
           el("span", { class: "wsp-diff-path", title, text: title }),
+          browserPreviewFile(title) ? el("button", { class: "wsp-change-locate", type: "button",
+            title: "在浏览器中打开", "aria-label": "在浏览器中打开 " + title,
+            onclick: () => openTreePath(title, "browser") }, "🌐") : null,
+          el("button", { class: "wsp-change-locate", type: "button", title: "在目录树中定位",
+            "aria-label": "在目录树中定位 " + title,
+            onclick: () => void tree.locate(activeProject(), title) }, "⌖"),
           changeStats([diff])));
       const rows = diffRows(diff);
       if (rows.length) {
@@ -2164,7 +2247,10 @@ function renderWorkspace(view) {
     if (state.projectId) {
       state.chosenModels.set(state.projectId, value);
       state.chosenVariants.set(state.projectId, "");
-      try { localStorage.setItem(`sona-code:model:${state.projectId}`, value); } catch (_) { /* Storage may be unavailable. */ }
+      try {
+        localStorage.setItem(`sona-code:model:${state.projectId}`, value);
+        localStorage.setItem("sona-code:last-model", value);
+      } catch (_) { /* Storage may be unavailable. */ }
     }
     updateModelButton();
     renderStatsLine();
@@ -2750,6 +2836,7 @@ function renderWorkspace(view) {
   }
 
   function selectProject(projectId) {
+    if (tree.projectId && tree.projectId !== projectId) tree.close();
     saveDraft();
     saveConversationView();
     cancelSelectedRefresh();
@@ -2795,6 +2882,7 @@ function renderWorkspace(view) {
     hideAutocomplete();
     scrollToLatestOnLoad = true;
     const projectChanged = state.projectId !== projectId;
+    if (projectChanged && tree.projectId) tree.close();
     state.projectId = projectId;
     state.queue = { items: [], paused: false, error: "" }; state.queueLoaded = false;
     if (projectChanged) { state.skills = []; state.commands = []; updateSkillInput(); }
@@ -2825,6 +2913,21 @@ function renderWorkspace(view) {
     refreshSelected();
   }
 
+  function applyLatestModel(projectId) {
+    try {
+      const value = localStorage.getItem("sona-code:last-model");
+      if (value === null) return;
+      if (value && projectId === state.projectId && state.providers.length) {
+        const [providerId, modelId] = value.split("\u0000");
+        if (!state.providers.some(provider => provider.id === providerId && provider.models?.[modelId])) return;
+      }
+      state.chosenModels.set(projectId, value);
+      state.chosenVariants.set(projectId, "");
+      localStorage.setItem("sona-code:model:" + projectId, value);
+      updateModelButton();
+    } catch (_) { /* Storage may be unavailable. */ }
+  }
+
   async function createSession(projectId = state.projectId || state.projects[0]?.id) {
     if (!projectId) { openAddProject(); return; }
     try {
@@ -2834,6 +2937,7 @@ function renderWorkspace(view) {
       if (!alive()) return;
       const items = state.sessions.get(projectId) || [];
       state.sessions.set(projectId, [session, ...items.filter((item) => item.id !== session.id)]);
+      applyLatestModel(projectId);
       selectSession(projectId, session.id);
       input.focus();
     } catch (error) { toast("新建对话失败：" + detail(error), "error"); }
@@ -2847,6 +2951,7 @@ function renderWorkspace(view) {
     });
     const items = state.sessions.get(projectId) || [];
     state.sessions.set(projectId, [session, ...items.filter((item) => item.id !== session.id)]);
+    applyLatestModel(projectId);
     if (!alive() || state.projectId !== projectId || state.sessionId) return { projectId, sessionId: session.id };
     state.sessionId = session.id;
     state.queue = { items: [], paused: false, error: "" }; state.queueLoaded = true;
@@ -3159,7 +3264,7 @@ function renderWorkspace(view) {
     if (shell && (waitingForReply() || state.queue.items.length)) {
       toast("请等待当前任务和消息队列结束后运行终端命令", "error"); return;
     }
-    const model = selectedModel();
+    let model = selectedModel();
     const variant = variantSelect.value ? { variant: variantSelect.value } : {};
     const agent = agentSelect.value || "build";
     const files = state.attachments.map(({ filename, mime, url }) => ({ filename, mime, url }));
@@ -3174,6 +3279,7 @@ function renderWorkspace(view) {
     try {
       if (slash && await executeBuiltIn(slash[1])) return;
       const { projectId, sessionId } = await ensureSessionForSend();
+      model = selectedModel();
       operationKey = workspaceConversationKey(projectId, sessionId);
       sendingConversations.add(operationKey);
       const base = sessionPath(projectId, sessionId);

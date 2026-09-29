@@ -1058,7 +1058,32 @@ function trjMarkdown(text) {
       const buf = [];
       while (i < lines.length && !/^\s*```/.test(lines[i])) { buf.push(lines[i]); i++; }
       i++; // 跳过闭合 ```
-      root.append(el("pre", { class: "trj-md-pre" }, el("code", null, buf.join("\n"))));
+      const code = buf.join("\n");
+      const language = line.trim().slice(3).trim();
+      root.append(el("div", { class: "trj-md-codeblock" },
+        el("div", { class: "trj-md-codebar" },
+          el("span", { text: language || "代码" }),
+          el("button", { type: "button", class: "trj-md-copy", text: "复制", "aria-label": "复制代码块",
+            onclick: async (event) => {
+              try {
+                if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+                await navigator.clipboard.writeText(code);
+              } catch (_) {
+                const field = document.createElement("textarea");
+                field.value = code;
+                field.style.position = "fixed";
+                field.style.opacity = "0";
+                document.body.append(field);
+                let copied = false;
+                try { field.select(); copied = document.execCommand("copy"); }
+                catch (_) { copied = false; }
+                finally { field.remove(); }
+                if (!copied) { event.currentTarget.textContent = "复制失败"; return; }
+              }
+              event.currentTarget.textContent = "已复制";
+              setTimeout(() => { if (event.currentTarget.isConnected) event.currentTarget.textContent = "复制"; }, 1800);
+            } })),
+        el("pre", { class: "trj-md-pre" }, el("code", null, code))));
       continue;
     }
     // 空行

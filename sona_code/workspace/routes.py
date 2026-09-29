@@ -13,6 +13,7 @@ import os
 import re
 import subprocess
 import sys
+import webbrowser
 from pathlib import Path
 from typing import Awaitable, Literal
 from urllib.parse import quote
@@ -171,6 +172,84 @@ def open_project_directory(project_id: str, request: Request) -> dict:
         subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"无法打开目录：{exc.strerror or exc}") from exc
+    return {"ok": True}
+
+
+def _project_entry(request: Request, project_id: str, relative: str) -> tuple[Path, Path]:
+    root = Path(_project_path(request, project_id)).resolve()
+    if "\\" in relative or "\x00" in relative or re.match(r"^[A-Za-z]:", relative):
+        raise HTTPException(400, "无效的项目路径")
+    parts = relative.split("/") if relative else []
+    if any(part in {"", ".", ".."} for part in parts):
+        raise HTTPException(400, "无效的项目路径")
+    try:
+        entry = root.joinpath(*parts).resolve(strict=True)
+        entry.relative_to(root)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(404, "项目路径不存在") from exc
+    return root, entry
+
+
+@router.get("/workspace/projects/{project_id}/tree")
+def project_tree(project_id: str, request: Request, path: str = Query(default="", max_length=2000)) -> dict:
+    root, directory = _project_entry(request, project_id, path)
+    if not directory.is_dir():
+        raise HTTPException(400, "路径不是目录")
+    items = []
+    try:
+        for entry in directory.iterdir():
+            if entry.name.startswith(".") or entry.name in {"node_modules", "__pycache__", "build", "dist", "target"}:
+                continue
+            if entry.is_symlink():
+                continue
+            try:
+                resolved = entry.resolve(strict=True)
+                resolved.relative_to(root)
+                is_dir = resolved.is_dir()
+                is_file = resolved.is_file()
+            except (OSError, ValueError):
+                continue
+            if is_dir or is_file:
+                items.append({"name": entry.name, "path": entry.relative_to(root).as_posix(), "directory": is_dir})
+    except OSError as exc:
+        raise HTTPException(400, f"无法读取目录：{exc}") from exc
+    items.sort(key=lambda item: (not item["directory"], item["name"].casefold()))
+    return {"items": items[:500], "truncated": len(items) > 500}
+
+
+@router.post("/workspace/projects/{project_id}/entries/open")
+def open_project_entry(project_id: str, request: Request, path: str = Query(max_length=2000),
+                       mode: str = Query(default="default")) -> dict:
+    _, entry = _project_entry(request, project_id, path)
+    if mode not in {"default", "reveal", "browser"}:
+        raise HTTPException(400, "无效的打开方式")
+    if mode == "browser":
+        if not entry.is_file() or entry.suffix.lower() not in {
+            ".html", ".htm", ".svg", ".pdf", ".txt", ".xml", ".css", ".js", ".mjs",
+            ".json", ".md", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+        }:
+            raise HTTPException(400, "此文件不支持浏览器打开")
+        if not webbrowser.open(entry.as_uri()):
+            raise HTTPException(500, "无法打开浏览器")
+        return {"ok": True}
+    if mode == "reveal":
+        command = (["explorer", "/select,", str(entry)] if os.name == "nt" and entry.is_file() else
+                   ["explorer", str(entry)] if os.name == "nt" else
+                   ["open", "-R", str(entry)] if sys.platform == "darwin" and entry.is_file() else
+                   ["open", str(entry)] if sys.platform == "darwin" else
+                   ["xdg-open", str(entry.parent if entry.is_file() else entry)])
+    elif os.name == "nt":
+        try:
+            os.startfile(entry)
+        except OSError as exc:
+            raise HTTPException(500, f"无法打开路径：{exc}") from exc
+        return {"ok": True}
+    else:
+        command = ["open", str(entry)] if sys.platform == "darwin" else ["xdg-open", str(entry)]
+    try:
+        subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        raise HTTPException(500, f"无法打开路径：{exc}") from exc
     return {"ok": True}
 
 
@@ -536,16 +615,19 @@ def _prepare_prompt(path: str, body: PromptBody, request: Request) -> dict:
             candidate.relative_to(project_root)
         except (OSError, ValueError) as exc:
             raise HTTPException(status_code=400, detail="文件不存在或不在当前项目内") from exc
-        if not candidate.is_file():
-            raise HTTPException(status_code=400, detail="引用路径不是文件")
+        if not candidate.is_file() and not candidate.is_dir():
+            raise HTTPException(status_code=400, detail="引用路径不是文件或目录")
         relative_name = candidate.relative_to(project_root).as_posix()
         if relative_name in references:
             continue
         references.add(relative_name)
-        parts.append({
-            "type": "file", "filename": relative_name, "mime": "text/plain",
-            "url": candidate.as_uri(),
-        })
+        if candidate.is_dir():
+            parts.append({"type": "text", "text": f"\n引用项目目录 @{relative_name}。请按需查看此目录下的文件。"})
+        else:
+            parts.append({
+                "type": "file", "filename": relative_name, "mime": "text/plain",
+                "url": candidate.as_uri(),
+            })
     prompt: dict = {"parts": parts}
     model = _model_choice(body.provider_id, body.model_id, request, getattr(body, "variant", None))
     if model:
