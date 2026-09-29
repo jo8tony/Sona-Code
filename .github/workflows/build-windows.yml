@@ -105,11 +105,54 @@ jobs:
             --recorder $Recorder.FullName `
             --opencode $OpenCode.FullName
 
+      - name: Build offline Electron installer
+        run: npm run desktop:build:windows:electron:package
+
+      - name: Smoke test offline Electron installer
+        shell: pwsh
+        run: |
+          $Installer = (Get-ChildItem "dist/electron/Sona-Code-Offline-*-Setup.exe" | Select-Object -First 1).FullName
+          if (-not $Installer) { throw "Electron installer not found" }
+          $InstallDir = Join-Path $env:RUNNER_TEMP "sona-code-offline-smoke"
+          $Process = Start-Process -FilePath $Installer -ArgumentList @("/S", "/D=$InstallDir") -Wait -PassThru
+          if ($Process.ExitCode -ne 0) { throw "Offline silent install failed: $($Process.ExitCode)" }
+          $Desktop = Join-Path $InstallDir "Sona Code Offline.exe"
+          $Recorder = Join-Path $InstallDir "resources/llm-api-proxy-recorder-sidecar.exe"
+          $OpenCode = Join-Path $InstallDir "resources/opencode.exe"
+          $License = Join-Path $InstallDir "resources/licenses/OpenCode-LICENSE.txt"
+          foreach ($File in @($Desktop, $Recorder, $OpenCode, $License, (Join-Path $InstallDir "chrome_100_percent.pak"))) {
+            if (-not (Test-Path $File)) { throw "Offline installation missing: $File" }
+          }
+          Add-Type -AssemblyName System.Drawing
+          $Expected = (New-Object System.Drawing.Icon((Resolve-Path "src-tauri/icons/icon.ico").Path, (New-Object System.Drawing.Size(32, 32)))).ToBitmap()
+          $Actual = [System.Drawing.Icon]::ExtractAssociatedIcon($Desktop).ToBitmap()
+          if ($Expected.Width -ne $Actual.Width -or $Expected.Height -ne $Actual.Height) { throw "Installed desktop icon size mismatch" }
+          for ($Y = 0; $Y -lt $Expected.Height; $Y++) {
+            for ($X = 0; $X -lt $Expected.Width; $X++) {
+              if ($Expected.GetPixel($X, $Y).ToArgb() -ne $Actual.GetPixel($X, $Y).ToArgb()) {
+                throw "Installed desktop icon does not match the Sona Code icon"
+              }
+            }
+          }
+          python ./scripts/smoke-windows-package.py `
+            --electron `
+            --desktop $Desktop `
+            --recorder $Recorder `
+            --opencode $OpenCode
+
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
           name: sona-code-windows-x64
           path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload offline Electron installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: sona-code-windows-x64-offline
+          path: dist/electron/Sona-Code-Offline-*-Setup.exe
           if-no-files-found: error
           retention-days: 14
 
@@ -119,5 +162,7 @@ jobs:
         with:
           tag_name: ${{ inputs.release_tag || github.ref_name }}
           body_path: ${{ (inputs.release_tag || github.ref_name) == 'v2.2.1' && 'docs/releases/v2.2.1.md' || (inputs.release_tag || github.ref_name) == 'v2.1.1' && 'docs/releases/v2.1.1.md' || (inputs.release_tag || github.ref_name) == 'v2.0.1' && 'docs/releases/v2.0.1.md' || '' }}
-          files: src-tauri/target/release/bundle/nsis/*.exe
+          files: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            dist/electron/Sona-Code-Offline-*-Setup.exe
           fail_on_unmatched_files: true

@@ -198,11 +198,74 @@ def _verify_desktop_lifecycle(desktop: Path) -> None:
         desktop_log.close()
 
 
+def _verify_electron_orphan_recovery(desktop: Path, recorder: Path, opencode: Path) -> None:
+    """A dead desktop owner must not leave port 8117 blocking a new launch."""
+    with tempfile.TemporaryDirectory(prefix="llmpr-orphan-smoke-") as temp_value:
+        temp = Path(temp_value)
+        roaming = temp / "roaming"
+        local = temp / "local"
+        data_dir = roaming / "com.liaopeng.llm-proxy-recorder"
+        for directory in (data_dir, local):
+            directory.mkdir(parents=True)
+        env = os.environ.copy()
+        env.update({
+            "APPDATA": str(roaming),
+            "LOCALAPPDATA": str(local),
+            "LLMPR_BUNDLED_OPENCODE": str(opencode),
+            "LLMPR_DESKTOP_INSTANCE_ID": "999999999-1",
+            "XDG_CONFIG_HOME": str(data_dir),
+            "XDG_DATA_HOME": str(data_dir),
+            "XDG_CACHE_HOME": str(local),
+            "XDG_STATE_HOME": str(data_dir / "state"),
+        })
+        base_url = "http://127.0.0.1:8117"
+        log_path = temp / "orphan-sidecar.log"
+        desktop_process = None
+        with log_path.open("wb") as log_file:
+            orphan = subprocess.Popen([
+                str(recorder), "--host", "127.0.0.1", "--port", "8117",
+                "--config", str(data_dir / "config.json"),
+                "--records-dir", str(data_dir / "records"),
+            ], env=env, stdout=log_file, stderr=subprocess.STDOUT,
+                creationflags=subprocess.CREATE_NO_WINDOW)
+            try:
+                _wait_until_ready(base_url, orphan)
+                desktop_process = subprocess.Popen([str(desktop)], env=env)
+                deadline = time.monotonic() + 60
+                while time.monotonic() < deadline:
+                    if desktop_process.poll() is not None:
+                        raise RuntimeError("Electron exited while recovering an orphaned sidecar")
+                    try:
+                        ping = _request_json(base_url, "GET", "/__recorder/api/ping")
+                        if ping.get("instance_id", "").startswith(f"{desktop_process.pid}-"):
+                            break
+                    except (OSError, urllib.error.URLError, ValueError):
+                        pass
+                    time.sleep(0.2)
+                else:
+                    raise RuntimeError("Electron did not replace the orphaned sidecar")
+                orphan.wait(timeout=15)
+            except Exception:
+                log_file.flush()
+                print(log_path.read_text(encoding="utf-8", errors="replace")[-8000:], file=sys.stderr)
+                raise
+            finally:
+                for child in (desktop_process, orphan):
+                    if child is not None and child.poll() is None:
+                        subprocess.run(
+                            ["taskkill", "/F", "/T", "/PID", str(child.pid)],
+                            capture_output=True, check=False, timeout=10,
+                            creationflags=subprocess.CREATE_NO_WINDOW,
+                        )
+                        child.wait(timeout=10)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--desktop", required=True, type=Path)
     parser.add_argument("--recorder", required=True, type=Path)
     parser.add_argument("--opencode", required=True, type=Path)
+    parser.add_argument("--electron", action="store_true")
     args = parser.parse_args()
 
     subsystem = _desktop_subsystem(args.desktop)
@@ -312,6 +375,8 @@ def main() -> None:
                     process.kill()
 
     _verify_desktop_lifecycle(args.desktop)
+    if args.electron:
+        _verify_electron_orphan_recovery(args.desktop, args.recorder, args.opencode)
     print("Windows close/restore, packaged OpenCode workspace, and ConPTY execution smoke tests passed")
 
 
