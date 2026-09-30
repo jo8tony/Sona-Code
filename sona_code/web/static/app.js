@@ -211,6 +211,7 @@ function handleMenuCommand(text) {
 
 /* ============================================================ 路由 */
 let cleanups = [];
+let workspacePage = null;
 function addCleanup(fn) { cleanups.push(fn); }
 function runCleanups() {
   cleanups.forEach((fn) => { try { fn(); } catch (_) {} });
@@ -244,9 +245,13 @@ function route() {
     hash = adminMenusVisible ? "#/settings" : "#/skills";
     history.replaceState(null, "", location.pathname + location.search + hash);
   }
+  const isWorkspace = hash === "#/workspace";
+  if (!isWorkspace) workspacePage?.controller.suspend();
   runCleanups();
   const view = $("#view");
-  view.replaceChildren(el("div", { class: "loading", text: "加载中…" }));
+  view.hidden = isWorkspace;
+  if (workspacePage) workspacePage.view.hidden = !isWorkspace;
+  if (!isWorkspace) view.replaceChildren(el("div", { class: "loading", text: "加载中…" }));
   for (const r of routes) {
     const m = hash.match(r.re);
     if (m) {
@@ -254,7 +259,14 @@ function route() {
       setNav(r.nav);
       updateAdminMenus();
       document.title = "Sona Code · " + ({ workspace: "工作区", models: "模型", skills: "技能", dashboard: "仪表盘", calls: "调用列表", trajectory: "轨迹", terminal: "终端", settings: "设置" }[r.nav] || "");
-      r.render(view, m);
+      if (isWorkspace) {
+        if (workspacePage) workspacePage.controller.resume();
+        else {
+          const workspaceView = el("main", { id: "workspace-view", class: "view" });
+          view.before(workspaceView);
+          workspacePage = { view: workspaceView, controller: r.render(workspaceView, m) };
+        }
+      } else r.render(view, m);
       return;
     }
   }

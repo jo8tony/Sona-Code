@@ -218,7 +218,15 @@ function workspaceSyncChildren(container, children) {
 }
 
 function renderWorkspace(view) {
+  // The router keeps this page mounted across settings visits.
+  const cleanups = [];
+  const addCleanup = fn => cleanups.push(fn);
   let disposed = false;
+  let suspended = false;
+  let projectsLoading = null;
+  let checkLoading = null;
+  let lastSelectedRefresh = 0;
+  const sessionLoads = new Map();
   let events = null;
   let eventProjectId = null;
   let refreshTimer = null;
@@ -417,7 +425,7 @@ function renderWorkspace(view) {
   const commandMenu = view.querySelector("#wsp-command-menu");
   const sessionPath = (projectId, sessionId) =>
     `workspace/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}`;
-  const alive = () => !disposed && view.isConnected && (!location.hash || location.hash === "#/workspace");
+  const alive = () => !disposed && !suspended && view.isConnected && (!location.hash || location.hash === "#/workspace");
   const queuePanel = el("section", { class: "wsp-queue", "aria-label": "待发送消息", hidden: true });
   view.querySelector("#wsp-form").before(queuePanel);
   let queueSignature = "";
@@ -2212,24 +2220,36 @@ function renderWorkspace(view) {
 
   async function loadSessions(project) {
     if (!project) return;
+    if (sessionLoads.has(project.id)) return sessionLoads.get(project.id);
+    const pending = fetchSessions(project);
+    sessionLoads.set(project.id, pending);
+    try { await pending; }
+    finally { if (sessionLoads.get(project.id) === pending) sessionLoads.delete(project.id); }
+  }
+
+  async function fetchSessions(project) {
     try {
       const data = await api(`workspace/projects/${encodeURIComponent(project.id)}/sessions`, { silent: true });
       if (!alive()) return;
       const items = (data.items || []).filter((item) => !item.time?.archived);
       items.sort((a, b) => (b.time?.updated || 0) - (a.time?.updated || 0));
       state.sessions.set(project.id, workspaceOrderItems(items, `sona-code:session-order:${project.id}`));
+      for (const item of items) state.sessionDetails.set(workspaceConversationKey(project.id, item.id), item);
       if (state.projectId === project.id) lastSessionListRefresh = Date.now();
       state.errors.delete(project.id);
       if (state.projectId === project.id && !items.some((item) => item.id === state.sessionId) &&
           !state.sessionDetails.has(workspaceConversationKey(project.id, state.sessionId))) {
         saveDraft();
+        saveConversationView();
+        cancelSelectedRefresh();
         state.sessionId = items[0]?.id || null;
+        restoreConversationView();
         restoreDraft();
         scrollToLatestOnLoad = true;
         workspaceSelection.sessionId = state.sessionId;
         persistWorkspaceSelection();
         refreshSelected();
-      } else if (state.projectId === project.id && !state.sessionDetails.has(workspaceConversationKey(project.id, state.sessionId))) {
+      } else if (state.projectId === project.id && !state.messagesLoaded && !selectedRefresh) {
         refreshSelected();
       }
       renderSidebar();
@@ -2576,8 +2596,8 @@ function renderWorkspace(view) {
       agentSelect.value = state.chosenAgents.get(projectId) || "build";
       if (!agentSelect.value) agentSelect.selectedIndex = 0;
       renderAgentPicker();
-      loadCommands(projectId);
     } catch (_) { /* The default Build agent remains usable. */ }
+    finally { if (alive() && state.projectId === projectId) loadCommands(projectId); }
   }
 
   async function loadCommands(projectId) {
@@ -2963,6 +2983,7 @@ function renderWorkspace(view) {
     if (selectedRefresh) { selectedRefresh.pending = true; return; }
     const refresh = { controller: new AbortController(), pending: false };
     selectedRefresh = refresh;
+    lastSelectedRefresh = Date.now();
     const projectId = state.projectId;
     const sessionId = state.sessionId;
     const base = sessionPath(projectId, sessionId);
@@ -2985,24 +3006,34 @@ function renderWorkspace(view) {
       }
     };
     try {
-      await Promise.allSettled([
-        read(`${base}/messages`, value => {
-          const messages = Array.isArray(value) ? value : [];
-          if (messagesVersion !== messageVersion) {
-            const live = new Map(state.messages.map(message => [message.info?.id, message]));
-            const received = new Set(messages.map(message => message.info?.id));
-            for (const message of messages) {
-              if ((messageInfoVersions.get(message.info?.id) || 0) > messagesVersion && live.has(message.info?.id))
-                message.info = { ...message.info, ...live.get(message.info.id).info };
-            }
-            for (const message of state.messages) {
-              if (!received.has(message.info?.id) && (messageInfoVersions.get(message.info?.id) || 0) > messagesVersion) messages.push(message);
-            }
+      const messagesRead = read(`${base}/messages`, value => {
+        const messages = Array.isArray(value) ? value : [];
+        if (messagesVersion !== messageVersion) {
+          const live = new Map(state.messages.map(message => [message.info?.id, message]));
+          const received = new Set(messages.map(message => message.info?.id));
+          for (const message of messages) {
+            if ((messageInfoVersions.get(message.info?.id) || 0) > messagesVersion && live.has(message.info?.id))
+              message.info = { ...message.info, ...live.get(message.info.id).info };
           }
-          state.messages = messages;
-          state.messagesLoaded = true;
-          state.messageLoadError = "";
-        }, error => { state.messageLoadError = detail(error); state.messagesLoaded = true; }),
+          for (const message of state.messages) {
+            if (!received.has(message.info?.id) && (messageInfoVersions.get(message.info?.id) || 0) > messagesVersion) messages.push(message);
+          }
+        }
+        state.messages = messages;
+        state.messagesLoaded = true;
+        state.messageLoadError = "";
+      }, error => { state.messageLoadError = detail(error); state.messagesLoaded = true; });
+      const queueRead = read(`${base}/queue`, value => {
+        if (queueVersion === queueUpdateVersion) { state.queue = value; state.queueLoaded = true; }
+        renderHeader();
+        return false;
+      });
+      // Leave browser connections available for the sidebar and conversation.
+      // A slow queue or diff must never delay displaying message history.
+      await messagesRead;
+      if (!current()) return;
+      await Promise.allSettled([
+        queueRead,
         read(`workspace/projects/${encodeURIComponent(projectId)}/status`, value => {
           if (statusVersion !== statusVersions.get(projectId)) return false;
           const selectedChanged = JSON.stringify(state.statuses?.[sessionId]) !== JSON.stringify(value?.[sessionId]);
@@ -3050,11 +3081,6 @@ function renderWorkspace(view) {
         ["trajectory", "activity"].includes(state.tab) ? read(`${base}/trajectory`, value => {
           state.recordingData = value; state.recordingError = "";
         }, error => { state.recordingError = detail(error); }) : null,
-        read(`${base}/queue`, value => {
-          if (queueVersion === queueUpdateVersion) { state.queue = value; state.queueLoaded = true; }
-          renderHeader();
-          return false;
-        }),
       ]);
     } finally {
       if (selectedRefresh === refresh) {
@@ -3125,14 +3151,14 @@ function renderWorkspace(view) {
     root.classList.remove("show-side");
     updateSidebarButton();
     renderSidebar(); renderHeader(); renderMain();
-    connectEvents(projectId);
-    loadModels(projectId);
-    loadAgents(projectId);
-    loadCommands(projectId);
+    refreshSelected();
     if (!state.sessions.has(projectId)) {
       const project = activeProject();
       if (project) loadSessions(project);
-    } else refreshSelected();
+    }
+    connectEvents(projectId);
+    loadModels(projectId);
+    loadAgents(projectId);
   }
 
   function selectSession(projectId, sessionId) {
@@ -3165,13 +3191,12 @@ function renderWorkspace(view) {
     root.classList.remove("show-side");
     updateSidebarButton();
     renderSidebar(); renderHeader(); renderMain();
+    refreshSelected();
     connectEvents(projectId);
     if (projectChanged) {
       loadModels(projectId);
       loadAgents(projectId);
-      loadCommands(projectId);
     }
-    refreshSelected();
   }
 
   function applyLatestModel(projectId) {
@@ -3690,7 +3715,8 @@ function renderWorkspace(view) {
   const poll = setInterval(() => {
     if (!alive()) return;
     refreshWorkspaceStatuses();
-    refreshSelected();
+    if (!state.messagesLoaded || waitingForReply() || events?.readyState !== 1 || Date.now() - lastSelectedRefresh >= 15000)
+      refreshSelected();
     if (Date.now() - lastSessionListRefresh > 15000) {
       const project = activeProject();
       if (project) loadSessions(project);
@@ -3707,23 +3733,73 @@ function renderWorkspace(view) {
   watchSonaStartupRefresh(reloadSonaModels, alive);
   updateModelButton();
   updateSidebarButton();
-  (async () => {
+
+  async function loadCheck() {
+    if (checkLoading) return checkLoading;
+    checkLoading = (async () => {
+      try {
+        const check = await api("workspace/check", { silent: true });
+        if (alive()) { state.check = check; renderHeader(); }
+      } catch (_) { /* Project browsing remains available when detection fails. */ }
+    })();
+    try { await checkLoading; }
+    finally { checkLoading = null; }
+  }
+
+  async function loadProjects() {
+    if (projectsLoading) return projectsLoading;
+    projectsLoading = fetchProjects();
+    try { await projectsLoading; }
+    finally { projectsLoading = null; }
+  }
+
+  async function fetchProjects() {
     try {
-      const [projects, check] = await Promise.all([
-        api("workspace/projects", { silent: true }), api("workspace/check", { silent: true }),
-      ]);
+      const projects = await api("workspace/projects", { silent: true });
       if (!alive()) return;
+      const previousIds = new Set(state.projects.map(project => project.id));
       state.projects = workspaceOrderItems(projects.items || [], "sona-code:project-order");
-      state.collapsedProjects = new Set(state.projects.map((project) => project.id));
-      state.check = check;
+      for (const project of state.projects) if (!previousIds.has(project.id)) state.collapsedProjects.add(project.id);
       refreshWorkspaceStatuses();
       const selected = state.projects.find((item) => item.id === state.projectId) || state.projects[0];
       renderSidebar();
-      if (selected) selectProject(selected.id);
+      if (selected && (!draftContextReady || selected.id !== state.projectId)) selectProject(selected.id);
+      else if (selected) loadSessions(selected);
       else { renderHeader(); renderMain(); }
-      state.projects.filter((project) => project.id !== selected?.id).slice(0, 3).forEach(loadSessions);
     } catch (error) {
-      if (alive()) content.replaceChildren(el("div", { class: "wsp-error", text: "加载工作区失败：" + detail(error) }));
+      if (alive() && !state.projects.length) content.replaceChildren(el("div", { class: "wsp-error", text: "加载工作区失败：" + detail(error) }));
     }
-  })();
+  }
+
+  loadProjects();
+  loadCheck();
+  return {
+    suspend() {
+      if (disposed || suspended) return;
+      saveDraft();
+      suspended = true;
+      cancelSelectedRefresh();
+      if (events) events.close();
+      events = null; eventProjectId = null;
+      hideAutocomplete(); closeRowMenus(); closeChangePopover();
+      closeModelPicker(); closeAgentPicker(); closeVariantPicker();
+      queueDialog?.close(); deleteDialog?.close();
+    },
+    resume() {
+      if (disposed || !suspended) return;
+      suspended = false;
+      // Retain DOM, drafts, expanded projects and scroll positions; refresh in place.
+      updateTrajectoryHeight();
+      loadProjects(); loadCheck();
+      if (state.projectId) {
+        refreshSelected();
+        connectEvents(state.projectId);
+        workspaceModelCache.delete(state.projectId);
+        loadModels(state.projectId); loadAgents(state.projectId);
+      }
+    },
+    dispose() {
+      for (const cleanup of cleanups.splice(0)) { try { cleanup(); } catch (_) {} }
+    },
+  };
 }

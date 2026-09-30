@@ -597,9 +597,11 @@ assert.equal(more(), undefined);
 
 let refreshes = 0;
 const loadContext = vm.createContext({state, workspaceOrderItems: items => items, workspaceConversationKey: (p,s) => JSON.stringify([p,s]), workspaceSelection: {sessionId: "session-9"},
+  sessionLoads: new Map(), selectedRefresh: null,
   api: async () => ({items: state.sessions.get(project.id)}), alive: () => true,
   scrollToLatestOnLoad: false, lastSessionListRefresh: 0,
-  saveDraft() {}, restoreDraft() {}, persistWorkspaceSelection() {}, refreshSelected() {refreshes++;}, renderSidebar() {}, renderHeader() {},
+  saveDraft() {}, restoreDraft() {}, saveConversationView() {}, restoreConversationView() {}, cancelSelectedRefresh() {},
+  persistWorkspaceSelection() {}, refreshSelected() {refreshes++;}, renderSidebar() {}, renderHeader() {},
 });
 state.sessionDetails = new Map();
 const loadSource = source.slice(source.indexOf("  async function loadSessions(project) {"), source.indexOf("  function modelDisplayName("));

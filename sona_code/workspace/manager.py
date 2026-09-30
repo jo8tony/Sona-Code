@@ -53,6 +53,7 @@ class WorkspaceManager:
     def __init__(self, config_supplier: Callable[[], AppConfig] | None = None) -> None:
         self._config_supplier = config_supplier
         self._servers: dict[str, OpenCodeServer] = {}
+        self._starting: dict[str, asyncio.Task[OpenCodeServer]] = {}
         self._lock = asyncio.Lock()
         self._skill_changes = asyncio.Lock()
         self._task_requests = 0
@@ -67,18 +68,29 @@ class WorkspaceManager:
             existing = self._servers.get(path)
             if existing and existing.process.poll() is None:
                 return existing
+            pending = self._starting.get(path)
+            if pending is None:
+                pending = asyncio.create_task(self._start_server(path, config))
+                self._starting[path] = pending
+                # A disconnected browser must not cancel a shared startup or
+                # leave an unobserved failure when its request is cancelled.
+                pending.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
+        return await asyncio.shield(pending)
+
+    async def _start_server(self, path: str, config: AppConfig) -> OpenCodeServer:
+        try:
+            existing = self._servers.pop(path, None)
             if existing:
                 await existing.client.aclose()
-                self._servers.pop(path, None)
 
-            resolution = resolve_opencode(config)
+            resolution = await asyncio.to_thread(resolve_opencode, config)
             if not resolution.path:
                 raise WorkspaceError("未找到 OpenCode 程序，请在设置中配置程序来源", 503)
-            executable = resolve_executable(resolution.path)
+            executable = await asyncio.to_thread(resolve_executable, resolution.path)
             if not executable:
                 raise WorkspaceError("OpenCode 程序路径无效", 503)
 
-            env = _build_env(config, "opencode")
+            env = await asyncio.to_thread(_build_env, config, "opencode")
             password = secrets.token_urlsafe(32)
             env["OPENCODE_SERVER_USERNAME"] = "sona-code"
             env["OPENCODE_SERVER_PASSWORD"] = password
@@ -117,6 +129,13 @@ class WorkspaceManager:
                 await self._stop_process(process)
                 logger.warning("OpenCode server did not become ready for %s (attempt %d)", path, attempt + 1)
             raise WorkspaceError("OpenCode 服务启动失败，请检查程序版本与应用日志", 503)
+        finally:
+            self._starting.pop(path, None)
+
+    async def _wait_for_starts(self) -> None:
+        """Called with the lifecycle lock held so no new starts can enter."""
+        if self._starting:
+            await asyncio.gather(*list(self._starting.values()), return_exceptions=True)
 
     async def request(
         self, project: str, config: AppConfig, method: str, endpoint: str,
@@ -187,6 +206,7 @@ class WorkspaceManager:
         async with self._skill_changes, self._lock:
             if self._task_requests:
                 raise WorkspaceError(f"工作区有任务正在运行，请任务结束后再修改{noun}", 409)
+            await self._wait_for_starts()
             active = [(path, server) for path, server in self._servers.items()
                       if server.process.poll() is None]
             for path, server in active:
@@ -225,6 +245,9 @@ class WorkspaceManager:
     async def stop(self, project: str) -> None:
         path = str(Path(project).expanduser().resolve())
         async with self._lock:
+            pending = self._starting.get(path)
+            if pending is not None:
+                await asyncio.gather(pending, return_exceptions=True)
             server = self._servers.pop(path, None)
             if server:
                 await server.client.aclose()
@@ -232,6 +255,7 @@ class WorkspaceManager:
 
     async def shutdown(self) -> None:
         async with self._lock:
+            await self._wait_for_starts()
             servers = list(self._servers.values())
             self._servers.clear()
             for server in servers:

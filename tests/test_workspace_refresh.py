@@ -20,7 +20,7 @@ const state = {projectId: "p", sessionId: "a", tab: "chat", messages: [],
   questionDrafts: new Map(), questionPages: new Map(), questionErrors: new Map(), diffs: [], todos: [], children: []};
 const context = vm.createContext({state, AbortController, setTimeout, clearTimeout,
   selectedRefresh: null, refreshTimer: null, renderTimer: null, queueUpdateVersion: 0,
-  messageVersion: 0, messageInfoVersions: new Map(), statusVersions: new Map(), conversationViews: new Map(),
+  messageVersion: 0, lastSelectedRefresh: 0, messageInfoVersions: new Map(), statusVersions: new Map(), conversationViews: new Map(),
   alive: () => true, sessionPath: (p,s) => `${p}/${s}`, detail: e => e.message,
   api(path, options) { return new Promise((resolve, reject) => requests.push({path, options, resolve, reject})); },
   renderMain() {}, renderSidebar() {}, renderHeader() {},
@@ -36,7 +36,9 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const request = path => requests.findLast(r => r.path === path);
 const info = {id: "reply", role: "assistant", sessionID: "a", tokens: {output: 1}};
 (async () => {
+  const deadline = setTimeout(() => {console.error("Refresh did not finish"); process.exit(1);}, 3000);
   const a = context.refreshSelected();
+  assert.equal(request("p/a/diff"), undefined, "Auxiliary requests must leave connections for history and sidebar");
   // A message can render while the diff request is still unresolved.
   request("p/a/messages").resolve([{info, parts: [{type: "text", text: "first"}]}]);
   await tick();
@@ -53,8 +55,8 @@ const info = {id: "reply", role: "assistant", sessionID: "a", tokens: {output: 1
   assert.equal(state.messages[0].info.id, "b");
   // Return to A before A's first request completes: identity guards must reject it.
   context.cancelSelectedRefresh(); state.sessionId = "a";
+  const requestStart = requests.length;
   const again = context.refreshSelected();
-  const newRequests = requests.slice(-7);
   request("p/a/messages").resolve([{info, parts: [{type: "text", text: "fresh parts"}]}]);
   context.applyMessageEvent("p", {type: "message.updated", properties: {info: {...info, tokens: {output: 25}}}});
   await tick();
@@ -64,7 +66,7 @@ const info = {id: "reply", role: "assistant", sessionID: "a", tokens: {output: 1
   oldDiff.resolve([{file: "stale.txt"}]);
   await tick();
   assert.deepEqual(state.diffs, []);
-  for (const r of newRequests) if (!r.path.endsWith("/messages")) r.resolve([]);
+  for (const r of requests.slice(requestStart)) if (!r.path.endsWith("/messages")) r.resolve([]);
   await again;
   assert.equal(context.selectedRefresh, null);
   for (const r of requests) r.resolve([]);
@@ -87,6 +89,7 @@ const info = {id: "reply", role: "assistant", sessionID: "a", tokens: {output: 1
   for (let i = 0; i < 10; i++) { state.sessionId = String(i); state.messagesLoaded = true; context.saveConversationView(); }
   assert.equal(context.conversationViews.size, 6);
   assert.equal(context.conversationViews.has(JSON.stringify(["p", "a"])), false);
+  clearTimeout(deadline);
 })().catch(error => {console.error(error); process.exitCode = 1;});
 '''
     subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)

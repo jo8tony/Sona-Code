@@ -55,6 +55,7 @@ assert.equal(workspaceReadDraft(workspaceConversationKey('p2','same')).text, 'ot
 // A history request started for A must never update the current B conversation.
 (async () => {
   let selectedRefresh = null;
+  let lastSelectedRefresh = 0;
   let resolveMessages;
   const pending = new Promise(resolve => {resolveMessages = resolve;});
   const api = path => path.endsWith('/messages') ? pending : Promise.resolve({});
