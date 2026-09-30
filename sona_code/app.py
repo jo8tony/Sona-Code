@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -27,7 +27,8 @@ from sona_code.terminal.routes import router as terminal_router
 from sona_code.workspace import WorkspaceManager
 from sona_code.workspace.routes import router as workspace_router, configure_workspace_queue
 from sona_code.workspace.queue import WorkspaceQueue
-from sona_code.sona_site import SonaSiteManager
+from sona_code.sona_site import SonaSiteError, SonaSiteManager
+from sona_code.workspace.manager import WorkspaceError
 from sona_code.admin.sona_routes import router as sona_router
 
 logger = logging.getLogger("sona_code")
@@ -75,10 +76,39 @@ class RuntimeState:
         self.store = CallStore(resolved_records_dir(config))
         self.terminal = TerminalManager()
         self.terminal_projects = TerminalProjectStore(config_path)
-        self.sona_site = SonaSiteManager()
+        self.sona_site = SonaSiteManager(config_path)
+        self.sona_refresh_lock = asyncio.Lock()
+        self.sona_site.startup_refreshing = (
+            config.model_settings.source == "sona" and self.sona_site.session(config.sona_site) is not None)
         self.workspace = WorkspaceManager(self.provider_config)
         self.workspace_queue = WorkspaceQueue(config_path)
         self.skills = SkillStore()
+
+    async def refresh_sona_catalog(self) -> None:
+        async with self.sona_refresh_lock:
+            site = self.config.sona_site.model_copy()
+            current = self.sona_site.session(site)
+            if current is None:
+                raise SonaSiteError("请先登录网站", 401)
+
+            async def apply(session) -> dict:
+                if (self.config.sona_site != site or self.sona_site.session(site) is not current):
+                    raise SonaSiteError("网站登录或环境已变化，请重试", 409)
+                if session is None:
+                    self.sona_site.clear(site)
+                else:
+                    self.sona_site.set_session(site.environment, site.active_url(), session)
+                return {"ok": True}
+
+            try:
+                updated = await self.sona_site.load_catalog(site.active_url(), current.token, site.environment)
+            except SonaSiteError as exc:
+                if exc.status == 401:
+                    async with self.config_lock:
+                        await self.workspace.update_configuration(lambda: apply(None), "网站登录")
+                raise
+            async with self.config_lock:
+                await self.workspace.update_configuration(lambda: apply(updated), "网站模型")
 
     def provider_config(self) -> AppConfig:
         """Combine editable local providers with the current website catalog in memory."""
@@ -131,11 +161,24 @@ def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
                 await asyncio.sleep(RETENTION_SWEEP_SECONDS)
                 await _retention_sweep(runtime)
 
+        async def refresh_saved_login() -> None:
+            try:
+                if runtime.sona_site.startup_refreshing:
+                    await runtime.refresh_sona_catalog()
+            except (SonaSiteError, WorkspaceError) as exc:
+                logger.warning("启动刷新 Sona 模型失败：%s", exc.detail)
+            finally:
+                runtime.sona_site.startup_refreshing = False
+
         sweeper = asyncio.create_task(_loop())
+        catalog_refresh = asyncio.create_task(refresh_saved_login())
         try:
             yield
         finally:
             sweeper.cancel()
+            catalog_refresh.cancel()
+            with suppress(asyncio.CancelledError):
+                await catalog_refresh
             # 终止全部终端会话进程，避免孤儿进程
             try:
                 await runtime.terminal.shutdown()

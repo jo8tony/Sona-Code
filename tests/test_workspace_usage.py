@@ -85,6 +85,12 @@ assert.equal(messageVersion,version); assert.match(statsLine.textContent,/14%/);
 applyMessageEvent('project',event({...next,tokens:{input:2000,output:200,reasoning:100,cache:{read:500,write:200}}}));
 renderStatsLine();
 assert.match(statsLine.textContent,/上下文 3K \/ 10K · 30%/);
+// Sona's default 256 * 1024 window must read as 256K, with the same base for usage.
+state.providers[0].models.m = {source:'sona',limit:{context:262144}};
+applyMessageEvent('project',event({...next,tokens:{input:65536,output:0,cache:{read:0,write:0}}}));
+renderStatsLine();
+assert.match(statsLine.textContent,/上下文 64K \/ 256K · 25%/);
+state.providers[0].models.m = {limit:{context:10000}};
 // Slow history fetched before the event must not roll back the fresh native usage.
 (async () => {
   let resolveMessages;

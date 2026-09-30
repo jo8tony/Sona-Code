@@ -435,7 +435,8 @@ async def project_models(project_id: str, request: Request):
     if not default and providers and providers[0]["models"]:
         default = {"providerID": providers[0]["id"], "modelID": next(iter(providers[0]["models"]))}
     return {"providers": providers, "connected": connected, "default_model": default,
-            "source": source, "sona_environment": cfg.sona_site.environment}
+            "source": source, "sona_environment": cfg.sona_site.environment,
+            "sona_connected": request.app.state.runtime.sona_site.session(cfg.sona_site) is not None}
 
 
 

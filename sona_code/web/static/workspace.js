@@ -270,7 +270,7 @@ function renderWorkspace(view) {
     get sending() { return sendingConversations.has(workspaceConversationKey(this.projectId, this.sessionId)); },
     get pendingAction() { return pendingActions.get(workspaceConversationKey(this.projectId, this.sessionId)) || ""; },
     queue: { items: [], paused: false, error: "" }, queueLoaded: false,
-    chosenAgents: new Map(), chosenVariants: new Map(), providers: [], connectedProviders: new Set(), agents: [], commands: [], skills: [], modelLoadError: "", modelSource: "sona", sonaEnvironment: "prod",
+    chosenAgents: new Map(), chosenVariants: new Map(), providers: [], connectedProviders: new Set(), agents: [], commands: [], skills: [], modelLoadError: "", modelSource: "sona", sonaEnvironment: "prod", sonaConnected: null,
     collapsedProjects: new Set(), sessionLimits: new Map(), expandedTools: new Map(), actionError: "", compactingSessionId: null,
     attachments: [], fileReferences: [], commandSelectedIndex: 0,
     get pendingImageCount() { return pendingImages.get(workspaceConversationKey(this.projectId, this.sessionId))?.count || 0; },
@@ -736,10 +736,10 @@ function renderWorkspace(view) {
     const parsed = Date.parse(value || "");
     return Number.isFinite(parsed) ? parsed : null;
   }
-  function formatTokens(value) {
-    if (value < 1000) return String(Math.round(value));
-    const scaled = value < 1_000_000 ? value / 1000 : value / 1_000_000;
-    const suffix = value < 1_000_000 ? "K" : "M";
+  function formatTokens(value, base = 1000) {
+    if (value < base) return String(Math.round(value));
+    const scaled = value < base * base ? value / base : value / (base * base);
+    const suffix = value < base * base ? "K" : "M";
     return `${scaled >= 100 ? Math.round(scaled) : Math.round(scaled * 10) / 10}${suffix}`;
   }
   function formatDuration(milliseconds) {
@@ -796,8 +796,9 @@ function renderWorkspace(view) {
       const used = promptTokens + numeric(usage.output) + numeric(usage.reasoning);
       if (contextWindow > 0) {
         const percent = Math.round(used / contextWindow * 100);
-        contextGroup = el("span", { class: "wsp-stat-context", title: "OpenCode 最近一次有效模型用量（含输出、推理和缓存 Token）；模型调用结束时更新",
-          text: `上下文 ${formatTokens(used)} / ${formatTokens(contextWindow)} · ${percent}%` });
+        const base = model.source === "sona" ? 1024 : 1000;
+        contextGroup = el("span", { class: "wsp-stat-context", title: `OpenCode 最近一次有效模型用量（含输出、推理和缓存 Token）：${used} / ${contextWindow} tokens；模型调用结束时更新`,
+          text: `上下文 ${formatTokens(used, base)} / ${formatTokens(contextWindow, base)} · ${percent}%` });
       }
     }
     if (turns.size) groups.push(el("span", { text: `${turns.size} 轮` }));
@@ -2430,8 +2431,24 @@ function renderWorkspace(view) {
 
   function renderModelPicker() {
     const refresh = view.querySelector("#wsp-model-refresh");
-    refresh.hidden = state.modelSource !== "sona";
+    refresh.hidden = state.modelSource !== "sona" || state.sonaConnected === false;
     modelList.replaceChildren();
+    if (state.modelSource === "sona" && state.sonaConnected === false) {
+      modelList.append(el("p", { class: "wsp-picker-empty", text: state.modelLoadError || "请登录 Sona 网站以获取已订阅模型。" }),
+        el("button", { type: "button", class: "wsp-model-option", text: "登录 Sona", onclick: async event => {
+          const button = event.currentTarget;
+          if (button.disabled) return;
+          button.disabled = true; button.textContent = "等待浏览器登录…";
+          try {
+            await startSonaLogin(state.sonaEnvironment);
+            if (alive() && state.projectId) await loadModels(state.projectId);
+          } catch (error) {
+            if (alive()) { state.modelLoadError = detail(error); renderModelPicker(); }
+          } finally { button.disabled = false; button.textContent = "登录 Sona"; }
+        } }));
+      if (!modelPicker.hidden) positionPicker(modelPicker, modelButton, "right");
+      return;
+    }
     if (state.modelLoadError) {
       modelList.append(el("p", { class: "wsp-picker-empty", text: `模型加载失败：${state.modelLoadError}` }));
       return;
@@ -2466,9 +2483,11 @@ function renderWorkspace(view) {
       modelList.append(group);
     }
     if (!count && query) modelList.append(el("p", { class: "wsp-picker-empty", text: "没有匹配的模型" }));
-    else if (!state.providers.length) modelList.append(
-      el("p", { class: "wsp-picker-empty", text: state.modelSource === "sona" ? "请先登录 Sona 网站并订阅模型。" : "暂无可用模型。" }),
-      el("a", { href: "#/models", class: "wsp-model-option", text: state.modelSource === "sona" ? "前往网站登录和环境设置" : "前往模型页面" }));
+    else if (!state.providers.length) {
+      modelList.append(el("p", { class: "wsp-picker-empty", text: state.modelSource === "sona"
+        ? (state.sonaConnected === null ? "正在读取模型…" : "当前环境没有可用订阅，请订阅后点击刷新。") : "暂无可用模型。" }));
+      if (state.modelSource !== "sona") modelList.append(el("a", { href: "#/models", class: "wsp-model-option", text: "前往模型页面" }));
+    }
     if (!modelPicker.hidden) positionPicker(modelPicker, modelButton, "right");
   }
 
@@ -2491,7 +2510,7 @@ function renderWorkspace(view) {
     state.modelLoadError = "";
     try {
       let entry = workspaceModelCache.get(projectId);
-      if (!entry || (!entry.pending && Date.now() - entry.loadedAt >= WORKSPACE_MODEL_TTL)) {
+      if (!entry || (!entry.pending && (!entry.data || (entry.data.source !== "sona" && Date.now() - entry.loadedAt >= WORKSPACE_MODEL_TTL)))) {
         const previous = entry?.data;
         entry = { data: previous, loadedAt: 0, pending: null };
         workspaceModelCache.set(projectId, entry);
@@ -2505,6 +2524,7 @@ function renderWorkspace(view) {
           (a.id === "opencode" ? -1 : b.id === "opencode" ? 1 : (a.name || a.id).localeCompare(b.name || b.id))) : [];
         state.modelSource = data.source || "sona";
         state.sonaEnvironment = data.sona_environment || "prod";
+        state.sonaConnected = data.sona_connected === true;
         state.defaultModel = data.default_model || null;
         state.connectedProviders = new Set(Array.isArray(data.connected) ? data.connected : []);
       };
@@ -2547,7 +2567,17 @@ function renderWorkspace(view) {
         await loadModels(projectId);
         if (!state.modelLoadError) toast("模型已刷新");
       }
-    } catch (error) { toast(`刷新模型失败：${detail(error)}`, "error"); }
+    } catch (error) {
+      if (error.status === 401) {
+        workspaceModelCache.clear();
+        if (alive() && state.projectId === projectId) {
+          await loadModels(projectId);
+          state.modelLoadError = "网站登录已失效，请重新登录。";
+          if (!modelPicker.hidden) renderModelPicker();
+        }
+      }
+      toast(`刷新模型失败：${detail(error)}`, "error");
+    }
     finally { button.disabled = false; button.removeAttribute("aria-busy"); }
   }
 
@@ -3682,6 +3712,13 @@ function renderWorkspace(view) {
   }, 2500);
   window.addEventListener("pagehide", saveDraft);
   addCleanup(() => window.removeEventListener("pagehide", saveDraft));
+  const reloadSonaModels = () => {
+    workspaceModelCache.clear();
+    if (alive() && state.projectId) loadModels(state.projectId);
+  };
+  window.addEventListener("sona-models-changed", reloadSonaModels);
+  addCleanup(() => window.removeEventListener("sona-models-changed", reloadSonaModels));
+  watchSonaStartupRefresh(reloadSonaModels, alive);
   updateModelButton();
   updateSidebarButton();
   (async () => {

@@ -107,21 +107,32 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
   assert.equal(requests.length, 1, "Concurrent opens should share one request");
   requests[0].resolve(catalog("old")); await Promise.all([a, b]);
   await context.loadModels("p"); assert.equal(requests.length, 1);
-  now += 5 * 60 * 1000 + 1;
-  const stale = context.loadModels("p");
-  assert(state.providers[0].models.old, "Cached options must remain selectable while refreshing");
-  requests[1].resolve(catalog("new")); await stale;
-  assert(state.providers[0].models.new);
+  now += 365 * 24 * 60 * 60 * 1000;
+  await context.loadModels("p");
+  assert.equal(requests.length, 1, "Sona subscriptions must have no automatic expiry");
+  assert(state.providers[0].models.old);
   const refresh = context.refreshSonaModels();
-  assert.equal(requests[2].path, "models/sona/refresh"); assert.equal(button.disabled, true);
-  requests[2].resolve({}); await tick();
-  assert(requests[3].path.endsWith("/models")); requests[3].resolve(catalog("manual")); await refresh;
+  assert.equal(requests[1].path, "models/sona/refresh"); assert.equal(button.disabled, true);
+  requests[1].resolve({}); await tick();
+  assert(requests[2].path.endsWith("/models")); requests[2].resolve(catalog("manual")); await refresh;
   assert.equal(button.disabled, false); assert(state.providers[0].models.manual);
   // A delayed response from another project may cache there, but must not change this picker.
   state.projectId = "other"; const other = context.loadModels("other");
   state.projectId = "p"; await context.loadModels("p");
-  requests[4].resolve(catalog("other-model")); await other;
+  requests[3].resolve(catalog("other-model")); await other;
   assert(state.providers[0].models.manual); assert.equal(notices.at(-1), "模型已刷新");
+  // Expired website login must invalidate subscriptions and expose login state.
+  const expired = context.refreshSonaModels();
+  requests[4].reject(Object.assign(new Error("expired"), {status: 401})); await tick();
+  requests[5].resolve({source: "sona", sona_connected: false, providers: []}); await expired;
+  assert.equal(state.sonaConnected, false); assert.equal(state.providers.length, 0);
+  assert(state.modelLoadError.includes("登录"));
+  // Native providers keep their existing periodic cache refresh.
+  state.projectId = "native"; const native = context.loadModels("native");
+  requests[6].resolve({source: "native", providers: []}); await native;
+  now += 5 * 60 * 1000 + 1;
+  const nativeRefresh = context.loadModels("native"); assert.equal(requests.length, 8);
+  requests[7].resolve({source: "native", providers: []}); await nativeRefresh;
 })().catch(error => {console.error(error); process.exitCode = 1;});
 ''')
 

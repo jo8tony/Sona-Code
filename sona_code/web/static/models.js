@@ -1,5 +1,53 @@
 "use strict";
 
+let sonaLoginPending = null;
+
+function startSonaLogin(environment) {
+  if (sonaLoginPending) return sonaLoginPending;
+  const native = window.__TAURI__?.core?.invoke;
+  // Open synchronously from the click so browser popup blocking does not
+  // prevent login, and the callback can close a script-created tab.
+  const tab = native ? null : window.open("about:blank", "_blank");
+  if (tab) tab.opener = null;
+  sonaLoginPending = (async () => {
+    const result = await api("models/sona/login/start", { method: "POST", silent: true });
+    if (!result.connected) {
+      if (native) await window.__TAURI__.core.invoke("open_website_login", { url: result.url });
+      else if (tab) tab.location.replace(result.url);
+      else throw new Error("浏览器阻止了登录窗口，请允许弹出窗口后重试");
+      const expires = Date.now() + 5 * 60 * 1000;
+      while (Date.now() < expires) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        const latest = await api("models/source", { silent: true });
+        if (latest.source !== "sona" || latest.environment !== environment) throw new Error("模型来源或网站环境已变化，请重新登录");
+        if (latest.connected) break;
+      }
+    }
+    const latest = await api("models/source", { silent: true });
+    if (!latest.connected || latest.environment !== environment) throw new Error("登录未完成，请重试");
+    if (tab) tab.close();
+    if (typeof workspaceModelCache !== "undefined") workspaceModelCache.clear();
+    window.dispatchEvent(new Event("sona-models-changed"));
+    return latest;
+  })().catch(error => {
+    if (tab) tab.close();
+    throw error;
+  }).finally(() => { sonaLoginPending = null; });
+  return sonaLoginPending;
+}
+
+async function watchSonaStartupRefresh(onComplete, active) {
+  try {
+    let source = await api("models/source", { silent: true });
+    while (active() && source.startup_refreshing) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (!active()) return;
+      source = await api("models/source", { silent: true });
+    }
+    if (active()) onComplete(source);
+  } catch (_) { /* Cached subscriptions remain usable when startup refresh fails. */ }
+}
+
 async function saveModelSource(source, updates, view) {
   try {
     await api("models/source", { method: "PUT", body: {
@@ -43,7 +91,7 @@ async function renderSonaModels(view, source, tabs) {
     el("p", { text: source.connected
       ? `已登录：${source.user?.userName || source.user?.userId || "当前用户"}`
       : "当前环境尚未登录。登录后将读取你创建的场景和已获批订阅。" }));
-  account.append(el("p", { class: "f-hint", text: "网站凭据仅保存在本次 App 运行期间；重启后需要重新登录。已有 OpenCode 终端切换来源后需要重启。" }));
+  account.append(el("p", { class: "f-hint", text: "登录凭据和模型会保存，下次启动自动刷新一次；平台订阅变化后可手动刷新。Sona 模型默认上下文 256K、输出 32K。已有 OpenCode 终端切换来源后需要重启。" }));
   async function action(path, button) {
     if (button?.disabled) return;
     const label = button?.textContent;
@@ -57,6 +105,7 @@ async function renderSonaModels(view, source, tabs) {
       await renderModels(view);
       if (path === "models/sona/refresh") toast(`模型已刷新，共 ${result.providers.reduce((sum, provider) => sum + provider.models.length, 0)} 个模型`);
     } catch (cause) {
+      if (cause.status === 401) { await renderModels(view); return; }
       error.hidden = false; error.textContent = cause.detail || cause.message;
       toast(error.textContent, "error");
     }
@@ -69,25 +118,16 @@ async function renderSonaModels(view, source, tabs) {
       el("button", { type: "button", class: "btn", text: "刷新模型", onclick: event => action("models/sona/refresh", event.currentTarget) }),
       el("button", { type: "button", class: "btn", text: "退出登录", onclick: event => action("models/sona/logout", event.currentTarget) })));
   } else {
-    account.append(el("button", { type: "button", class: "btn btn-primary", text: "在浏览器中登录", onclick: async () => {
+    account.append(el("button", { type: "button", class: "btn btn-primary", text: "在浏览器中登录", onclick: async event => {
       error.hidden = true;
+      const button = event.currentTarget;
+      if (button.disabled) return;
+      button.disabled = true; button.textContent = "等待浏览器登录…";
       try {
-        const { url } = await api("models/sona/login/start", { method: "POST", silent: true });
-        if (window.__TAURI__?.core?.invoke) await window.__TAURI__.core.invoke("open_website_login", { url });
-        else window.open(url, "_blank", "noopener");
-        const expires = Date.now() + 5 * 60 * 1000;
-        const timer = setInterval(async () => {
-          if (!view.isConnected || location.hash !== "#/models" || Date.now() > expires) { clearInterval(timer); return; }
-          try {
-            const latest = await api("models/source", { silent: true });
-            if (latest.source !== "sona") { clearInterval(timer); return; }
-            if (latest.connected && latest.environment === source.environment) {
-              clearInterval(timer);
-              await renderModels(view);
-            }
-          } catch (_) { /* Retry while browser login is pending. */ }
-        }, 2000);
+        await startSonaLogin(source.environment);
+        if (view.isConnected && location.hash === "#/models") await renderModels(view);
       } catch (cause) { error.hidden = false; error.textContent = cause.detail || cause.message; }
+      finally { button.disabled = false; button.textContent = "在浏览器中登录"; }
     } }));
   }
   const catalog = el("section", { class: "card" }, el("h2", { text: "已订阅模型" }));
@@ -98,6 +138,8 @@ async function renderSonaModels(view, source, tabs) {
     el("strong", { text: provider.name }),
     el("p", { text: provider.models.map((model) => model.name).join("、") })));
   view.replaceChildren(tabs, error, urls, account, catalog);
+  if (source.startup_refreshing) watchSonaStartupRefresh(() => renderModels(view),
+    () => view.isConnected && location.hash === "#/models");
 }
 
 async function renderNativeModels(view, tabs) {

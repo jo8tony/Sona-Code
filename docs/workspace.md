@@ -61,6 +61,10 @@ OpenCode 服务只监听 `127.0.0.1`，使用每次启动随机生成的 HTTP Ba
 
 顶部「模型」页面独立管理应用提供商和手动模型，不依赖工作区项目或 OpenCode 服务启动。模型定义、真实密钥、应用默认模型和原生目录显示开关保存在应用配置；`GET /models/config` 仅返回密钥状态和 revision，`PUT /models/config` 使用 revision 防止覆盖其他页面的修改。省略 `api_key` 表示保留，空字符串表示清除。旧模型可保持未填写的限制；新增或修改模型必须填写正整数的 `context_length`、`output_length`。
 
+Sona 网站模型默认上下文为 256K（262144 tokens），输出为 32K（32768 tokens），同时用于原生模型配置与会话上下文用量显示。网站登录 token、场景密钥和订阅模型保存在配置文件旁的 `*.sona-sessions` 私有文件中，按环境和网站地址隔离；Windows 使用当前用户 DPAPI 加密，其他系统文件权限为 0600。普通配置、管理接口和浏览器缓存不包含网站凭据。退出登录或确认 token 失效时同步清除保存的登录。
+
+Sona 订阅模型没有缓存过期时间：打开模型弹窗直接使用已获取的模型；手动刷新或每次 App 启动时的后台刷新更新目录。启动刷新失败时保留已有目录，认证失效则显示登录按钮。工作区模型弹窗可以直接完成浏览器登录，无需跳到设置。成功回调立即尝试关闭浏览器页；浏览器不允许关闭时回到 Sona 网站首页，避免停留在本地回调地址。
+
 共享环境构造器把提供商编译成 `sonacode-<base64url-name>`，通过 `OPENCODE_CONFIG_CONTENT` 注入两个 V1 原生适配器、模型限制、modalities 与明确配置的 variants。模型 `provider.api` 决定实际 API 根地址，`provider.npm` 决定 Chat Completions 或 Responses；不能用模型 `options.apiKey` 覆盖 SDK 密钥。直连通过模型 headers 使用有效密钥，空凭据显式覆盖环境/认证回退；代理模式不把真实 Key 放进 OpenCode，而使用 `/managed/<provider-token>/<model-token>/…` 路由由应用注入有效 Key。路径令牌不含密钥，未知标识返回 404；原 `/up/{name}/…` 路由和默认上游保留。
 
 原生模型默认不显示；打开后按当前项目合并显示，其接口及路由保持原生行为。应用模型不可通过旧 OpenCode `/auth` 写入端点修改密钥。后台发送也校验模型是否仍存在、思考强度和附件是否支持，防止陈旧选择继续发送。

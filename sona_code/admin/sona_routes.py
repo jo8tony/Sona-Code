@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import json
 from urllib.parse import parse_qs
 
 from fastapi import APIRouter, HTTPException, Request
@@ -66,8 +67,17 @@ async def put_source(body: SourceUpdate, request: Request) -> dict:
 
 
 @router.post("/models/sona/login/start")
-def start_login(request: Request) -> dict:
+async def start_login(request: Request) -> dict:
     runtime = request.app.state.runtime
+    if runtime.sona_site.session(runtime.config.sona_site):
+        try:
+            await runtime.refresh_sona_catalog()
+            return {"connected": True}
+        except SonaSiteError as exc:
+            if exc.status != 401:
+                raise HTTPException(exc.status, exc.detail) from None
+        except WorkspaceError as exc:
+            raise HTTPException(exc.status, exc.detail) from None
     cfg = runtime.config
     callback = (f"http://127.0.0.1:{cfg.server.port}{cfg.server.admin_prefix}"
                 "/api/models/sona/callback")
@@ -78,11 +88,16 @@ def start_login(request: Request) -> dict:
     return {"url": url}
 
 
-def _callback_page(message: str, success: bool) -> HTMLResponse:
+def _callback_page(message: str, success: bool, origin: str = "") -> HTMLResponse:
     title = "连接成功" if success else "连接失败"
+    # External browser tabs may refuse script closing. Return to the validated
+    # website origin in that case, without leaving the local callback address.
+    script = ("<script>window.close();setTimeout(function(){location.replace("
+              + json.dumps(origin + "/", ensure_ascii=True).replace("<", "\\u003c")
+              + ");},100);</script>") if success else ""
     content = ("<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
                "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-               f"<title>{title}</title></head><body style='font:16px sans-serif;"
+               f"<title>{title}</title>{script}</head><body style='font:16px sans-serif;"
                "max-width:38rem;margin:12vh auto;padding:0 1.5rem'>"
                f"<h1>{title}</h1><p>{html.escape(message)}</p></body></html>")
     return HTMLResponse(content, status_code=200 if success else 400,
@@ -109,45 +124,29 @@ async def login_callback(request: Request) -> HTMLResponse:
         session = await runtime.sona_site.load_catalog(origin, tokens[0], environment)
 
         async def apply() -> dict:
+            if (runtime.config.sona_site.environment != environment
+                    or runtime.config.sona_site.active_url() != origin):
+                raise SonaSiteError("网站环境已变化，请重新登录", 409)
             runtime.sona_site.set_session(environment, origin, session)
             return {"ok": True}
 
-        await runtime.workspace.update_configuration(apply, "网站模型")
+        async with runtime.config_lock:
+            await runtime.workspace.update_configuration(apply, "网站模型")
     except (SonaSiteError, WorkspaceError) as exc:
         return _callback_page(exc.detail, False)
-    return _callback_page("已连接 Sona Code，可以返回桌面 App。", True)
+    return _callback_page("已连接 Sona Code，可以返回桌面 App。", True, origin)
 
 
 @router.post("/models/sona/refresh")
 async def refresh_catalog(request: Request) -> dict:
     runtime = request.app.state.runtime
-    cfg = runtime.config.sona_site
-    current = runtime.sona_site.session(cfg)
-    if current is None:
-        raise HTTPException(401, "请先登录网站")
     try:
-        updated = await runtime.sona_site.load_catalog(cfg.active_url(), current.token, cfg.environment)
-
-        async def apply() -> dict:
-            runtime.sona_site.set_session(cfg.environment, cfg.active_url(), updated)
-            return _source_view(request)
-
-        return await runtime.workspace.update_configuration(apply, "网站模型")
+        await runtime.refresh_sona_catalog()
+        return _source_view(request)
     except SonaSiteError as exc:
-        if exc.status == 401:
-            try:
-                await runtime.workspace.update_configuration(
-                    lambda: _clear_expired_session(runtime), "网站登录")
-            except WorkspaceError as blocked:
-                raise HTTPException(blocked.status, blocked.detail) from None
         raise HTTPException(exc.status, exc.detail) from None
     except WorkspaceError as exc:
         raise HTTPException(exc.status, exc.detail) from None
-
-
-async def _clear_expired_session(runtime) -> dict:
-    runtime.sona_site.clear(runtime.config.sona_site)
-    return {"ok": True}
 
 
 @router.post("/models/sona/logout")
@@ -157,6 +156,7 @@ async def logout(request: Request) -> dict:
         async def apply() -> dict:
             runtime.sona_site.clear(runtime.config.sona_site)
             return _source_view(request)
-        return await runtime.workspace.update_configuration(apply, "网站登录")
-    except WorkspaceError as exc:
+        async with runtime.config_lock:
+            return await runtime.workspace.update_configuration(apply, "网站登录")
+    except (SonaSiteError, WorkspaceError) as exc:
         raise HTTPException(exc.status, exc.detail) from None

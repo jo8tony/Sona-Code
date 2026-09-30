@@ -1,6 +1,8 @@
 """Website login handoff and scene catalog use existing XT APIs."""
 
 from urllib.parse import parse_qs, urlsplit
+import os
+import time
 
 import httpx
 import pytest
@@ -12,7 +14,8 @@ from sona_code.app import create_app
 from sona_code.config import default_config
 from sona_code.proxy.handler import _build_forward_headers
 from sona_code.proxy.router import build_upstream_url, resolve_upstream
-from sona_code.sona_site import SiteSession, SonaSiteManager
+from sona_code.sona_site import SiteSession, SonaSiteError, SonaSiteManager
+from sona_code.config import UpstreamConfig, UpstreamModelConfig
 
 
 @pytest.mark.asyncio
@@ -44,6 +47,11 @@ async def test_catalog_uses_frontend_origin_and_scene_keys(monkeypatch):
     assert session.providers[0].base_url == "https://sona.example.test/api/v1"
     assert session.providers[0].api_key == "scene-secret"
     assert session.providers[0].models[0].id == "model-a"
+    assert session.providers[0].models[0].context_length == 262144
+    assert session.providers[0].models[0].output_length == 32768
+    from sona_code.admin.models import compile_providers
+    compiled = compile_providers(default_config().model_copy(update={"upstreams": session.providers}))
+    assert next(iter(compiled.values()))["models"]["model-a"]["limit"] == {"context": 262144, "output": 32768}
     assert session.user == {"id": 7, "userName": "用户"}
     cfg = default_config().model_copy(update={"upstreams": session.providers})
     path = f"/managed/{route_token(session.providers[0].name)}/{route_token('model-a')}/chat/completions"
@@ -77,6 +85,10 @@ def test_login_callback_is_one_time_and_source_status_hides_secrets(tmp_path):
         assert params["callback"] == ["http://127.0.0.1:8117/__recorder/api/models/sona/callback"]
         callback = client.post(prefix + "/sona/callback", data={"state": state, "token": "site-secret"})
         assert callback.status_code == 200
+        assert "window.close()" in callback.text
+        assert "location.replace" in callback.text
+        assert cfg.sona_site.prod_url in callback.text
+        assert "site-secret" not in callback.text
         assert client.get(prefix + "/source").json()["connected"] is True
         assert "site-secret" not in client.get(prefix + "/source").text
         assert client.post(prefix + "/sona/callback", data={"state": state, "token": "site-secret"}).status_code == 400
@@ -159,3 +171,88 @@ def test_refresh_fetches_new_subscriptions_and_updates_native_config(tmp_path, m
         assert any("new-subscription" in provider["models"] for provider in providers.values())
         assert "test-token" not in picker.text
         assert "test-scene-key" not in result.text
+
+
+def saved_catalog(token="saved-token", name="cached"):
+    return SiteSession(token, {"id": 7}, [UpstreamConfig(
+        name="sona-prod-12", base_url="https://sona.passoa.cmbchina.cn/api/v1",
+        api_key="scene-secret", source="sona", models=[UpstreamModelConfig(id=name)],
+    )], time.time())
+
+
+def test_credentials_and_catalog_survive_restart_and_logout(tmp_path):
+    path = str(tmp_path / "config.json")
+    site = default_config().sona_site
+    manager = SonaSiteManager(path)
+    manager.set_session("prod", site.prod_url, saved_catalog())
+    restored = SonaSiteManager(path)
+    assert restored.session(site).token == "saved-token"
+    assert restored.session(site).providers[0].api_key == "scene-secret"
+    assert restored.session(site).providers[0].models[0].context_length == 262144
+    assert restored.session(site).providers[0].models[0].output_length == 32768
+    file = tmp_path / "config.json.sona-sessions"
+    if os.name == "nt":
+        assert file.read_bytes().startswith(b"DPAPI\n")
+        assert b"saved-token" not in file.read_bytes()
+        assert b"scene-secret" not in file.read_bytes()
+    else:
+        assert file.stat().st_mode & 0o777 == 0o600
+    restored.clear(site)
+    assert SonaSiteManager(path).session(site) is None
+    file.write_bytes(b"DPAPI\nbroken-file")
+    assert SonaSiteManager(path).session(site) is None
+
+
+@pytest.mark.parametrize("failure", [None, 401, 502])
+def test_startup_refreshes_once_without_blocking_or_losing_offline_catalog(tmp_path, failure):
+    cfg = default_config()
+    cfg.recording.dir = str(tmp_path / "records")
+    path = str(tmp_path / "config.json")
+    SonaSiteManager(path).set_session("prod", cfg.sona_site.prod_url, saved_catalog())
+    app = create_app(cfg, path)
+    calls = []
+    released = False
+
+    async def catalog(origin, token, environment):
+        import asyncio
+        calls.append((origin, token, environment))
+        while not released:
+            await asyncio.sleep(0.005)
+        if failure:
+            raise SonaSiteError("expired" if failure == 401 else "offline", failure)
+        return saved_catalog(name="fresh")
+
+    app.state.runtime.sona_site.load_catalog = catalog
+    with TestClient(app) as client:
+        prefix = "/__recorder/api/models"
+        source = client.get(prefix + "/source").json()
+        assert source["connected"] and source["startup_refreshing"]
+        assert source["providers"][0]["models"][0]["id"] == "cached"
+        released = True
+        deadline = time.monotonic() + 3
+        while source["startup_refreshing"] and time.monotonic() < deadline:
+            source = client.get(prefix + "/source").json()
+        assert not source["startup_refreshing"]
+        assert len(calls) == 1 and calls[0][1] == "saved-token"
+        assert source["connected"] is (failure != 401)
+        restored = SonaSiteManager(path).session(cfg.sona_site)
+        if failure == 401:
+            assert restored is None
+            assert "url" in client.post(prefix + "/sona/login/start").json()
+        else:
+            assert restored.token == "saved-token"
+            assert restored.providers[0].models[0].id == ("fresh" if failure is None else "cached")
+            if failure is None:
+                assert client.post(prefix + "/sona/login/start").json() == {"connected": True}
+                assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["INF0002", "INF1001", "INF1002"])
+async def test_expired_platform_business_code_requests_login(monkeypatch, code):
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr("sona_code.sona_site.httpx.AsyncClient", lambda **kwargs: real_client(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"returnCode": code})), **kwargs))
+    with pytest.raises(SonaSiteError) as error:
+        await SonaSiteManager().load_catalog("https://sona.example.test", "expired", "prod")
+    assert error.value.status == 401

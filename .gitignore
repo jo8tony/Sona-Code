@@ -22,6 +22,8 @@ htmlcov/
 
 # 运行时数据（配置文件、调用记录，可能包含敏感信息）
 .runtime/
+*.sona-sessions
+*.sona-sessions.*
 sona-code-demo.html
 
 # IDE / 系统

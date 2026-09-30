@@ -5,15 +5,19 @@ from __future__ import annotations
 import secrets
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import quote
 
 import httpx
 
 from sona_code.config import SonaSiteConfig, UpstreamConfig, UpstreamModelConfig
+from sona_code.site_credentials import read_credentials, write_credentials
 
 LOGIN_TTL_SECONDS = 300
 BUSINESS_ID = "LZ2103SONA"
 INPUT_MODALITIES = {"image", "audio", "video", "pdf"}
+DEFAULT_CONTEXT_LENGTH = 256 * 1024
+DEFAULT_OUTPUT_LENGTH = 32 * 1024
 
 
 class SonaSiteError(Exception):
@@ -39,9 +43,44 @@ class SiteSession:
 
 
 class SonaSiteManager:
-    def __init__(self) -> None:
+    def __init__(self, config_path: str | None = None) -> None:
         self._pending: dict[str, PendingLogin] = {}
         self._sessions: dict[tuple[str, str], SiteSession] = {}
+        self._path = Path(config_path + ".sona-sessions") if config_path else None
+        self.startup_refreshing = False
+        if self._path:
+            for item in read_credentials(self._path):
+                try:
+                    environment, origin = item["environment"], item["origin"]
+                    site = SonaSiteConfig(environment=environment, **{environment + "_url": origin})
+                    token = item["token"]
+                    if (not isinstance(token, str) or not token or site.active_url() != origin
+                            or not isinstance(item["user"], dict)):
+                        continue
+                    providers = [UpstreamConfig.model_validate(p) for p in item["providers"]]
+                    if any(p.source != "sona" for p in providers):
+                        continue
+                    for provider in providers:
+                        for model in provider.models:
+                            model.context_length = model.context_length or DEFAULT_CONTEXT_LENGTH
+                            model.output_length = model.output_length or DEFAULT_OUTPUT_LENGTH
+                    self._sessions[(environment, origin)] = SiteSession(
+                        token, item["user"], providers, float(item["updated_at"]))
+                except (ValueError, KeyError, TypeError):
+                    continue
+
+    def _save(self, sessions: dict[tuple[str, str], SiteSession]) -> None:
+        if not self._path:
+            return
+        try:
+            write_credentials(self._path, [
+                {"environment": env, "origin": origin, "token": session.token,
+                 "user": session.user, "updated_at": session.updated_at,
+                 "providers": [p.model_dump() for p in session.providers]}
+                for (env, origin), session in sessions.items()
+            ])
+        except OSError as exc:
+            raise SonaSiteError("保存网站登录凭据失败，请检查配置目录权限", 503) from exc
 
     def start_login(self, site: SonaSiteConfig, callback_url: str) -> str:
         origin = site.active_url()
@@ -67,20 +106,26 @@ class SonaSiteManager:
         return self._sessions.get((site.environment, site.active_url()))
 
     def set_session(self, environment: str, origin: str, session: SiteSession) -> None:
-        self._sessions[(environment, origin)] = session
+        sessions = {**self._sessions, (environment, origin): session}
+        self._save(sessions)
+        self._sessions = sessions
 
     def clear(self, site: SonaSiteConfig) -> None:
-        self._sessions.pop((site.environment, site.active_url()), None)
+        sessions = dict(self._sessions)
+        sessions.pop((site.environment, site.active_url()), None)
+        self._save(sessions)
+        self._sessions = sessions
 
     def clear_environment(self, environment: str) -> None:
-        for key in list(self._sessions):
-            if key[0] == environment:
-                self._sessions.pop(key, None)
+        sessions = {key: session for key, session in self._sessions.items() if key[0] != environment}
+        self._save(sessions)
+        self._sessions = sessions
 
     def status(self, site: SonaSiteConfig) -> dict:
         session = self.session(site)
         return {
             "connected": session is not None,
+            "startup_refreshing": self.startup_refreshing,
             "updated_at": session.updated_at if session else None,
             "user": {key: session.user[key] for key in ("id", "userId", "userName")
                      if key in session.user} if session else None,
@@ -130,6 +175,8 @@ class SonaSiteManager:
                         modalities = item.get("modalities") or []
                         models.append(UpstreamModelConfig(
                             id=name, display_name=name, api_type="chat_completions",
+                            context_length=DEFAULT_CONTEXT_LENGTH,
+                            output_length=DEFAULT_OUTPUT_LENGTH,
                             input_modalities=[value for value in modalities
                                               if value in INPUT_MODALITIES] if isinstance(modalities, list) else [],
                         ))
@@ -161,6 +208,8 @@ async def _get_body(client: httpx.AsyncClient, url: str, headers: dict[str, str]
         raise SonaSiteError("网站接口未返回 JSON 数据", 502) from exc
     if isinstance(data, dict) and "returnCode" in data:
         if data.get("returnCode") != "SUC0000":
+            if data.get("returnCode") in {"INF0002", "INF1001", "INF1002"}:
+                raise SonaSiteError("网站登录已失效，请重新登录", 401)
             raise SonaSiteError(str(data.get("errorMsg") or "网站接口返回错误"), 502)
         return data.get("body")
     return data
