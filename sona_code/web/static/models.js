@@ -44,17 +44,30 @@ async function renderSonaModels(view, source, tabs) {
       ? `已登录：${source.user?.userName || source.user?.userId || "当前用户"}`
       : "当前环境尚未登录。登录后将读取你创建的场景和已获批订阅。" }));
   account.append(el("p", { class: "f-hint", text: "网站凭据仅保存在本次 App 运行期间；重启后需要重新登录。已有 OpenCode 终端切换来源后需要重启。" }));
-  async function action(path) {
+  async function action(path, button) {
+    if (button?.disabled) return;
+    const label = button?.textContent;
     error.hidden = true;
+    if (button) {
+      button.disabled = true; button.setAttribute("aria-busy", "true");
+      if (path === "models/sona/refresh") button.textContent = "正在刷新…";
+    }
     try {
-      await api(path, { method: "POST", silent: true });
+      const result = await api(path, { method: "POST", silent: true });
       await renderModels(view);
-    } catch (cause) { error.hidden = false; error.textContent = cause.detail || cause.message; }
+      if (path === "models/sona/refresh") toast(`模型已刷新，共 ${result.providers.reduce((sum, provider) => sum + provider.models.length, 0)} 个模型`);
+    } catch (cause) {
+      error.hidden = false; error.textContent = cause.detail || cause.message;
+      toast(error.textContent, "error");
+    }
+    finally {
+      if (button) { button.disabled = false; button.textContent = label; button.removeAttribute("aria-busy"); }
+    }
   }
   if (source.connected) {
     account.append(el("div", { class: "inline-controls" },
-      el("button", { type: "button", class: "btn", text: "刷新模型", onclick: () => action("models/sona/refresh") }),
-      el("button", { type: "button", class: "btn", text: "退出登录", onclick: () => action("models/sona/logout") })));
+      el("button", { type: "button", class: "btn", text: "刷新模型", onclick: event => action("models/sona/refresh", event.currentTarget) }),
+      el("button", { type: "button", class: "btn", text: "退出登录", onclick: event => action("models/sona/logout", event.currentTarget) })));
   } else {
     account.append(el("button", { type: "button", class: "btn btn-primary", text: "在浏览器中登录", onclick: async () => {
       error.hidden = true;
@@ -78,6 +91,7 @@ async function renderSonaModels(view, source, tabs) {
     } }));
   }
   const catalog = el("section", { class: "card" }, el("h2", { text: "已订阅模型" }));
+  if (source.updated_at) catalog.append(el("p", { class: "f-hint", text: `最近刷新：${new Date(source.updated_at * 1000).toLocaleString()}` }));
   if (!source.connected) catalog.append(el("p", { class: "empty-hint", text: "登录后显示模型。" }));
   else if (!source.providers.length) catalog.append(el("p", { class: "empty-hint", text: "当前环境没有可用的场景订阅。" }));
   else for (const provider of source.providers) catalog.append(el("div", { class: "models-model" },
@@ -117,6 +131,7 @@ async function renderNativeModels(view, tabs) {
 }
 
 async function renderModels(view) {
+  if (typeof workspaceModelCache !== "undefined") workspaceModelCache.clear();
   view.replaceChildren(el("div", { class: "loading", text: "加载模型配置…" }));
   let source;
   try { source = await api("models/source", { silent: true }); }

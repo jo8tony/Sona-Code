@@ -3,6 +3,24 @@
 
 let workspaceSelection = { projectId: null, sessionId: null, tab: "chat" };
 const workspaceDrafts = new Map();
+const workspaceModelCache = new Map();
+const WORKSPACE_MODEL_TTL = 5 * 60 * 1000;
+
+function workspaceOrderItems(items, key) {
+  let order = [];
+  try { order = JSON.parse(localStorage.getItem(key) || "[]"); } catch (_) {}
+  if (!Array.isArray(order)) order = [];
+  const positions = new Map(order.map((id, index) => [id, index]));
+  return items.slice().sort((a, b) => (positions.get(a.id) ?? order.length) - (positions.get(b.id) ?? order.length));
+}
+
+function workspaceMoveItem(items, sourceId, targetId, after) {
+  const source = items.find(item => item.id === sourceId);
+  if (!source || sourceId === targetId || !items.some(item => item.id === targetId)) return items;
+  const ordered = items.filter(item => item.id !== sourceId);
+  ordered.splice(ordered.findIndex(item => item.id === targetId) + (after ? 1 : 0), 0, source);
+  return ordered;
+}
 function workspaceConversationKey(projectId, sessionId) {
   return JSON.stringify([projectId, sessionId || null]);
 }
@@ -223,6 +241,9 @@ function renderWorkspace(view) {
   let draftTimer = null;
   let draftContextReady = false;
   let statusRefreshing = false;
+  let sidebarDrag = null;
+  let changesSignature = "";
+  let changesView = null;
   const sendingConversations = new Set();
   const pendingActions = new Map();
   const pendingImages = new Map();
@@ -275,7 +296,7 @@ function renderWorkspace(view) {
         <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动<span class="wsp-tab-count" id="wsp-change-count" aria-label="修改文件数量">0</span></button><button class="wsp-tab" type="button" data-wsp-tab="trajectory">轨迹</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button><button class="wsp-tab" type="button" data-wsp-tab="tasks">任务</button></nav>
         <aside class="wsp-todo-panel" id="wsp-todo-panel" aria-label="当前对话任务进度" hidden><div class="wsp-todo-panel-head"><span class="wsp-todo-panel-icon" aria-hidden="true">✓</span><div><strong>任务进度</strong><small>当前对话 · OpenCode</small></div><button class="wsp-todo-panel-close" id="wsp-todo-panel-close" type="button" aria-label="关闭任务进度" title="关闭任务进度">×</button></div><div class="wsp-todo-panel-summary"><span id="wsp-todo-summary"></span><strong id="wsp-todo-progress"></strong></div><div class="wsp-todo-progress-track"><span id="wsp-todo-progress-fill"></span></div><ol class="wsp-todo-panel-list" id="wsp-todo-panel-list"></ol><button class="wsp-todo-panel-link" id="wsp-todo-panel-link" type="button">查看任务页 <span aria-hidden="true">↗</span></button></aside>
         <div class="wsp-scroll" id="wsp-scroll"><div class="wsp-content" id="wsp-content"></div></div>
-        <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" role="listbox" aria-label="命令与项目文件" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-close" aria-label="关闭模型选择">×</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><div class="wsp-attachment-list" id="wsp-attachment-list" aria-label="待发送附件" hidden></div><div class="wsp-input" id="wsp-input" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" aria-describedby="wsp-skill-error"></div><div id="wsp-skill-error" class="wsp-skill-error" role="status" aria-live="polite" hidden></div><div class="wsp-composer-bottom"><button class="wsp-attach" id="wsp-attach" type="button" title="选择 Sona Code 命令，也可输入 /" aria-label="选择 Sona Code 命令" aria-haspopup="listbox" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent" hidden><option value="build">Build · 执行</option></select><button class="wsp-agent-trigger" id="wsp-agent-trigger" type="button" aria-haspopup="menu" aria-expanded="false"><span id="wsp-agent-label">Build · 执行</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div class="wsp-agent-picker" id="wsp-agent-picker" role="menu" aria-label="选择 Agent" hidden></div><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">自动</button><select class="wsp-variant" id="wsp-variant" aria-label="选择模型强度" title="模型推理强度" hidden></select><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div></form><div class="wsp-stats" id="wsp-stats" aria-live="polite"></div></div>
+        <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" role="listbox" aria-label="命令与项目文件" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-refresh" title="刷新 Sona 订阅模型" aria-label="刷新 Sona 订阅模型" hidden>↻</button><button type="button" id="wsp-model-close" aria-label="关闭模型选择">×</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><div class="wsp-attachment-list" id="wsp-attachment-list" aria-label="待发送附件" hidden></div><div class="wsp-input" id="wsp-input" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" aria-describedby="wsp-skill-error"></div><div id="wsp-skill-error" class="wsp-skill-error" role="status" aria-live="polite" hidden></div><div class="wsp-composer-bottom"><button class="wsp-attach" id="wsp-attach" type="button" title="选择 Sona Code 命令，也可输入 /" aria-label="选择 Sona Code 命令" aria-haspopup="listbox" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent" hidden><option value="build">Build · 执行</option></select><button class="wsp-agent-trigger" id="wsp-agent-trigger" type="button" aria-haspopup="menu" aria-expanded="false"><span id="wsp-agent-label">Build · 执行</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div class="wsp-agent-picker" id="wsp-agent-picker" role="menu" aria-label="选择 Agent" hidden></div><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">自动</button><select class="wsp-variant" id="wsp-variant" aria-label="选择模型强度" title="模型推理强度" hidden></select><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div></form><div class="wsp-stats" id="wsp-stats" aria-live="polite"></div></div>
       </div>
     </section>`;
 
@@ -555,6 +576,7 @@ function renderWorkspace(view) {
     const icon = el("svg", { class: "wsp-status-icon", viewBox: "0 0 20 20", "aria-hidden": "true" });
     if (kind === "busy") {
       icon.setAttribute("class", "wsp-status-icon wsp-status-spinning");
+      icon.setAttribute("style", `animation-delay: -${(Date.now() % 1100) / 1000}s`);
       icon.append(el("g", { class: "wsp-status-spinner" },
         el("circle", { cx: "10", cy: "10", r: "7.25", "stroke-dasharray": "12 34" })));
     } else {
@@ -1034,7 +1056,49 @@ function renderWorkspace(view) {
     }
   }
 
+  function bindSidebarDrag(node, kind, projectId, id) {
+    node.draggable = true;
+    node.addEventListener("dragstart", event => {
+      if (event.target.closest(".wsp-row-menu")) { event.preventDefault(); return; }
+      sidebarDrag = { kind, projectId, id };
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", id);
+    });
+    const accepts = () => sidebarDrag?.kind === kind && sidebarDrag.id !== id &&
+      (kind === "project" || sidebarDrag.projectId === projectId);
+    node.addEventListener("dragenter", event => {
+      if (!accepts()) return;
+      event.preventDefault(); event.stopPropagation();
+      event.dataTransfer.dropEffect = "move";
+    });
+    node.addEventListener("dragover", event => {
+      if (!accepts()) return;
+      event.preventDefault(); event.stopPropagation();
+      event.dataTransfer.dropEffect = "move";
+      node.classList.toggle("wsp-drop-after", event.clientY > node.getBoundingClientRect().top + node.getBoundingClientRect().height / 2);
+      node.classList.add("wsp-drop-target");
+    });
+    const clear = () => node.classList.remove("wsp-drop-target", "wsp-drop-after");
+    node.addEventListener("dragleave", clear);
+    node.addEventListener("dragend", () => {
+      sidebarDrag = null;
+      sideList.querySelectorAll(".wsp-drop-target").forEach(item => item.classList.remove("wsp-drop-target", "wsp-drop-after"));
+    });
+    node.addEventListener("drop", event => {
+      if (!accepts()) return;
+      event.preventDefault(); event.stopPropagation();
+      const after = event.clientY > node.getBoundingClientRect().top + node.getBoundingClientRect().height / 2;
+      const items = kind === "project" ? state.projects : state.sessions.get(projectId) || [];
+      const ordered = workspaceMoveItem(items, sidebarDrag.id, id, after);
+      if (kind === "project") state.projects = ordered;
+      else state.sessions.set(projectId, ordered);
+      try { localStorage.setItem(kind === "project" ? "sona-code:project-order" : `sona-code:session-order:${projectId}`, JSON.stringify(ordered.map(item => item.id))); } catch (_) {}
+      sidebarDrag = null; clear(); renderSidebar();
+    });
+  }
+
   function renderSidebar() {
+    if (sidebarDrag) return;
     closeRowMenus();
     const sections = [];
     const sectionKeys = new Set();
@@ -1052,7 +1116,7 @@ function renderWorkspace(view) {
       sectionKeys.add(project.id);
       let cached = sidebarSections.get(project.id);
       if (!cached) {
-        cached = {section: el("section"), threads: el("div", {class: "wsp-threads"})};
+        cached = {section: el("section"), threads: el("div", {class: "wsp-threads"}), indicator: null};
         sidebarSections.set(project.id, cached);
       }
       const {section, threads} = cached;
@@ -1076,6 +1140,13 @@ function renderWorkspace(view) {
         el("button", { class: "wsp-row-action wsp-row-plus", type: "button", text: "+",
           title: `在 ${project.name} 中新建对话`, "aria-label": `在 ${project.name} 中新建对话`,
           onclick: () => { state.collapsedProjects.delete(project.id); renderSidebar(); createSession(project.id); } }));
+      bindSidebarDrag(projectRow, "project", project.id, project.id);
+      const projectRunning = collapsed && Object.values(state.projectStatuses.get(project.id) || {}).some(status => ["busy", "retry"].includes(status?.type));
+      if (projectRunning && !cached.indicator) cached.indicator = el("span", {
+        class: "wsp-thread-running", role: "img", "aria-label": "项目内有任务正在运行", title: "项目内有任务正在运行",
+      }, statusIcon("busy"));
+      // Keep the project spinner attached across status polls.
+      if (cached.indicator) cached.indicator.hidden = !projectRunning;
       const threadNodes = [];
       if (state.errors.has(project.id)) {
         threadNodes.push(el("div", { class: "wsp-error", text: state.errors.get(project.id) }));
@@ -1098,6 +1169,7 @@ function renderWorkspace(view) {
             el("span", {class: "wsp-thread-line"}, title), preview);
           const button = el("button", {type: "button", onclick: () => selectSession(project.id, session.id)}, text);
           row = {node: el("div", {class: "wsp-thread-row"}, button), button, title, preview, indicator: null};
+          bindSidebarDrag(row.button, "session", project.id, session.id);
           sidebarRows.set(key, row);
         }
         row.button.className = "wsp-thread" + (session.parentID ? " child" : "") +
@@ -1132,7 +1204,7 @@ function renderWorkspace(view) {
         }));
       }
       workspaceSyncChildren(threads, threadNodes);
-      workspaceSyncChildren(section, [projectRow, threads]);
+      workspaceSyncChildren(section, [projectRow, ...(cached.indicator ? [cached.indicator] : []), threads]);
       sections.push(section);
     }
     if (query && !visible) sections.push(el("p", { class: "wsp-empty-search", text: "没有找到匹配的项目或对话。" }));
@@ -1289,6 +1361,7 @@ function renderWorkspace(view) {
     const statusLabels = { completed: "已完成", running: "运行中", pending: "等待中", error: "失败" };
     const key = part.id || part.callID || `${toolName}:${JSON.stringify(stateInfo.input || {})}`;
     const card = el("details", { class: `wsp-tool ${status}` });
+    card.style.setProperty("--wsp-progress-delay", `-${(Date.now() % 1600) / 1000}s`);
     if (state.expandedTools.get(key) ?? (status === "error" || status === "running")) card.open = true;
     card.addEventListener("toggle", () => state.expandedTools.set(key, card.open));
     const input = stateInfo.input || {};
@@ -1339,6 +1412,7 @@ function renderWorkspace(view) {
         ...(inputText ? [el("strong", { text: "输入" }), el("pre", { text: inputText.slice(0, 4000) })] : []),
         el("strong", { text: part.state?.error ? "错误" : "结果" }),
         el("pre", { text: (output || "等待结果…").slice(0, 12000) })));
+      row.style.setProperty("--wsp-progress-delay", `-${(Date.now() % 1600) / 1000}s`);
       group.append(row);
     }
     return group;
@@ -1350,6 +1424,10 @@ function renderWorkspace(view) {
     const questions = request.questions || [];
     const page = Math.min(state.questionPages.get(request.id) || 0, Math.max(questions.length - 1, 0));
     state.questionPages.set(request.id, page);
+    const key = JSON.stringify([state.projectId, state.sessionId, request.id]);
+    const signature = JSON.stringify([request, page, state.questionErrors.get(request.id) || ""]);
+    const existing = Array.from(content.children).find(node => node.workspaceQuestionKey === key);
+    if (existing?.workspaceQuestionSignature === signature && existing.workspaceQuestionDrafts === drafts) return existing;
     const question = questions[page];
     const draft = drafts[page] || { selected: [], custom: "" };
     drafts[page] = draft;
@@ -1357,6 +1435,9 @@ function renderWorkspace(view) {
       el("div", { class: "wsp-question-head" },
         el("strong", { text: "Sona Code 需要你的回答" }),
         el("span", { class: "wsp-question-count", text: `${page + 1} / ${questions.length}` })));
+    card.workspaceQuestionKey = key;
+    card.workspaceQuestionSignature = signature;
+    card.workspaceQuestionDrafts = drafts;
     if (!question) return card;
     const group = el("fieldset", { class: "wsp-question-group" },
       el("legend", { text: question.question || question.header || `问题 ${page + 1}` }));
@@ -1368,6 +1449,7 @@ function renderWorkspace(view) {
         onchange: (event) => {
           state.questionErrors.delete(request.id);
           errorLine.textContent = "";
+          card.workspaceQuestionSignature = JSON.stringify([request, page, ""]);
           if (question.multiple) {
             draft.selected = event.target.checked
               ? [...draft.selected, option.label]
@@ -1386,6 +1468,7 @@ function renderWorkspace(view) {
         draft.custom = event.target.value;
         state.questionErrors.delete(request.id);
         errorLine.textContent = "";
+        card.workspaceQuestionSignature = JSON.stringify([request, page, ""]);
       },
     }));
     card.append(group);
@@ -1863,9 +1946,9 @@ function renderWorkspace(view) {
     return [...new Map(diffs.map((diff, index) => [diff.file || diff.path || index, diff])).values()];
   }
 
-  function renderChanges() {
+  function renderChanges(target = content) {
     const selection = state.selectedChange;
-    content.append(el("div", { class: "wsp-changes-heading" },
+    target.append(el("div", { class: "wsp-changes-heading" },
       el("h2", { text: "文件改动" }), selection ? el("span", { class: "wsp-change-scope", text: "本轮" }) : null,
       selection ? el("button", { class: "wsp-change-back", type: "button", text: "返回对话", onclick: () => {
         state.tab = workspaceSelection.tab = "chat";
@@ -1877,10 +1960,10 @@ function renderWorkspace(view) {
         }
       } }) : null));
     const diffs = selection ? selection.diffs : changedFiles();
-    if (selection?.loading) content.append(el("div", { class: "wsp-change-loading", role: "status", text: "正在加载差异…" }));
-    if (selection?.error) content.append(el("div", { class: "wsp-error", role: "status", text: `差异加载失败：${selection.error}` }));
+    if (selection?.loading) target.append(el("div", { class: "wsp-change-loading", role: "status", text: "正在加载差异…" }));
+    if (selection?.error) target.append(el("div", { class: "wsp-error", role: "status", text: `差异加载失败：${selection.error}` }));
     if (!state.sessionId || !diffs.length) {
-      content.append(empty("暂无文件改动", "Sona Code 修改文件后，这里会显示改动摘要。"));
+      target.append(empty("暂无文件改动", "Sona Code 修改文件后，这里会显示改动摘要。"));
       return;
     }
     const counts = diffs.map(diffLineCounts);
@@ -1894,7 +1977,7 @@ function renderWorkspace(view) {
       overview.append(el("div", { class: `wsp-diff-metric ${className}` },
         el("strong", { text: String(value) }), el("span", { text: label })));
     }
-    content.append(overview);
+    target.append(overview);
     for (const diff of diffs) {
       const title = workspaceRelativeFile(diff.file || diff.path || "文件", activeProject()?.path);
       const status = diff.status || (diff.before === "" && diff.after ? "added" : diff.before && diff.after === "" ? "deleted" : "modified");
@@ -1920,7 +2003,7 @@ function renderWorkspace(view) {
         card.append(body);
       } else card.append(el("p", { class: "wsp-diff-unavailable", text: diff.derived
         ? "Sona Code 记录了文件写入，但没有返回可显示的逐行差异。" : "此文件没有可显示的逐行差异。" }));
-      content.append(card);
+      target.append(card);
     }
   }
 
@@ -2077,7 +2160,7 @@ function renderWorkspace(view) {
       trajectoryView?.parentNode === content && trajectorySignature === JSON.stringify(state.recordingData);
     const focusedChangeTrigger = changePopover?.trigger === document.activeElement;
     changeTriggers.clear();
-    if (!keepTrajectory && state.tab !== "chat") content.replaceChildren();
+    if (!keepTrajectory && !["chat", "changes"].includes(state.tab)) content.replaceChildren();
     content.classList.remove("wsp-content-trajectory");
     const changeCount = view.querySelector("#wsp-change-count");
     changeCount.textContent = String(state.sessionId ? changedFiles().length : 0);
@@ -2088,7 +2171,25 @@ function renderWorkspace(view) {
       renderMessages({ append: (...nodes) => children.push(...nodes) });
       workspaceSyncChildren(content, children);
     }
-    if (state.tab === "changes") renderChanges();
+    if (state.tab === "changes") {
+      const signature = JSON.stringify([state.projectId, state.sessionId, state.selectedChange, changedFiles()]);
+      if (changesView?.parentNode !== content || changesSignature !== signature) {
+        const positions = new Map(Array.from(content.querySelectorAll(".wsp-diff-file")).map(card => {
+          const body = card.querySelector(".wsp-diff-body");
+          return [card.dataset.changeFile, { top: body?.scrollTop || 0, left: body?.scrollLeft || 0 }];
+        }));
+        const children = [];
+        renderChanges({ append: (...nodes) => children.push(...nodes) });
+        workspaceSyncChildren(content, children);
+        for (const card of content.querySelectorAll(".wsp-diff-file")) {
+          const position = positions.get(card.dataset.changeFile);
+          const body = card.querySelector(".wsp-diff-body");
+          if (position && body) { body.scrollTop = position.top; body.scrollLeft = position.left; }
+        }
+        changesView = content.firstChild;
+        changesSignature = signature;
+      }
+    }
     if (state.tab === "activity") renderActivity();
     if (state.tab === "tasks") renderTasks();
     if (changePopover) {
@@ -2116,7 +2217,7 @@ function renderWorkspace(view) {
     if (editingQuestion) {
       const restored = Array.from(content.querySelectorAll(".wsp-question-custom")).find((field) =>
         field.dataset.requestId === editingQuestion.id && field.dataset.questionIndex === editingQuestion.index);
-      if (restored) {
+      if (restored && restored !== active) {
         restored.focus({ preventScroll: true });
         restored.setSelectionRange(editingQuestion.start, editingQuestion.end);
       }
@@ -2130,7 +2231,7 @@ function renderWorkspace(view) {
       if (!alive()) return;
       const items = (data.items || []).filter((item) => !item.time?.archived);
       items.sort((a, b) => (b.time?.updated || 0) - (a.time?.updated || 0));
-      state.sessions.set(project.id, items);
+      state.sessions.set(project.id, workspaceOrderItems(items, `sona-code:session-order:${project.id}`));
       if (state.projectId === project.id) lastSessionListRefresh = Date.now();
       state.errors.delete(project.id);
       if (state.projectId === project.id && !items.some((item) => item.id === state.sessionId) &&
@@ -2297,6 +2398,8 @@ function renderWorkspace(view) {
               });
               keyInput.value = "";
               state.connectedProviders.add(provider.id);
+              const cached = workspaceModelCache.get(state.projectId);
+              if (cached?.data) cached.data.connected = [...state.connectedProviders];
               mask.remove();
               renderModelPicker();
               toast(`${provider.name || provider.id} 凭据已保存到 Sona Code`, "ok");
@@ -2326,6 +2429,8 @@ function renderWorkspace(view) {
   }
 
   function renderModelPicker() {
+    const refresh = view.querySelector("#wsp-model-refresh");
+    refresh.hidden = state.modelSource !== "sona";
     modelList.replaceChildren();
     if (state.modelLoadError) {
       modelList.append(el("p", { class: "wsp-picker-empty", text: `模型加载失败：${state.modelLoadError}` }));
@@ -2383,19 +2488,31 @@ function renderWorkspace(view) {
 
   async function loadModels(projectId) {
     const version = ++modelLoadVersion;
-    state.providers = [];
-    state.defaultModel = null;
     state.modelLoadError = "";
-    updateModelButton(false);
     try {
-      const data = await api(`workspace/projects/${encodeURIComponent(projectId)}/models`, { silent: true });
+      let entry = workspaceModelCache.get(projectId);
+      if (!entry || (!entry.pending && Date.now() - entry.loadedAt >= WORKSPACE_MODEL_TTL)) {
+        const previous = entry?.data;
+        entry = { data: previous, loadedAt: 0, pending: null };
+        workspaceModelCache.set(projectId, entry);
+        entry.pending = api(`workspace/projects/${encodeURIComponent(projectId)}/models`, { silent: true })
+          .then(data => { entry.data = data; entry.loadedAt = Date.now(); return data; })
+          .finally(() => { entry.pending = null; });
+      }
+      const apply = data => {
+        if (!alive() || state.projectId !== projectId || version !== modelLoadVersion) return;
+        state.providers = Array.isArray(data.providers) ? data.providers.slice().sort((a, b) =>
+          (a.id === "opencode" ? -1 : b.id === "opencode" ? 1 : (a.name || a.id).localeCompare(b.name || b.id))) : [];
+        state.modelSource = data.source || "sona";
+        state.sonaEnvironment = data.sona_environment || "prod";
+        state.defaultModel = data.default_model || null;
+        state.connectedProviders = new Set(Array.isArray(data.connected) ? data.connected : []);
+      };
+      if (entry.data) { apply(entry.data); updateModelButton(); }
+      else { state.providers = []; state.defaultModel = null; updateModelButton(false); }
+      const data = entry.pending ? await entry.pending : entry.data;
       if (!alive() || state.projectId !== projectId || version !== modelLoadVersion) return;
-      state.providers = Array.isArray(data.providers) ? data.providers.slice().sort((a, b) =>
-        (a.id === "opencode" ? -1 : b.id === "opencode" ? 1 : (a.name || a.id).localeCompare(b.name || b.id))) : [];
-      state.modelSource = data.source || "sona";
-      state.sonaEnvironment = data.sona_environment || "prod";
-      state.defaultModel = data.default_model || null;
-      state.connectedProviders = new Set(Array.isArray(data.connected) ? data.connected : []);
+      apply(data);
       const value = state.chosenModels.get(projectId) || "";
       if (value) {
         const [providerID, modelID] = value.split("\u0000");
@@ -2415,6 +2532,23 @@ function renderWorkspace(view) {
         if (!modelPicker.hidden) renderModelPicker();
       }
     }
+  }
+
+  async function refreshSonaModels() {
+    const button = view.querySelector("#wsp-model-refresh");
+    if (button.disabled) return;
+    const projectId = state.projectId;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    try {
+      await api("models/sona/refresh", { method: "POST", silent: true });
+      workspaceModelCache.clear();
+      if (alive() && state.projectId === projectId) {
+        await loadModels(projectId);
+        if (!state.modelLoadError) toast("模型已刷新");
+      }
+    } catch (error) { toast(`刷新模型失败：${detail(error)}`, "error"); }
+    finally { button.disabled = false; button.removeAttribute("aria-busy"); }
   }
 
   async function loadAgents(projectId) {
@@ -3296,6 +3430,7 @@ function renderWorkspace(view) {
   addCleanup(() => document.removeEventListener("keydown", searchShortcut));
   window.addEventListener("resize", updateSidebarButton);
   addCleanup(() => window.removeEventListener("resize", updateSidebarButton));
+  view.querySelector("#wsp-model-refresh").addEventListener("click", refreshSonaModels);
   modelButton.addEventListener("click", () => modelPicker.hidden ? openModelPicker() : closeModelPicker());
   agentTrigger.addEventListener("click", () => agentPicker.hidden ? openAgentPicker() : closeAgentPicker());
   variantTrigger.addEventListener("click", () => variantPicker.hidden ? openVariantPicker() : closeVariantPicker());
@@ -3555,7 +3690,7 @@ function renderWorkspace(view) {
         api("workspace/projects", { silent: true }), api("workspace/check", { silent: true }),
       ]);
       if (!alive()) return;
-      state.projects = projects.items || [];
+      state.projects = workspaceOrderItems(projects.items || [], "sona-code:project-order");
       state.collapsedProjects = new Set(state.projects.map((project) => project.id));
       state.check = check;
       refreshWorkspaceStatuses();

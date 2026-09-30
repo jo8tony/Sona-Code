@@ -409,12 +409,15 @@ async def project_models(project_id: str, request: Request):
     source = cfg.model_settings.source
     providers = [item for item in application_catalog(cfg) if item["source"] == source]
     connected = []
-    try:
-        data = await _opencode(request, path, "GET", "/config/providers")
-    except HTTPException:
-        if source == "native":
-            raise
-        data = {}
+    data = {}
+    # Website subscriptions are already the authoritative catalog. Do not start
+    # a native process (or wait for it) just to open the website model picker.
+    if source != "sona":
+        try:
+            data = await _opencode(request, path, "GET", "/config/providers")
+        except HTTPException:
+            if source == "native":
+                raise
     native = {item.get("id"): item for item in data.get("providers", []) if isinstance(item, dict)}
     # Only copy the public context limit; native options may contain credentials.
     for provider in providers:

@@ -81,6 +81,7 @@ class SonaSiteManager:
         session = self.session(site)
         return {
             "connected": session is not None,
+            "updated_at": session.updated_at if session else None,
             "user": {key: session.user[key] for key in ("id", "userId", "userName")
                      if key in session.user} if session else None,
             "providers": [
@@ -92,7 +93,8 @@ class SonaSiteManager:
         }
 
     async def load_catalog(self, origin: str, token: str, environment: str) -> SiteSession:
-        headers = {"Authorization": token, "X-B3-BusinessId": BUSINESS_ID}
+        headers = {"Authorization": token, "X-B3-BusinessId": BUSINESS_ID,
+                   "Cache-Control": "no-cache, no-store", "Pragma": "no-cache"}
         try:
             async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
                 user = await _get_body(client, f"{origin}/api/v1/auth/current-user", headers)
@@ -146,7 +148,9 @@ class SonaSiteManager:
 
 
 async def _get_body(client: httpx.AsyncClient, url: str, headers: dict[str, str]):
-    response = await client.get(url, headers=headers)
+    # Some intranet gateways cache GET responses. Each catalog read must reach
+    # the platform even when a scene's subscriptions changed since login.
+    response = await client.get(url, headers=headers, params={"_sona_refresh": secrets.token_hex(8)})
     if response.status_code in {301, 302, 303, 307, 308, 401, 403}:
         raise SonaSiteError("网站登录已失效或没有访问权限", 401)
     if response.is_error:

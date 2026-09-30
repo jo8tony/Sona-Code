@@ -549,14 +549,14 @@ const state = {
   projectId: project.id, sessionId: "session-9", search: "", collapsedProjects: new Set(),
   sessionLimits: new Map(), errors: new Map(), projectStatuses: new Map(),
 };
-const context = vm.createContext({state, sideList, el, closeRowMenus() {},
+const context = vm.createContext({state, sideList, el, closeRowMenus() {}, sidebarDrag: null, bindSidebarDrag() {},
   sidebarSections: new Map(), sidebarRows: new Map(), workspaceConversationKey: (p,s) => JSON.stringify([p,s]), statusIcon: () => el("svg"),
   view: {querySelector() {return {}; }}, rowMenu: () => el("div"),
   sessionTitle: s => s.title, shortStamp: () => "", stamp: () => ""});
 const sidebarSource = source.slice(source.indexOf("  function renderSidebar() {"), source.indexOf("  function renderHeader() {"));
 vm.runInContext(source.slice(source.indexOf("function workspaceSyncChildren("), source.indexOf("function renderWorkspace(")) + sidebarSource, context);
 const render = () => vm.runInContext("renderSidebar()", context);
-const threads = () => sideList.children[0].children[1];
+const threads = () => sideList.children[0].children.find(node => node.class === "wsp-threads");
 const rows = () => threads().children.filter(x => x.class === "wsp-thread-row");
 const more = () => threads().children.find(x => x.class === "wsp-show-more");
 render();
@@ -576,10 +576,16 @@ more().onclick();
 assert.equal(rows().length, 14);
 assert.equal(more(), undefined);
 const heading = () => sideList.children[0].children[0].children[0];
+// Aggregate all native statuses, including sessions beyond the visible page.
+state.projectStatuses.set(project.id, {"session-13": {type: "busy"}});
 heading().onclick();
 assert.equal(state.collapsedProjects.has(project.id), true);
+const projectSpinner = sideList.children[0].children[1];
+assert.equal(projectSpinner.hidden, false);
+render(); assert.equal(sideList.children[0].children[1], projectSpinner);
 heading().onclick();
 assert.equal(state.collapsedProjects.has(project.id), false);
+assert.equal(projectSpinner.hidden, true);
 assert.equal(rows().length, 6);
 assert.ok(more());
 state.search = "Session 13";
@@ -588,7 +594,7 @@ assert.equal(rows().length, 1);
 assert.equal(more(), undefined);
 
 let refreshes = 0;
-const loadContext = vm.createContext({state, workspaceConversationKey: (p,s) => JSON.stringify([p,s]), workspaceSelection: {sessionId: "session-9"},
+const loadContext = vm.createContext({state, workspaceOrderItems: items => items, workspaceConversationKey: (p,s) => JSON.stringify([p,s]), workspaceSelection: {sessionId: "session-9"},
   api: async () => ({items: state.sessions.get(project.id)}), alive: () => true,
   scrollToLatestOnLoad: false, lastSessionListRefresh: 0,
   saveDraft() {}, restoreDraft() {}, persistWorkspaceSelection() {}, refreshSelected() {refreshes++;}, renderSidebar() {}, renderHeader() {},
