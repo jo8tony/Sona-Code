@@ -553,6 +553,8 @@ const context = vm.createContext({state, sideList, el, closeRowMenus() {}, sideb
   sidebarSections: new Map(), sidebarRows: new Map(), workspaceConversationKey: (p,s) => JSON.stringify([p,s]), statusIcon: () => el("svg"),
   view: {querySelector() {return {}; }}, rowMenu: () => el("div"),
   sessionTitle: s => s.title, shortStamp: () => "", stamp: () => ""});
+const icons = fs.readFileSync("sona_code/web/static/workspace-tree.js", "utf8");
+vm.runInContext(icons.slice(0, icons.indexOf("function createWorkspaceTree(")), context);
 const sidebarSource = source.slice(source.indexOf("  function renderSidebar() {"), source.indexOf("  function renderHeader() {"));
 vm.runInContext(source.slice(source.indexOf("function workspaceSyncChildren("), source.indexOf("function renderWorkspace(")) + sidebarSource, context);
 const render = () => vm.runInContext("renderSidebar()", context);

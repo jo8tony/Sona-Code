@@ -42,6 +42,8 @@ const context = vm.createContext({state, variantSelect, variantTrigger, composer
   alive: () => false, detail: error => error.message,
   toast: message => {throw new Error(message);}
 });
+const icons = fs.readFileSync("sona_code/web/static/workspace-tree.js", "utf8");
+vm.runInContext(icons.slice(0, icons.indexOf("function createWorkspaceTree(")), context);
 vm.runInContext(source.slice(source.indexOf("  function selectedModel()"),
   source.indexOf("  function closeModelPicker()")), context);
 const start = source.indexOf('  view.querySelector("#wsp-form").addEventListener("submit"');

@@ -280,23 +280,23 @@ function renderWorkspace(view) {
   view.innerHTML = `
     <section class="wsp" id="wsp">
       <aside class="wsp-side" aria-label="项目与对话">
-        <div class="wsp-brand"><img class="wsp-brand-mark" src="sona-code-icon.png" alt="" width="34" height="34"><span class="wsp-brand-copy"><strong>Sona Code</strong><small>桌面工作区</small></span><button class="wsp-side-close" id="wsp-side-close" type="button" aria-label="关闭项目栏">×</button></div>
+        <div class="wsp-brand"><img class="wsp-brand-mark" src="sona-code-icon.png" alt="" width="34" height="34"><span class="wsp-brand-copy"><strong>Sona Code</strong><small>桌面工作区</small></span><button class="wsp-side-close" id="wsp-side-close" type="button" aria-label="关闭项目栏">${workspaceIcon("close").outerHTML}</button></div>
         <div class="wsp-side-top">
-          <div class="wsp-side-actions"><button class="wsp-new" id="wsp-new" type="button">＋ 新建项目</button></div>
-          <label class="wsp-search-wrap"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg><input class="wsp-search" id="wsp-search" type="search" placeholder="搜索项目和对话" aria-label="搜索项目和对话"><kbd>⌘K</kbd></label>
+          <div class="wsp-side-actions"><button class="wsp-new" id="wsp-new" type="button">${workspaceIcon("plus").outerHTML}<span>新建项目</span></button></div>
+          <label class="wsp-search-wrap">${workspaceIcon("search").outerHTML}<input class="wsp-search" id="wsp-search" type="search" placeholder="搜索项目和对话" aria-label="搜索项目和对话"><kbd>⌘K</kbd></label>
         </div>
         <div class="wsp-side-list"><div class="wsp-side-label"><span>项目与对话</span><span class="wsp-side-label-actions"><span id="wsp-project-count"></span></span></div><div id="wsp-projects"></div></div>
-        <div class="wsp-side-bottom"><a class="wsp-settings" href="#/preferences" title="打开设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 3-.6 2.4-2 .9L4.2 5.6l-2 3.5 1.8 1.7v2.4l-1.8 1.7 2 3.5 2.2-.7 2 .9L9 21h6l.6-2.4 2-.9 2.2.7 2-3.5-1.8-1.7v-2.4l1.8-1.7-2-3.5-2.2.7-2-.9L15 3Z"/><circle cx="12" cy="12" r="3"/></svg><span>设置</span></a></div>
+        <div class="wsp-side-bottom"><a class="wsp-settings" href="#/preferences" title="打开设置">${workspaceIcon("settings").outerHTML}<span>设置</span></a></div>
       </aside>
-      <aside class="wsp-tree" id="wsp-tree" aria-label="项目目录树" hidden><div class="wsp-tree-head"><strong id="wsp-tree-title">目录树</strong><button id="wsp-tree-refresh" type="button" title="刷新目录树" aria-label="刷新目录树">↻</button><button id="wsp-tree-close" type="button" title="关闭目录树" aria-label="关闭目录树">×</button></div><div class="wsp-tree-body" id="wsp-tree-body" role="tree"></div></aside>
+      <aside class="wsp-tree" id="wsp-tree" aria-label="项目目录树" hidden><div class="wsp-tree-head"><strong id="wsp-tree-title">目录树</strong><button id="wsp-tree-refresh" type="button" title="刷新目录树" aria-label="刷新目录树">${workspaceIcon("refresh").outerHTML}</button><button id="wsp-tree-close" type="button" title="关闭目录树" aria-label="关闭目录树">${workspaceIcon("close").outerHTML}</button></div><div class="wsp-tree-body" id="wsp-tree-body" role="tree"></div></aside>
       <div class="wsp-side-scrim" id="wsp-side-scrim"></div>
       <div class="wsp-main">
-        <button class="wsp-todo-trigger" id="wsp-todo-trigger" type="button" aria-label="打开任务进度" aria-controls="wsp-todo-panel" aria-expanded="false" title="打开任务进度" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="3" width="15" height="14" rx="3"/><path d="m5.5 7.5 1.2 1.2 2-2M11 8h4M5.5 12l1.2 1.2 2-2M11 12.5h4"/></svg><span>任务进度</span><small id="wsp-todo-trigger-count"></small></button>
-        <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="5" width="10" height="10" rx="2" fill="currentColor"/></svg></button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span></header>
+        <button class="wsp-todo-trigger" id="wsp-todo-trigger" type="button" aria-label="打开任务进度" aria-controls="wsp-todo-panel" aria-expanded="false" title="打开任务进度" hidden>${workspaceIcon("todo").outerHTML}<span>任务进度</span><small id="wsp-todo-trigger-count"></small></button>
+        <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏">${workspaceIcon("panelLeft").outerHTML}</button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden>${workspaceIcon("stop").outerHTML}</button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span></header>
         <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动<span class="wsp-tab-count" id="wsp-change-count" aria-label="修改文件数量">0</span></button><button class="wsp-tab" type="button" data-wsp-tab="trajectory">轨迹</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button><button class="wsp-tab" type="button" data-wsp-tab="tasks">任务</button></nav>
-        <aside class="wsp-todo-panel" id="wsp-todo-panel" aria-label="当前对话任务进度" hidden><div class="wsp-todo-panel-head"><span class="wsp-todo-panel-icon" aria-hidden="true">✓</span><div><strong>任务进度</strong><small>当前对话 · OpenCode</small></div><button class="wsp-todo-panel-close" id="wsp-todo-panel-close" type="button" aria-label="关闭任务进度" title="关闭任务进度">×</button></div><div class="wsp-todo-panel-summary"><span id="wsp-todo-summary"></span><strong id="wsp-todo-progress"></strong></div><div class="wsp-todo-progress-track"><span id="wsp-todo-progress-fill"></span></div><ol class="wsp-todo-panel-list" id="wsp-todo-panel-list"></ol><button class="wsp-todo-panel-link" id="wsp-todo-panel-link" type="button">查看任务页 <span aria-hidden="true">↗</span></button></aside>
+        <aside class="wsp-todo-panel" id="wsp-todo-panel" aria-label="当前对话任务进度" hidden><div class="wsp-todo-panel-head"><span class="wsp-todo-panel-icon" aria-hidden="true">${workspaceIcon("todo").outerHTML}</span><div><strong>任务进度</strong><small>当前对话 · OpenCode</small></div><button class="wsp-todo-panel-close" id="wsp-todo-panel-close" type="button" aria-label="关闭任务进度" title="关闭任务进度">${workspaceIcon("close").outerHTML}</button></div><div class="wsp-todo-panel-summary"><span id="wsp-todo-summary"></span><strong id="wsp-todo-progress"></strong></div><div class="wsp-todo-progress-track"><span id="wsp-todo-progress-fill"></span></div><ol class="wsp-todo-panel-list" id="wsp-todo-panel-list"></ol><button class="wsp-todo-panel-link" id="wsp-todo-panel-link" type="button">查看任务页 ${workspaceIcon("open").outerHTML}</button></aside>
         <div class="wsp-scroll" id="wsp-scroll"><div class="wsp-content" id="wsp-content"></div></div>
-        <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" role="listbox" aria-label="命令与项目文件" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-refresh" title="刷新 Sona 订阅模型" aria-label="刷新 Sona 订阅模型" hidden>↻</button><button type="button" id="wsp-model-close" aria-label="关闭模型选择">×</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><div class="wsp-attachment-list" id="wsp-attachment-list" aria-label="待发送附件" hidden></div><div class="wsp-input" id="wsp-input" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" aria-describedby="wsp-skill-error"></div><div id="wsp-skill-error" class="wsp-skill-error" role="status" aria-live="polite" hidden></div><div class="wsp-composer-bottom"><button class="wsp-attach" id="wsp-attach" type="button" title="选择 Sona Code 命令，也可输入 /" aria-label="选择 Sona Code 命令" aria-haspopup="listbox" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent" hidden><option value="build">Build · 执行</option></select><button class="wsp-agent-trigger" id="wsp-agent-trigger" type="button" aria-haspopup="menu" aria-expanded="false"><span id="wsp-agent-label">Build · 执行</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div class="wsp-agent-picker" id="wsp-agent-picker" role="menu" aria-label="选择 Agent" hidden></div><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">自动</button><select class="wsp-variant" id="wsp-variant" aria-label="选择模型强度" title="模型推理强度" hidden></select><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg></button></div></form><div class="wsp-stats" id="wsp-stats" aria-live="polite"></div></div>
+        <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" role="listbox" aria-label="命令与项目文件" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-refresh" title="刷新 Sona 订阅模型" aria-label="刷新 Sona 订阅模型" hidden>${workspaceIcon("refresh").outerHTML}</button><button type="button" id="wsp-model-close" aria-label="关闭模型选择">${workspaceIcon("close").outerHTML}</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><div class="wsp-attachment-list" id="wsp-attachment-list" aria-label="待发送附件" hidden></div><div class="wsp-input" id="wsp-input" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" aria-describedby="wsp-skill-error"></div><div id="wsp-skill-error" class="wsp-skill-error" role="status" aria-live="polite" hidden></div><div class="wsp-composer-bottom"><button class="wsp-attach" id="wsp-attach" type="button" title="选择 Sona Code 命令，也可输入 /" aria-label="选择 Sona Code 命令" aria-haspopup="listbox" aria-expanded="false">${workspaceIcon("plus").outerHTML}</button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent" hidden><option value="build">Build · 执行</option></select><button class="wsp-agent-trigger" id="wsp-agent-trigger" type="button" aria-haspopup="menu" aria-expanded="false"><span id="wsp-agent-label">Build · 执行</span>${workspaceIcon("chevronDown").outerHTML}</button><div class="wsp-agent-picker" id="wsp-agent-picker" role="menu" aria-label="选择 Agent" hidden></div><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">自动</button><select class="wsp-variant" id="wsp-variant" aria-label="选择模型强度" title="模型推理强度" hidden></select><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息">${workspaceIcon("send").outerHTML}</button></div></form><div class="wsp-stats" id="wsp-stats" aria-live="polite"></div></div>
       </div>
     </section>`;
 
@@ -478,11 +478,11 @@ function renderWorkspace(view) {
         el("div", { class: "wsp-queue-message" }, el("span", { class: "wsp-queue-preview", text: description, title: description }),
           el("small", { text: metadata })),
         !sent && el("button", { type: "button", class: "wsp-queue-action", text: "编辑", "aria-label": `编辑第 ${index + 1} 条待发送消息`, onclick: () => editQueuedMessage(item) }),
-        el("button", { type: "button", class: "wsp-queue-action wsp-queue-remove", text: "×", title: sent ? "移出队列，不撤回已发送消息" : "移除", "aria-label": `移除第 ${index + 1} 条待发送消息`,
+        el("button", { type: "button", class: "wsp-queue-action wsp-queue-remove", title: sent ? "移出队列，不撤回已发送消息" : "移除", "aria-label": `移除第 ${index + 1} 条待发送消息`,
           onclick: async () => {
             try { await queueAction(`/${encodeURIComponent(item.id)}`, "DELETE"); }
             catch (error) { toast("移除失败：" + detail(error), "error"); }
-          } })));
+          } }, workspaceIcon("close"))));
     }
     queuePanel.append(list);
   }
@@ -573,18 +573,9 @@ function renderWorkspace(view) {
   }
 
   function statusIcon(kind) {
-    const icon = el("svg", { class: "wsp-status-icon", viewBox: "0 0 20 20", "aria-hidden": "true" });
-    if (kind === "busy") {
-      icon.setAttribute("class", "wsp-status-icon wsp-status-spinning");
-      icon.setAttribute("style", `animation-delay: -${(Date.now() % 1100) / 1000}s`);
-      icon.append(el("g", { class: "wsp-status-spinner" },
-        el("circle", { cx: "10", cy: "10", r: "7.25", "stroke-dasharray": "12 34" })));
-    } else {
-      const path = kind === "ready" ? "m6.2 10.2 2.5 2.5 5.2-5.4" :
-        kind === "attention" ? "M10 6.2v4.1m0 3.5h.01" :
-        kind === "error" ? "m7 7 6 6m0-6-6 6" : "M10 7v3.3m0 3h.01";
-      icon.append(el("path", { class: "wsp-status-mark", d: path }));
-    }
+    const name = kind === "ready" ? "check" : ["busy", "attention", "error"].includes(kind) ? kind : "info";
+    const icon = workspaceIcon(name, "wsp-status-icon" + (kind === "busy" ? " wsp-status-spinning" : ""));
+    if (kind === "busy") icon.setAttribute("style", `animation-delay: -${(Date.now() % 1100) / 1000}s`);
     return icon;
   }
   async function copyMessageText(text) {
@@ -643,15 +634,15 @@ function renderWorkspace(view) {
     const actions = el("div", { class: "wsp-message-actions" });
     const text = (message.parts || []).filter((part) => part.type === "text" && !part.synthetic && !workspaceDirectoryReference(part))
       .map((part) => part.text || "").join("\n\n");
-    function actionButton(label, path, handler) {
+    function actionButton(label, iconName, handler) {
       return el("button", { class: "wsp-message-action", type: "button", title: label, "aria-label": label, onclick: handler },
-        el("svg", { viewBox: "0 0 24 24", width: 18, height: 18, fill: "none", stroke: "currentColor", "stroke-width": 1.7, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, el("path", { d: path })));
+        workspaceIcon(iconName));
     }
-    const copy = actionButton("复制消息", "M8 8h11v13H8z M16 8V3H3v13h5", () => copyMessageText(text));
+    const copy = actionButton("复制消息", "copy", () => copyMessageText(text));
     copy.disabled = !text;
     actions.append(copy);
     if (info.role === "assistant") {
-      const fork = actionButton("在新对话中分支", "M6 7v10m0-5h8a4 4 0 0 0 4-4V7 M8 5a2 2 0 1 1-4 0 2 2 0 0 1 4 0 M8 19a2 2 0 1 1-4 0 2 2 0 0 1 4 0 M20 5a2 2 0 1 1-4 0 2 2 0 0 1 4 0", async () => {
+      const fork = actionButton("在新对话中分支", "fork", async () => {
         if (fork.disabled) return;
         fork.disabled = true;
         try {
@@ -672,7 +663,7 @@ function renderWorkspace(view) {
       actions.append(fork);
     }
     if (info.role === "user" && info.id === lastUserMessage()?.info.id) {
-      const withdraw = actionButton("撤回最后一轮", "M9 10 4 5l5-4 M4 5h10a6 6 0 0 1 0 12h-3", async () => {
+      const withdraw = actionButton("撤回最后一轮", "undo", async () => {
         if (withdraw.disabled || state.sending) return;
         if (!confirm("撤回最后一轮用户消息及模型回复，并将提问回填到输入框？项目文件修改会保留，当前输入框内容会被替换。")) return;
         withdraw.disabled = true;
@@ -824,10 +815,10 @@ function renderWorkspace(view) {
         el("img", { src: attachment.url, alt: attachment.filename, title: attachment.filename }),
         el("span", { text: attachment.filename }),
         el("button", { type: "button", title: `移除 ${attachment.filename}`, "aria-label": `移除 ${attachment.filename}`,
-          text: "×", onclick: () => {
+          onclick: () => {
             state.attachments = state.attachments.filter((item) => item.id !== attachment.id);
             renderAttachments(); saveDraft();
-          } }));
+          } }, workspaceIcon("close")));
       attachmentList.append(preview);
     }
     attachmentList.hidden = state.attachments.length === 0;
@@ -939,10 +930,7 @@ function renderWorkspace(view) {
           menu.style.top = `${Math.max(margin, Math.min(top, window.innerHeight - bounds.height - margin))}px`;
           trigger.setAttribute("aria-expanded", "true");
         }
-      } }, el("svg", { viewBox: "0 0 20 20", "aria-hidden": "true" },
-        el("circle", { cx: "5", cy: "10", r: "1.5" }),
-        el("circle", { cx: "10", cy: "10", r: "1.5" }),
-        el("circle", { cx: "15", cy: "10", r: "1.5" })));
+      } }, workspaceIcon("more"));
     const wrapper = el("span", { class: "wsp-row-menu-wrap" }, trigger, menu);
     return wrapper;
   }
@@ -1138,9 +1126,9 @@ function renderWorkspace(view) {
         rowMenu([["重命名", () => openRenameProject(project)], ["打开目录", () => openProjectDirectory(project)],
           ["打开目录树", () => openProjectTree(project)],
           ["删除工作区", () => removeProject(project)]]),
-        el("button", { class: "wsp-row-action wsp-row-plus", type: "button", text: "+",
+        el("button", { class: "wsp-row-action wsp-row-plus", type: "button",
           title: `在 ${project.name} 中新建对话`, "aria-label": `在 ${project.name} 中新建对话`,
-          onclick: () => { state.collapsedProjects.delete(project.id); renderSidebar(); createSession(project.id); } }));
+          onclick: () => { state.collapsedProjects.delete(project.id); renderSidebar(); createSession(project.id); } }, workspaceIcon("plus")));
       bindSidebarDrag(projectRow, "project", project.id, project.id);
       const projectRunning = collapsed && Object.values(state.projectStatuses.get(project.id) || {}).some(status => ["busy", "retry"].includes(status?.type));
       if (projectRunning && !cached.indicator) cached.indicator = el("span", {
@@ -1249,8 +1237,7 @@ function renderWorkspace(view) {
     send.setAttribute("aria-label", sendLabel);
     send.classList.toggle("queuing", queued);
     if (send.dataset.mode !== String(queued)) {
-      send.innerHTML = queued ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h12M4 11h12M4 16h7m7-2v8m-4-4h8"/></svg>' :
-        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg>';
+      send.replaceChildren(workspaceIcon(queued ? "queue" : "send"));
       send.dataset.mode = String(queued);
     }
     view.querySelector(".wsp-composer-hint").textContent = `Enter ${queued ? "加入队列" : "发送"} · Shift+Enter 换行`;
@@ -1290,8 +1277,7 @@ function renderWorkspace(view) {
   }
 
   function skillIcon() {
-    return el("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", class: "wsp-skill-icon" },
-      el("path", { d: "m12 2 8 5v10l-8 5-8-5V7l8-5Zm0 10 8-5M12 12 4 7m8 5v10M4 12l8 5 8-5" }));
+    return workspaceIcon("skill", "wsp-skill-icon");
   }
 
   function skillMention(skill) {
@@ -1301,8 +1287,7 @@ function renderWorkspace(view) {
 
   function fileMention(path) {
     return el("span", { class: "wsp-file-mention", title: path },
-      el("svg", { viewBox: "0 0 20 20", "aria-hidden": "true", class: "wsp-file-icon" },
-        el("path", { d: "M4 2.5h8l4 4v11H4z M12 2.5v4h4 M7 10h6 M7 13h6" })),
+      workspaceIcon("file", "wsp-file-icon"),
       el("span", { text: path.split("/").at(-1) }));
   }
 
@@ -1374,7 +1359,7 @@ function renderWorkspace(view) {
       el("span", { class: "wsp-tool-title", text: skill?.kind || toolLabels[toolName] || toolName }),
       el("span", { class: "wsp-tool-subject", title: String(subject), text: String(subject) }),
       el("span", { class: "wsp-tool-status", text: skill && status === "completed" ? (toolName === "skill" ? "已加载" : "已读取") : statusLabels[status] || status }),
-      el("svg", { class: "wsp-tool-chevron", viewBox: "0 0 24 24", "aria-hidden": "true" }, el("path", { d: "m6 9 6 6 6-6" }))));
+      workspaceIcon("chevronDown", "wsp-tool-chevron")));
     const rawOutput = stateInfo.output || stateInfo.error || "";
     const output = typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput, null, 2);
     const inputText = stateInfo.input ? JSON.stringify(stateInfo.input, null, 2) : "";
@@ -1390,7 +1375,7 @@ function renderWorkspace(view) {
     const finished = parts.every((part) => part.state?.status === "completed");
     const group = el("div", { class: "wsp-tool-group" },
       el("div", { class: "wsp-tool-group-head" },
-        el("span", { class: "wsp-tool-symbol", text: "›_" }),
+        el("span", { class: "wsp-tool-symbol" }, workspaceIcon("terminal")),
         el("strong", { text: finished ? "已完成的步骤" : "工具操作" }),
         el("span", { class: "wsp-tool-group-count", text: `${parts.length} 项活动` })));
     for (const part of parts) {
@@ -1798,9 +1783,7 @@ function renderWorkspace(view) {
   }
 
   function changeFileIcon() {
-    return el("svg", { viewBox: "0 0 20 20", "aria-hidden": "true" },
-      el("path", { d: "M11.5 2.5H5a1.5 1.5 0 0 0-1.5 1.5v12A1.5 1.5 0 0 0 5 17.5h10a1.5 1.5 0 0 0 1.5-1.5V7.5L11.5 2.5Z" }),
-      el("path", { d: "M11.5 2.5v5h5M7 11h6M7 14h4" }));
+    return workspaceIcon("file");
   }
 
   function closeChangePopover(restoreFocus = false) {
@@ -1831,8 +1814,8 @@ function renderWorkspace(view) {
     const focusedFile = document.activeElement?.dataset.changeFile;
     panel.replaceChildren(el("div", { class: "wsp-change-popover-head" },
       el("strong", { text: "本轮改动" }), changeStats(diffs),
-      el("button", { class: "wsp-change-close", type: "button", "aria-label": "关闭文件列表", text: "×",
-        onclick: () => closeChangePopover(true) })));
+      el("button", { class: "wsp-change-close", type: "button", "aria-label": "关闭文件列表",
+        onclick: () => closeChangePopover(true) }, workspaceIcon("close"))));
     const list = el("div", { class: "wsp-change-list" });
     for (const diff of diffs) {
       const path = diff.file || diff.path;
@@ -1844,7 +1827,7 @@ function renderWorkspace(view) {
           el("span", { class: "wsp-change-file-copy" },
             el("strong", { text: path.slice(separator + 1) }),
             separator >= 0 ? el("small", { text: path.slice(0, separator) }) : null),
-          changeStats([diff]), el("span", { class: "wsp-change-arrow", text: "›", "aria-hidden": "true" })),
+          changeStats([diff]), workspaceIcon("chevron", "wsp-change-arrow")),
         browserPreviewFile(path) ? el("button", { class: "wsp-change-locate", type: "button",
           title: "在浏览器中打开", "aria-label": "在浏览器中打开 " + path,
           onclick: () => openTreePath(path, "browser") }, workspaceIcon("globe")) : null,
@@ -1893,8 +1876,7 @@ function renderWorkspace(view) {
       } },
       changeFileIcon(), el("span", { text: `已修改 ${diffs.length} 个文件` }),
       el("span", { class: "wsp-change-divider", "aria-hidden": "true" }), changeStats(diffs),
-      el("svg", { class: "wsp-change-chevron", viewBox: "0 0 20 20", "aria-hidden": "true" },
-        el("path", { d: "m6 8 4 4 4-4" })));
+      workspaceIcon("chevronDown", "wsp-change-chevron"));
     changeTriggers.set(messageId, { trigger, diffs });
     return trigger;
   }
@@ -2284,8 +2266,7 @@ function renderWorkspace(view) {
     const model = provider?.models?.[choice.model_id];
     modelButton.replaceChildren(
       el("span", { class: "wsp-model-label", text: model ? model.name || choice.model_id : "选择模型" }),
-      el("svg", { class: "wsp-model-chevron", viewBox: "0 0 24 24", "aria-hidden": "true" },
-        el("path", { d: "m6 9 6 6 6-6" })));
+      workspaceIcon("chevronDown", "wsp-model-chevron"));
     modelButton.title = model?.source === "custom" && !model.route_through_proxy
       ? "本次调用不会进入本地调用记录与代理轨迹；工作区对话和工具活动仍然可见。" : model ? `${provider.id} / ${choice.model_id}` : "请添加或选择模型";
     const variants = Object.keys(model?.variants || {});

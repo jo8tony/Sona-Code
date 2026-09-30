@@ -185,7 +185,7 @@ function addSession(info, { focus }) {
 
   s.term = new Terminal({
     scrollback: 5000,
-    fontSize: 13,
+    fontSize: 15,
     fontFamily: '"SF Mono", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace',
     minimumContrastRatio: 4.5,
     cursorBlink: true,

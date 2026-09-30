@@ -1,21 +1,50 @@
 "use strict";
 
-function workspaceIcon(name) {
-  const paths = {
-    pencil: ["M12 20h9", "M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4L16.5 3.5Z"],
-    folder: ["M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"],
-    file: ["M6 3h8l4 4v14H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z", "M14 3v5h5", "M8 13h8M8 17h6"],
-    tree: ["M5 4v16", "M5 8h4M5 16h4", "M10 5h10v6H10z", "M10 13h10v6H10z"],
-    trash: ["M4 7h16", "M9 7V4h6v3", "M6 7l1 14h10l1-14", "M10 11v6M14 11v6"],
-    fork: ["M7 3v7a5 5 0 0 0 5 5h3", "M17 3v7a5 5 0 0 1-5 5", "M12 15v6", "M5 3h4M15 3h4M10 21h4"],
-    open: ["M14 4h6v6", "M20 4l-9 9", "M19 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6"],
-    reveal: ["M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z", "M8 13h8M8 16h5"],
-    globe: ["M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Z", "M2 12h20", "M12 2c2.5 2.7 4 6.2 4 10s-1.5 7.3-4 10", "M12 2c-2.5 2.7-4 6.2-4 10s1.5 7.3 4 10"],
-    reference: ["M16 8v7a3 3 0 0 0 6 0v-3a10 10 0 1 0-3.5 7.6", "M16 12a4 4 0 1 0-8 0 4 4 0 0 0 8 0Z"],
-    locate: ["M12 2v3M12 19v3M2 12h3M19 12h3", "M12 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14Z", "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"],
-  };
-  return el("svg", { class: "wsp-icon", viewBox: "0 0 24 24", "aria-hidden": "true" },
-    ...(paths[name] || paths.file).map((d) => el("path", { d })));
+// Lucide SVG subset, ISC license. Source: lucide-icons/lucide@5a92b9ba262de5bf10e864219883267672c05db8.
+// Keep the original geometry; size and stroke are controlled by workspace.css.
+const WORKSPACE_ICONS = {
+  undo: [["path", {"d": "M9 14 4 9l5-5"}], ["path", {"d": "M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"}]],
+  busy: [["path", {"d": "M21 12a9 9 0 1 1-6.219-8.56"}]],
+  fork: [["path", {"d": "M15 6a9 9 0 0 0-9 9V3"}], ["circle", {"cx": "18", "cy": "6", "r": "3"}], ["circle", {"cx": "6", "cy": "18", "r": "3"}]],
+  pencil: [["path", {"d": "M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"}], ["path", {"d": "m15 5 4 4"}]],
+  folder: [["path", {"d": "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"}]],
+  folderOpen: [["path", {"d": "m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"}]],
+  file: [["path", {"d": "M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"}], ["path", {"d": "M14 2v5a1 1 0 0 0 1 1h5"}]],
+  fileCode: [["path", {"d": "M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"}], ["path", {"d": "M14 2v5a1 1 0 0 0 1 1h5"}], ["path", {"d": "M10 12.5 8 15l2 2.5"}], ["path", {"d": "m14 12.5 2 2.5-2 2.5"}]],
+  tree: [["path", {"d": "M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"}], ["path", {"d": "M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"}], ["path", {"d": "M3 5a2 2 0 0 0 2 2h3"}], ["path", {"d": "M3 3v13a2 2 0 0 0 2 2h3"}]],
+  trash: [["path", {"d": "M10 11v6"}], ["path", {"d": "M14 11v6"}], ["path", {"d": "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"}], ["path", {"d": "M3 6h18"}], ["path", {"d": "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"}]],
+  open: [["path", {"d": "M15 3h6v6"}], ["path", {"d": "M10 14 21 3"}], ["path", {"d": "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"}]],
+  reveal: [["path", {"d": "M10.7 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v4.1"}], ["path", {"d": "m21 21-1.9-1.9"}], ["circle", {"cx": "17", "cy": "17", "r": "3"}]],
+  globe: [["circle", {"cx": "12", "cy": "12", "r": "10"}], ["path", {"d": "M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"}], ["path", {"d": "M2 12h20"}]],
+  reference: [["circle", {"cx": "12", "cy": "12", "r": "4"}], ["path", {"d": "M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"}]],
+  locate: [["path", {"d": "M3 7V5a2 2 0 0 1 2-2h2"}], ["path", {"d": "M17 3h2a2 2 0 0 1 2 2v2"}], ["path", {"d": "M21 17v2a2 2 0 0 1-2 2h-2"}], ["path", {"d": "M7 21H5a2 2 0 0 1-2-2v-2"}], ["circle", {"cx": "12", "cy": "12", "r": "1"}], ["path", {"d": "M18.944 12.33a1 1 0 0 0 0-.66 7.5 7.5 0 0 0-13.888 0 1 1 0 0 0 0 .66 7.5 7.5 0 0 0 13.888 0"}]],
+  copy: [["rect", {"width": "14", "height": "14", "x": "8", "y": "8", "rx": "2", "ry": "2"}], ["path", {"d": "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"}]],
+  more: [["circle", {"cx": "12", "cy": "12", "r": "1"}], ["circle", {"cx": "19", "cy": "12", "r": "1"}], ["circle", {"cx": "5", "cy": "12", "r": "1"}]],
+  chevron: [["path", {"d": "m9 18 6-6-6-6"}]],
+  search: [["path", {"d": "m21 21-4.34-4.34"}], ["circle", {"cx": "11", "cy": "11", "r": "8"}]],
+  settings: [["path", {"d": "M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"}], ["circle", {"cx": "12", "cy": "12", "r": "3"}]],
+  plus: [["path", {"d": "M5 12h14"}], ["path", {"d": "M12 5v14"}]],
+  send: [["path", {"d": "m5 12 7-7 7 7"}], ["path", {"d": "M12 19V5"}]],
+  stop: [["rect", {"width": "18", "height": "18", "x": "3", "y": "3", "rx": "2"}]],
+  terminal: [["path", {"d": "M12 19h8"}], ["path", {"d": "m4 17 6-6-6-6"}]],
+  chevronDown: [["path", {"d": "m6 9 6 6 6-6"}]],
+  refresh: [["path", {"d": "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"}], ["path", {"d": "M21 3v5h-5"}]],
+  close: [["path", {"d": "M18 6 6 18"}], ["path", {"d": "m6 6 12 12"}]],
+  panelLeft: [["rect", {"width": "18", "height": "18", "x": "3", "y": "3", "rx": "2"}], ["path", {"d": "M9 3v18"}]],
+  todo: [["path", {"d": "M13 5h8"}], ["path", {"d": "M13 12h8"}], ["path", {"d": "M13 19h8"}], ["path", {"d": "m3 17 2 2 4-4"}], ["rect", {"x": "3", "y": "4", "width": "6", "height": "6", "rx": "1"}]],
+  queue: [["path", {"d": "M16 5H3"}], ["path", {"d": "M11 12H3"}], ["path", {"d": "M16 19H3"}], ["path", {"d": "M18 9v6"}], ["path", {"d": "M21 12h-6"}]],
+  skill: [["path", {"d": "M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2"}], ["rect", {"x": "14", "y": "2", "width": "8", "height": "8", "rx": "1"}]],
+  check: [["path", {"d": "M20 6 9 17l-5-5"}]],
+  attention: [["circle", {"cx": "12", "cy": "12", "r": "10"}], ["line", {"x1": "12", "x2": "12", "y1": "8", "y2": "12"}], ["line", {"x1": "12", "x2": "12.01", "y1": "16", "y2": "16"}]],
+  error: [["circle", {"cx": "12", "cy": "12", "r": "10"}], ["path", {"d": "m15 9-6 6"}], ["path", {"d": "m9 9 6 6"}]],
+  info: [["circle", {"cx": "12", "cy": "12", "r": "10"}], ["path", {"d": "M12 16v-4"}], ["path", {"d": "M12 8h.01"}]],
+};
+
+function workspaceIcon(name, className = "wsp-icon") {
+  return el("svg", { class: className + " wsp-lucide", viewBox: "0 0 24 24",
+    fill: "none", stroke: "currentColor", "stroke-width": 1.7,
+    "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true", focusable: "false" },
+    ...(WORKSPACE_ICONS[name] || WORKSPACE_ICONS.file).map(([tag, attrs]) => el(tag, attrs)));
 }
 
 function createWorkspaceTree(pane, callbacks) {
@@ -88,8 +117,8 @@ function createWorkspaceTree(pane, callbacks) {
           event.dataTransfer.effectAllowed = "copy";
         },
       },
-      el("span", { class: "wsp-tree-toggle", text: item.directory ? expanded.has(item.path) ? "⌄" : "›" : "" }),
-      el("span", { class: "wsp-tree-kind" }, workspaceIcon(item.directory ? "folder" : "file")),
+      el("span", { class: "wsp-tree-toggle" }, item.directory ? workspaceIcon(expanded.has(item.path) ? "chevronDown" : "chevron") : null),
+      el("span", { class: "wsp-tree-kind" }, workspaceIcon(item.directory ? expanded.has(item.path) ? "folderOpen" : "folder" : "file")),
       el("span", { class: "wsp-tree-name", text: item.name }),
       !item.directory && browserFile(item.path) ? el("button", {
         class: "wsp-tree-browser", type: "button",
