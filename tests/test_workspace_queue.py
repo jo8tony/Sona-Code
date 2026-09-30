@@ -88,6 +88,62 @@ async def test_pause_during_inspection_prevents_dispatch(queue):
     assert not delivered
 
 
+@pytest.mark.parametrize("has_pending", [False, True])
+async def test_stop_removes_interrupted_turn_and_preserves_only_unsent_drafts(queue, has_pending):
+    delivered = []
+
+    async def inspect(entry):
+        return {}, []
+
+    async def dispatch(entry, item):
+        delivered.append(item["id"])
+
+    queue.inspect, queue.dispatch = inspect, dispatch
+    await queue.add("p", "/project", "s1", "prompt", {"text": "running"})
+    if has_pending:
+        await queue.add("p", "/project", "s1", "prompt", {"text": "unsent"})
+    await queue._step("p:s1")
+    await queue.stop("p", "s1")
+    snapshot = queue.snapshot("p", "s1")
+    assert snapshot["error"] == ""
+    assert snapshot["paused"] == has_pending
+    assert [item["payload"]["text"] for item in snapshot["items"]] == (["unsent"] if has_pending else [])
+    restored = WorkspaceQueue(str(queue.path.parent / "config.json"))
+    assert restored.snapshot("p", "s1")["items"] == snapshot["items"]
+    if has_pending:
+        await queue._step("p:s1")
+        assert len(delivered) == 1
+        await queue.pause("p", "s1", False)
+        await queue._step("p:s1")
+        assert len(delivered) == 2
+
+
+async def test_stop_cancels_dispatch_before_dropping_its_tracking(tmp_path):
+    queue = WorkspaceQueue(str(tmp_path / "config.json"))
+    sending = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def inspect(entry):
+        return {}, []
+
+    async def dispatch(entry, item):
+        sending.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    queue.inspect, queue.dispatch = inspect, dispatch
+    await queue.add("p", "/project", "s1", "prompt", {"text": "running"})
+    await asyncio.wait_for(sending.wait(), 1)
+    await queue.add("p", "/project", "s1", "prompt", {"text": "unsent"})
+    await queue.stop("p", "s1")
+    assert cancelled.is_set()
+    assert "p:s1" not in queue._workers
+    assert [item["payload"]["text"] for item in queue.snapshot("p", "s1")["items"]] == ["unsent"]
+    await queue.shutdown()
+
+
 async def test_failed_native_reply_pauses_remaining_queue(queue):
     messages = []
 

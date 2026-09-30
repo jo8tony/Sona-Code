@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sona-code"
-version = "2.2.1"
+version = "2.3.1"
 description = "Sona Code：透明转发并记录大模型 API 调用"
 requires-python = ">=3.10"
 dependencies = [

@@ -891,7 +891,7 @@ async def run_shell(project_id: str, session_id: str, body: ShellBody, request: 
 @router.post("/workspace/projects/{project_id}/sessions/{session_id}/abort")
 async def abort_session(project_id: str, session_id: str, request: Request):
     path = _project_path(request, project_id)
-    await request.app.state.runtime.workspace_queue.pause(project_id, _safe_id(session_id))
+    await request.app.state.runtime.workspace_queue.stop(project_id, _safe_id(session_id))
     return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/abort", {})
 
 

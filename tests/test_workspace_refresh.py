@@ -148,7 +148,7 @@ const list = {scrollTop: 0, children: [], replaceCount: 0,
   replaceChildren(...items) {this.children = items; this.replaceCount++;}};
 const state = {projectId: "p", sessionId: "a", tab: "chat", todos: []};
 const dismissedTodoPanels = new Set();
-const context = vm.createContext({state, dismissedTodoPanels, todoTrigger: trigger,
+const context = vm.createContext({state, dismissedTodoPanels, todoPanelTurns: new Map(), todoTrigger: trigger,
   todoPanel: panel, todoList: list, renderedTodoSignature: "",
   root: {classList: {toggle() {}}}, view: {querySelector: key => fields[key]},
   workspaceConversationKey: (p, s) => JSON.stringify([p, s]),
@@ -176,6 +176,15 @@ assert.equal(panel.hidden, true); assert.equal(trigger.hidden, false);
 dismissedTodoPanels.delete(JSON.stringify(["p", "a"]));
 context.renderTodoPanel();
 assert.equal(panel.hidden, false);
+state.messages = [{info: {role: "user", id: "new-turn"}}];
+context.renderTodoPanel();
+assert.equal(panel.hidden, true, "A new user turn should collapse the previous progress panel");
+assert.equal(trigger.hidden, false);
+state.todos = []; context.renderTodoPanel();
+state.todos = [{content: "new plan", status: "pending"}]; context.renderTodoPanel();
+assert.equal(panel.hidden, true, "Clearing and refreshing todos must not reopen the panel");
+dismissedTodoPanels.delete(JSON.stringify(["p", "a"])); context.renderTodoPanel();
+assert.equal(panel.hidden, false, "The user can still reopen progress manually");
 state.tab = "tasks"; context.renderTodoPanel();
 assert.equal(panel.hidden, true); assert.equal(trigger.hidden, true);
 state.tab = "chat"; state.todos = []; context.renderTodoPanel();

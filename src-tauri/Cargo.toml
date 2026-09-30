@@ -1,6 +1,6 @@
 [package]
 name = "sona-code-desktop"
-version = "2.2.1"
+version = "2.3.1"
 description = "Sona Code desktop application"
 authors = ["Sona Code contributors"]
 edition = "2021"

@@ -257,6 +257,7 @@ function renderWorkspace(view) {
   const messageInfoVersions = new Map();
   const conversationViews = new Map();
   const dismissedTodoPanels = new Set();
+  const todoPanelTurns = new Map();
   let renderedTodoSignature = "";
   const sidebarSections = new Map();
   const sidebarRows = new Map();
@@ -2073,7 +2074,9 @@ function renderWorkspace(view) {
 
   function renderTodoPanel() {
     const key = workspaceConversationKey(state.projectId, state.sessionId);
-    if (!state.todos.length) dismissedTodoPanels.delete(key);
+    const turn = (state.messages || []).filter(message => message.info?.role === "user").at(-1)?.info?.id || "";
+    if (todoPanelTurns.has(key) && todoPanelTurns.get(key) !== turn && turn) dismissedTodoPanels.add(key);
+    todoPanelTurns.set(key, turn);
     const available = !!state.projectId && !!state.sessionId && state.tab === "chat" && state.todos.length > 0;
     const open = available && !dismissedTodoPanels.has(key);
     todoTrigger.hidden = !available;
@@ -3580,6 +3583,8 @@ function renderWorkspace(view) {
       }
       if (!alive()) return;
       const deliveredKey = workspaceConversationKey(projectId, sessionId);
+      dismissedTodoPanels.add(deliveredKey);
+      renderTodoPanel();
       const saved = workspaceReadDraft(sendKey);
       if (JSON.stringify(saved) === JSON.stringify(originalDraft)) workspaceWriteDraft(sendKey, null);
       if (sendKey !== deliveredKey && JSON.stringify(workspaceReadDraft(deliveredKey)) === JSON.stringify(originalDraft)) {

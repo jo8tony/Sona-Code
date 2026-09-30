@@ -129,6 +129,27 @@ class WorkspaceQueue:
             await self._save()
         await asyncio.gather(*tasks, return_exceptions=True)
 
+    async def stop(self, project_id: str, session_id: str) -> None:
+        """Stop tracking the interrupted turn while preserving unsent drafts."""
+        key = self._key(project_id, session_id)
+        async with self._lock:
+            queue = self._queues.get(key)
+            if queue:
+                queue["paused"] = True
+            task = self._workers.pop(key, None)
+            if task:
+                task.cancel()
+        if task:
+            await asyncio.gather(task, return_exceptions=True)
+        async with self._lock:
+            queue = self._queues.get(key)
+            if queue:
+                queue["items"] = [item for item in queue["items"] if item["status"] == "pending"]
+                queue["error"] = ""
+                if not queue["items"]:
+                    self._queues.pop(key)
+                await self._save()
+
     async def shutdown(self) -> None:
         async with self._lock:
             for queue in self._queues.values():
