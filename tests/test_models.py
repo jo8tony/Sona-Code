@@ -209,7 +209,8 @@ async def test_idle_configuration_change_recycles_servers_without_losing_history
     manager = WorkspaceManager()
     client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"s": {"type": "idle"}})), base_url="http://localhost")
     process = SimpleNamespace(poll=lambda: None)
-    manager._servers["project"] = SimpleNamespace(process=process, client=client)
+    from sona_code.workspace.manager import OpenCodeServer
+    manager._servers["project"] = OpenCodeServer(process, client, 1234)
     stopped = []
     async def stop(process):
         stopped.append(process)

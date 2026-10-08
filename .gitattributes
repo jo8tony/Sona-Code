@@ -1,0 +1,4 @@
+# Preserve patch matching and recipe hashes across Windows/Unix checkouts.
+/packaging/opencode-locale-plugin.mjs text eol=lf
+/scripts/prepare-opencode.py text eol=lf
+/tests/fixtures/y18n-5.0.8/index.mjs text eol=lf

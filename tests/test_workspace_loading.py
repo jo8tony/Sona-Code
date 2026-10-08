@@ -194,7 +194,7 @@ def slow_startup(tmp_path, monkeypatch):
     native_client = httpx.AsyncClient
 
     def process(*args, **kwargs):
-        instance = SimpleNamespace(poll=lambda: None)
+        instance = SimpleNamespace(poll=lambda: None, stdout=None)
         processes.append(instance)
         return instance
 
@@ -212,7 +212,7 @@ def slow_startup(tmp_path, monkeypatch):
     async def stop(process):
         process.poll = lambda: 0
 
-    monkeypatch.setattr(workspace_manager, "resolve_opencode", lambda cfg: SimpleNamespace(path="opencode"))
+    monkeypatch.setattr(workspace_manager, "resolve_opencode", lambda cfg: SimpleNamespace(path="opencode", source="path"))
     monkeypatch.setattr(workspace_manager, "resolve_executable", lambda path: path)
     monkeypatch.setattr(workspace_manager, "_build_env", lambda *args: {})
     monkeypatch.setattr(workspace_manager.subprocess, "Popen", process)

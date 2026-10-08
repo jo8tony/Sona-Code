@@ -266,6 +266,8 @@ def main() -> None:
     parser.add_argument("--recorder", required=True, type=Path)
     parser.add_argument("--opencode", required=True, type=Path)
     parser.add_argument("--electron", action="store_true")
+    parser.add_argument("--sidecars-only", action="store_true",
+                        help="Check package payload without launching the desktop or using port 8117")
     args = parser.parse_args()
 
     subsystem = _desktop_subsystem(args.desktop)
@@ -286,6 +288,13 @@ def main() -> None:
                 "XDG_STATE_HOME": str(temp / "state"),
             }
         )
+        env.pop("BUN_BE_BUN", None)
+        help_result = subprocess.run(
+            [str(args.opencode), "--help"], env=env, capture_output=True,
+            timeout=30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if help_result.returncode:
+            raise RuntimeError(f"Installed OpenCode --help failed: {help_result.stderr.decode('utf-8', errors='replace')[-2000:]}")
         log_path = temp / "sidecar.log"
         base_url = "http://127.0.0.1:18117"
         command = [
@@ -374,10 +383,13 @@ def main() -> None:
                 except subprocess.TimeoutExpired:
                     process.kill()
 
-    _verify_desktop_lifecycle(args.desktop)
-    if args.electron:
-        _verify_electron_orphan_recovery(args.desktop, args.recorder, args.opencode)
-    print("Windows close/restore, packaged OpenCode workspace, and ConPTY execution smoke tests passed")
+    if args.sidecars_only:
+        print("Packaged OpenCode help, workspace, history, and ConPTY execution smoke tests passed; desktop lifecycle was not tested")
+    else:
+        _verify_desktop_lifecycle(args.desktop)
+        if args.electron:
+            _verify_electron_orphan_recovery(args.desktop, args.recorder, args.opencode)
+        print("Windows close/restore, packaged OpenCode workspace, and ConPTY execution smoke tests passed")
 
 
 if __name__ == "__main__":

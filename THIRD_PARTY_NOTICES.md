@@ -18,9 +18,17 @@ from the same pinned OpenSpec package at build time.
 
 - Project: https://github.com/anomalyco/opencode
 - Bundled version: 1.18.32
-- Windows asset: `opencode-windows-x64-baseline.zip`
+- Upstream source commit: `545f51d26cc39a907d2867492d498d9607ea5fa4`
+- Windows target: `opencode-windows-x64-baseline`
+- Compiler: Bun 1.3.14
+- Sona Code patch: `embedded-yargs-locales-v1`
 - License: MIT
 
-The Windows installer redistributes the official, unmodified OpenCode CLI
-binary published by the OpenCode project. Its license is included at
-`licenses/OpenCode-LICENSE.txt` in the installed application resources.
+The Windows installer includes a modified build of OpenCode, compiled from
+the pinned upstream source and dependency lockfile. Sona Code embeds yargs
+language dictionaries so y18n does not try to read CLI locale resources from
+a physical `B:\~BUN\locales` path. The V1 HTTP API and native storage are
+unchanged. Its license is included at `licenses/OpenCode-LICENSE.txt` in the
+installed application resources. The patch and build recipe are maintained
+in this repository; release requires ordinary-user verification on an
+affected Windows computer.

@@ -17,10 +17,14 @@ from typing import AsyncIterator, Awaitable, Callable
 import httpx
 
 from sona_code.config import AppConfig
+from sona_code.workspace.diagnostics import (
+    ProcessOutput, StartupRedactor, failure_detail, is_locale_error,
+)
 from sona_code.workspace.history import HistoryNotFound, read_history, session_catalog
 from sona_code.terminal.manager import (
     _build_argv,
     _build_env,
+    executable_version,
     resolve_executable,
     resolve_opencode,
 )
@@ -40,6 +44,7 @@ class OpenCodeServer:
     process: subprocess.Popen[bytes]
     client: httpx.AsyncClient
     port: int
+    output: ProcessOutput | None = None
 
 
 def _free_port() -> int:
@@ -91,7 +96,7 @@ class WorkspaceManager:
         try:
             existing = self._servers.pop(path, None)
             if existing:
-                await existing.client.aclose()
+                await self._close_server(existing)
 
             resolution = await asyncio.to_thread(resolve_opencode, config)
             if not resolution.path:
@@ -106,6 +111,9 @@ class WorkspaceManager:
             password = secrets.token_urlsafe(32)
             env["OPENCODE_SERVER_USERNAME"] = "sona-code"
             env["OPENCODE_SERVER_PASSWORD"] = password
+            redactor = StartupRedactor(config, env)
+            version = None
+            last_detail = "OpenCode 服务启动失败，请检查程序版本与应用日志"
             creationflags = (
                 getattr(subprocess, "CREATE_NO_WINDOW", 0)
                 | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -115,32 +123,62 @@ class WorkspaceManager:
                 argv = [*_build_argv(executable, []), "serve", "--hostname", "127.0.0.1", "--port", str(port)]
                 try:
                     process = subprocess.Popen(
-                        argv, cwd=path, env=env, stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL, creationflags=creationflags,
+                        argv, cwd=path, env=env, stdout=subprocess.PIPE, bufsize=0,
+                        stderr=subprocess.STDOUT, creationflags=creationflags,
                         start_new_session=os.name != "nt",
                     )
                 except OSError as exc:
-                    raise WorkspaceError(f"启动 OpenCode 失败：{exc}", 503) from exc
+                    detail = redactor.redact(str(exc))
+                    logger.warning("OpenCode launch failed source=%s executable=%s: %s",
+                                   resolution.source, redactor.redact(executable), detail)
+                    raise WorkspaceError(f"启动 OpenCode 失败：{detail[:240]}", 503) from exc
+                output = ProcessOutput(process.stdout) if process.stdout is not None else None
                 client = httpx.AsyncClient(
                     base_url=f"http://127.0.0.1:{port}",
                     auth=("sona-code", password), trust_env=False, timeout=20,
                 )
-                for _ in range(50):
-                    if process.poll() is not None:
-                        break
+                server = OpenCodeServer(process, client, port, output)
+                ready = False
+                try:
+                    for _ in range(50):
+                        if process.poll() is not None:
+                            break
+                        try:
+                            response = await client.get("/global/health", timeout=1)
+                            if response.status_code == 200:
+                                self._servers[path] = server
+                                ready = True
+                                return server
+                        except httpx.RequestError:
+                            pass
+                        await asyncio.sleep(.2)
+                    exit_code = process.poll()
+                finally:
+                    if not ready:
+                        await self._close_server(server)
+                raw_output = output.text() if output else ""
+                safe_output = redactor.redact(raw_output)
+                if version is None:
                     try:
-                        response = await client.get("/global/health", timeout=1)
-                        if response.status_code == 200:
-                            server = OpenCodeServer(process, client, port)
-                            self._servers[path] = server
-                            return server
-                    except httpx.RequestError:
-                        pass
-                    await asyncio.sleep(.2)
-                await client.aclose()
-                await self._stop_process(process)
-                logger.warning("OpenCode server did not become ready for %s (attempt %d)", path, attempt + 1)
-            raise WorkspaceError("OpenCode 服务启动失败，请检查程序版本与应用日志", 503)
+                        version = await asyncio.to_thread(executable_version, executable)
+                    except UnicodeError:
+                        # Custom CLIs can emit UTF-8 diagnostics under a Windows
+                        # legacy code page. Keep the captured error and HTTP 503.
+                        version = "unknown"
+                logger.warning(
+                    "OpenCode startup failed source=%s executable=%s version=%s exit=%s "
+                    "project=%s attempt=%d output=%s",
+                    resolution.source, redactor.redact(executable), redactor.redact(version or "unknown"),
+                    exit_code if exit_code is not None else "timeout", redactor.redact(path),
+                    attempt + 1, safe_output or "(empty)",
+                )
+                if output and output.error:
+                    logger.warning("OpenCode output capture failed: %s", redactor.redact(output.error))
+                locale_error = is_locale_error(raw_output)
+                last_detail = failure_detail(resolution.source, safe_output, exit_code, locale_error=locale_error)
+                if locale_error:
+                    raise WorkspaceError(last_detail, 503)
+            raise WorkspaceError(last_detail, 503)
         finally:
             self._starting.pop(path, None)
 
@@ -199,8 +237,7 @@ class WorkspaceManager:
                 result = await operation()
                 if server:
                     self._servers.pop(path, None)
-                    await server.client.aclose()
-                    await self._stop_process(server.process)
+                    await self._close_server(server)
                 return result
             finally:
                 self._changing.discard(path)
@@ -287,8 +324,7 @@ class WorkspaceManager:
             for path, server in active:
                 # Inline skills.paths is captured at process start. Recreate idle
                 # servers so imports/deletions also resolve duplicate sources afresh.
-                await server.client.aclose()
-                await self._stop_process(server.process)
+                await self._close_server(server)
                 self._servers.pop(path, None)
             return result
 
@@ -312,8 +348,7 @@ class WorkspaceManager:
                 await asyncio.gather(pending, return_exceptions=True)
             server = self._servers.pop(path, None)
             if server:
-                await server.client.aclose()
-                await self._stop_process(server.process)
+                await self._close_server(server)
 
     async def shutdown(self) -> None:
         async with self._lock:
@@ -321,8 +356,17 @@ class WorkspaceManager:
             servers = list(self._servers.values())
             self._servers.clear()
             for server in servers:
-                await server.client.aclose()
+                await self._close_server(server)
+
+    async def _close_server(self, server: OpenCodeServer) -> None:
+        try:
+            await server.client.aclose()
+        finally:
+            try:
                 await self._stop_process(server.process)
+            finally:
+                if server.output is not None:
+                    await asyncio.to_thread(server.output.close)
 
     @staticmethod
     async def _stop_process(process: subprocess.Popen[bytes]) -> None:
