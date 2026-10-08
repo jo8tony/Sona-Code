@@ -377,6 +377,8 @@ class TerminalManager:
             raise TerminalError(f"未找到命令 {command}，请确认已安装并在 PATH 中")
         argv = _build_argv(exe, args)
         env = _build_env(cfg, kind)
+        if getattr(self, "environment", None) is not None:
+            env = await asyncio.to_thread(self.environment, str(path.resolve()), kind, env)
 
         sid = uuid.uuid4().hex[:12]
         try:

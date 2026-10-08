@@ -108,6 +108,9 @@ if (!app.requestSingleInstanceLock()) {
     Object.assign(env, {
       PYTHONIOENCODING: "utf-8", SONACODE_DESKTOP_INSTANCE_ID: instanceId,
       SONACODE_BUNDLED_OPENCODE: opencodeFile,
+      SONACODE_BUNDLED_OPENSPEC: app.isPackaged
+        ? path.join(process.resourcesPath, "tools", "openspec")
+        : path.join(__dirname, "..", "build", "openspec"),
       XDG_CONFIG_HOME: dataRoot, XDG_DATA_HOME: dataRoot,
       XDG_CACHE_HOME: cacheRoot, XDG_STATE_HOME: stateDir,
     });

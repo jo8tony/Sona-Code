@@ -3,6 +3,83 @@
 
 function skillError(error) { return error?.data?.detail || error?.message || String(error); }
 
+function openSpecError(error) {
+  const detail = skillError(error);
+  return typeof detail === "object" ? [detail.message || "OpenSpec 准备失败", ...(detail.conflicts || [])].join("\n") : String(detail);
+}
+
+async function openProjectOpenSpec(project, onChanged, autoEnable = false) {
+  const dialog = createSkillDialog(`OpenSpec · ${project.name}`);
+  const content = el("div", { class: "wsp-openspec-content" });
+  const errorLine = el("div", { class: "banner banner-err wsp-openspec-error", role: "alert", hidden: true });
+  dialog.body.append(el("p", { text: "为当前项目启用规范驱动工作流。从需求提案到实现、验证和归档，直接在对话中完成。" }), content, errorLine);
+  dialog.body.insertBefore(el("p", { class: "dim", text: "离线内置：无需下载，不联网检查或升级。同步模板仅使用当前客户端携带的版本。" }), content);
+  let busy = false, status;
+  const labels = { not_enabled: "尚未启用", detected: "已有 OpenSpec", prepared: "正在检查命令", ready: "可用", disabled: "已停用",
+    upgrade_available: "内置模板待同步", conflict: "文件冲突", error: "需要检查" };
+  function draw() {
+    if (!dialog.alive()) return;
+    content.replaceChildren();
+    if (!status) { content.append(el("p", { text: "正在检查项目…" })); return; }
+    content.append(el("p", { class: "wsp-openspec-status", text: busy ? "正在准备，请稍候…" : labels[status.state] || status.state }));
+    if (status.state === "ready") content.append(el("p", { text: "在对话中输入 /opsx-propose 开始规划，或输入 /opsx 查看全部工作流。" }));
+    if (status.state === "detected") content.append(el("p", { text: "接入时会检查已有文件，并补齐 OpenCode 技能和命令。已有规范和项目配置会保留。" }));
+    if (status.error) content.append(el("p", { class: "dim", text: status.error }));
+    if (status.terminal_restart_required) content.append(el("p", { text: "请先关闭该项目的 OpenCode 终端，准备完成后重新打开。" }));
+    const details = el("details", { class: "wsp-openspec-details" }, el("summary", { text: "版本与工作流详情" }),
+      el("p", { text: `内置版本：${status.bundled_version || "不可用"} · 项目版本：${status.version || "尚未接入"}` }),
+      el("div", { class: "wsp-openspec-commands" }, ...Object.keys(status.workflows || {}).map(name => el("code", { text: `/${name}` }))));
+    for (const path of status.conflicts || []) details.append(el("p", { class: "mono", text: path }));
+    content.append(details);
+    const actions = el("div", { class: "wsp-modal-actions" });
+    actions.append(el("button", { class: "wsp-mini", type: "button", text: "刷新", disabled: busy, onclick: load }));
+    if (status.enabled) actions.append(el("button", { class: "wsp-mini", type: "button", text: "停用", disabled: busy, onclick: () => change("disable") }));
+    const action = status.enabled ? "update" : "enable";
+    actions.append(el("button", { class: "wsp-mini primary", type: "button", disabled: busy || !status.available,
+      text: status.enabled ? "同步内置模板" : status.state === "detected" ? "接入到 Sona" : "启用 OpenSpec", onclick: () => change(action) }));
+    content.append(actions);
+  }
+  async function load() {
+    try {
+      const data = await api(`workspace/projects/${encodeURIComponent(project.id)}/openspec`, { silent: true });
+      if (!dialog.alive()) return;
+      status = data; errorLine.hidden = true; draw();
+    } catch (error) {
+      if (dialog.alive()) { errorLine.textContent = openSpecError(error); errorLine.hidden = false; }
+    }
+  }
+  async function change(action) {
+    if (busy) return;
+    busy = true; errorLine.hidden = true; draw();
+    try {
+      const data = await api(`workspace/projects/${encodeURIComponent(project.id)}/openspec/${action}`, { method: "POST", body: {}, silent: true });
+      if (!dialog.alive()) return;
+      status = data;
+      await onChanged?.();
+      if (dialog.alive()) toast(status.state === "ready" ? "OpenSpec 已就绪" : status.state === "disabled" ? "OpenSpec 已停用" : "项目已准备，请检查加载状态", status.state === "error" ? "error" : "ok");
+    } catch (error) {
+      if (dialog.alive()) { errorLine.textContent = openSpecError(error); errorLine.hidden = false; }
+    } finally { busy = false; draw(); }
+  }
+  draw();
+  await load();
+  if (autoEnable && dialog.alive() && status?.available && !status.enabled) await change("enable");
+}
+
+async function openOpenSpecProjects() {
+  const dialog = createSkillDialog("为项目启用 OpenSpec");
+  const content = el("div", null, el("p", { text: "正在读取项目…" }));
+  dialog.body.append(content);
+  try {
+    const data = await api("workspace/projects", { silent: true });
+    if (!dialog.alive()) return;
+    content.replaceChildren();
+    if (!data.items?.length) { content.append(el("p", { text: "请先在工作区添加项目，再通过项目菜单启用 OpenSpec。" })); return; }
+    for (const project of data.items) content.append(el("button", { class: "wsp-openspec-project wsp-mini", type: "button",
+      text: project.name, title: project.path, onclick: () => { dialog.close(); openProjectOpenSpec(project); } }));
+  } catch (error) { if (dialog.alive()) content.replaceChildren(el("p", { text: openSpecError(error) })); }
+}
+
 function createSkillDialog(title) {
   const previous = document.activeElement;
   const body = el("div", { class: "wsp-modal skill-dialog", role: "dialog", "aria-modal": "true", "aria-label": title });
@@ -90,6 +167,10 @@ function renderSkills(view) {
   view.replaceChildren(el("section", { class: "skills-page" },
     el("div", { class: "skill-page-head" },
       el("div", null, el("h1", { text: "技能" }), el("p", { text: "为 OpenCode 添加可复用的指令、脚本和参考资料。" })), add),
+    el("article", { class: "card skill-card wsp-openspec-card" },
+      el("div", { class: "skill-card-copy" }, el("div", { class: "skill-card-title" }, el("h2", { text: "OpenSpec" }), el("span", { class: "skill-state enabled", text: "内置" })),
+        el("p", { text: "12 个规范驱动工作流，支持提案、实现、验证和归档。为项目一键启用，无需单独安装。" })),
+      el("button", { class: "btn btn-primary", type: "button", text: "选择项目", onclick: openOpenSpecProjects })),
     errorLine, el("div", { class: "skill-toolbar" }, search, count,
       el("button", { class: "btn", type: "button", text: "刷新", onclick: () => load() })), list));
 

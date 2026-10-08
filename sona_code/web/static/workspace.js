@@ -1135,6 +1135,9 @@ function renderWorkspace(view) {
       const projectRow = el("div", { class: "wsp-project-row" }, heading,
         rowMenu([["重命名", () => openRenameProject(project)], ["打开目录", () => openProjectDirectory(project)],
           ["打开目录树", () => openProjectTree(project)],
+          ["OpenSpec", () => openProjectOpenSpec(project, async () => {
+            if (alive() && state.projectId === project.id) { await loadCommands(project.id); connectEvents(project.id); }
+          })],
           ["删除工作区", () => removeProject(project)]]),
         el("button", { class: "wsp-row-action wsp-row-plus", type: "button",
           title: `在 ${project.name} 中新建对话`, "aria-label": `在 ${project.name} 中新建对话`,
@@ -2613,7 +2616,7 @@ function renderWorkspace(view) {
     const request = ++commandLoadRequest;
     try {
       const [data, skills] = await Promise.all([
-        api(`workspace/projects/${encodeURIComponent(projectId)}/commands`, { silent: true }),
+        api(`workspace/projects/${encodeURIComponent(projectId)}/commands?agent=${encodeURIComponent(agentSelect.value || "build")}`, { silent: true }),
         api(`workspace/projects/${encodeURIComponent(projectId)}/skills?agent=${encodeURIComponent(agentSelect.value || "build")}`, { silent: true }),
       ]);
       if (alive() && state.projectId === projectId && request === commandLoadRequest) {
@@ -2738,14 +2741,15 @@ function renderWorkspace(view) {
     const query = commandPaletteOpen ? "" : draft.slice(1).toLocaleLowerCase();
     commandMenu.replaceChildren(el("div", { class: "wsp-command-heading", text: "命令 · ↑ ↓ 选择 · Enter 选中" }));
     const commands = [...builtInCommands, ...state.commands.filter((item) =>
-      !builtInCommands.some((builtIn) => builtIn.name === item.name))];
-    const matches = commands.filter((item) => item.name.toLocaleLowerCase().includes(query)).slice(0, 12);
+      !builtInCommands.some((builtIn) => builtIn.name === item.name) &&
+      !(item.source === "skill" && item.integration === "openspec" && state.commands.some(command => command.name !== item.name && command.skill_name === item.name)))];
+    const matches = commands.filter((item) => item.name.toLocaleLowerCase().includes(query));
     state.commandSelectedIndex = Math.max(0, Math.min(state.commandSelectedIndex, matches.length - 1));
     for (const [index, command] of matches.entries()) {
       commandMenu.append(el("button", { type: "button", role: "option", "aria-selected": String(index === state.commandSelectedIndex),
         class: `wsp-command-option${index === state.commandSelectedIndex ? " selected" : ""}`, onclick: () => selectCommand(command),
         onmouseenter: () => { state.commandSelectedIndex = index; updateCommandSelection(); } },
-      el("strong", { text: `/${command.name}` }), el("span", { text: command.description || "Sona Code 命令" })));
+      el("strong", { text: `/${command.name}`, title: `/${command.name}` }), el("span", { text: command.description || "Sona Code 命令", title: command.description || "Sona Code 命令" })));
     }
     commandMenu.hidden = commandMenu.children.length === 1;
     view.querySelector("#wsp-attach").setAttribute("aria-expanded", String(!commandMenu.hidden && commandPaletteOpen));
@@ -3333,10 +3337,12 @@ function renderWorkspace(view) {
       } catch (error) { errorLine.textContent = detail(error); errorLine.classList.remove("hidden"); }
     } });
     if (!window.__TAURI__?.dialog?.open) choose.hidden = true;
+    const enableOpenSpec = el("input", { type: "checkbox" });
     const mask = el("div", { class: "wsp-modal-mask" },
       el("div", { class: "wsp-modal", role: "dialog", "aria-modal": "true", "aria-label": "新建项目" }, el("h2", { text: "新建项目" }),
         el("p", { text: "输入现有目录的绝对路径，或选择一个目录作为 Sona Code 工作区。" }),
-        el("div", { class: "wsp-modal-row" }, pathInput, choose), directoryBrowser, errorLine,
+        el("div", { class: "wsp-modal-row" }, pathInput, choose), directoryBrowser,
+        el("label", { class: "wsp-openspec-option" }, enableOpenSpec, el("span", { text: "同时启用 OpenSpec 规范驱动工作流" })), errorLine,
         el("div", { class: "wsp-modal-actions" },
           el("button", { class: "wsp-mini", type: "button", text: "取消", onclick: () => mask.remove() }),
           el("button", { class: "wsp-mini primary", type: "button", text: "创建项目", onclick: async () => {
@@ -3350,6 +3356,9 @@ function renderWorkspace(view) {
               state.collapsedProjects.delete(project.id);
               selectProject(project.id);
               loadSessions(project);
+              if (enableOpenSpec.checked) openProjectOpenSpec(project, async () => {
+                if (alive() && state.projectId === project.id) { await loadCommands(project.id); connectEvents(project.id); }
+              }, true);
             } catch (error) { errorLine.textContent = detail(error); errorLine.classList.remove("hidden"); }
           } }))));
     mask.addEventListener("click", (event) => { if (event.target === mask) mask.remove(); });

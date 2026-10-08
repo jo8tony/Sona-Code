@@ -234,8 +234,10 @@ class SkillStore:
     def record_use(self, project: str, session: str, message_id: str, skill: dict, arguments: str) -> None:
         with self._lock:
             path = self._uses_path(project, session)
-            uses = json.loads(path.read_text()) if path.exists() else {}
+            uses = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
             uses[message_id] = {"name": skill["name"], "path": skill["path"], "arguments": arguments}
+            if skill.get("kind"):
+                uses[message_id]["kind"] = skill["kind"]
             write_global_config(path, json.dumps(uses, ensure_ascii=False))
 
     def _uses_path(self, project: str, session: str) -> Path:
@@ -245,7 +247,7 @@ class SkillStore:
     def annotate_messages(self, project: str, session: str, messages: list) -> list:
         with self._lock:
             path = self._uses_path(project, session)
-            uses = json.loads(path.read_text()) if path.exists() else {}
+            uses = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
             for message in messages:
                 info = message.get("info", {})
                 if info.get("role") == "user" and info.get("id") in uses:

@@ -15,6 +15,9 @@
   },
   "bundle": {
     "active": true,
+    "resources": {
+      "../build/openspec/": "tools/openspec/"
+    },
     "targets": ["app", "dmg"],
     "icon": [
       "icons/32x32.png",
@@ -30,7 +33,7 @@
     "shortDescription": "Sona Code 大模型 API 代理与记录工具",
     "longDescription": "透明转发并记录 LLM API 请求和响应，提供轨迹分析与本地终端。",
     "macOS": {
-      "minimumSystemVersion": "10.15",
+      "minimumSystemVersion": "13.0",
       "signingIdentity": "-",
       "hardenedRuntime": true,
       "entitlements": "entitlements.plist"

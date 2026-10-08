@@ -61,7 +61,7 @@ async def _opencode(
     try:
         runtime = request.app.state.runtime
         if method == "POST" and endpoint.endswith(("/prompt_async", "/command", "/shell", "/summarize")):
-            async with runtime.workspace.task_dispatch():
+            async with runtime.workspace.task_dispatch(project):
                 body = dict(body or {})
                 selected = body.get("model")
                 provider_id, model_id = None, None
@@ -465,13 +465,26 @@ async def project_agents(project_id: str, request: Request):
 
 
 @router.get("/workspace/projects/{project_id}/commands")
-async def project_commands(project_id: str, request: Request):
+async def project_commands(project_id: str, request: Request, agent: str | None = None):
     path = _project_path(request, project_id)
     commands = await _opencode(request, path, "GET", "/command")
     store = request.app.state.runtime.skills
     installed = await asyncio.to_thread(store.list)
     disabled = {item["name"] for item in installed["items"] if not item["enabled"]}
-    return [item for item in commands if item.get("source") != "skill" or item.get("name") not in disabled]
+    openspec = request.app.state.runtime.openspec
+    record = await asyncio.to_thread(openspec.record, path)
+    agents = await _opencode(request, path, "GET", "/agent") if record else []
+    result = []
+    for item in commands:
+        if item.get("source") == "skill" and item.get("name") in disabled:
+            continue
+        workflow = openspec.workflow(path, item.get("name", "")) if record else None
+        if workflow:
+            if not record["enabled"] or workflow in disabled or not _agent_skill_allowed(agents, workflow, agent):
+                continue
+            item = {**item, "integration": "openspec", "skill_name": workflow}
+        result.append(item)
+    return result
 
 
 @router.get("/workspace/projects/{project_id}/files")
@@ -659,8 +672,8 @@ class CommandBody(BaseModel):
 
 @router.post("/workspace/projects/{project_id}/sessions/{session_id}/command")
 async def run_command(project_id: str, session_id: str, body: CommandBody, request: Request):
-    async with request.app.state.runtime.workspace.task_dispatch():
-        path = _project_path(request, project_id)
+    path = _project_path(request, project_id)
+    async with request.app.state.runtime.workspace.task_dispatch(path):
         payload = await _prepare_command(path, session_id, body, request, record=True)
         return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/command", payload)
 
@@ -673,8 +686,30 @@ async def _prepare_command(
     managed = next((item for item in installed["items"]
                     if item["name"] == body.command and not item.get("conflict")), None)
     catalog = None
-    if managed is None:
+    selected_workflow = None
+    openspec = request.app.state.runtime.openspec
+    workflow = await asyncio.to_thread(openspec.workflow, path, body.command)
+    if workflow:
+        status = await asyncio.to_thread(openspec.status, path)
+        if not status["enabled"] or status["state"] != "prepared":
+            raise HTTPException(409, "OpenSpec 已停用、需要更新或存在文件冲突，请先在项目中检查 OpenSpec")
+        if request.app.state.runtime.skills.permission(workflow) == "deny" or not await _agent_allows_skill(request, path, workflow, body.agent):
+            raise HTTPException(409, "当前技能权限或 Agent 禁止使用该 OpenSpec 工作流")
         catalog = await _native_skill_catalog(request, path)
+        commands, native_skills = catalog
+        skill = next((item for item in native_skills if item.get("name") == workflow), {})
+        location = skill.get("location", "")
+        expected_location = Path(path) / ".opencode/skills" / workflow / "SKILL.md"
+        if (not location or os.path.normcase(str(Path(location).resolve())) != os.path.normcase(str(expected_location.resolve()))):
+            raise HTTPException(409, "OpenCode 未加载当前项目的 OpenSpec 技能，请检查同名技能")
+        if body.command != workflow:
+            command = next((item for item in commands if item.get("name") == body.command), {})
+            expected = await asyncio.to_thread(openspec.bundle.command_template, body.command)
+            if str(command.get("template", "")).strip() != expected:
+                raise HTTPException(409, "OpenCode 未加载预期的 OpenSpec 工作流，请检查同名命令或技能")
+            selected_workflow = {"name": body.command, "path": str(Path(path) / ".opencode/commands"), "kind": "workflow"}
+    if managed is None:
+        catalog = catalog or await _native_skill_catalog(request, path)
         managed = next((item for item in _native_skill_items(catalog) if item["name"] == body.command), None)
         if managed:
             managed["enabled"] = await asyncio.to_thread(request.app.state.runtime.skills.permission, body.command) != "deny"
@@ -688,11 +723,12 @@ async def _prepare_command(
         if not await _agent_allows_skill(request, path, body.command, body.agent):
             raise HTTPException(409, "当前 Agent 禁止使用该技能，请切换 Agent 或修改权限")
     payload: dict = {"command": body.command, "arguments": body.arguments}
-    if managed and record:
+    used = selected_workflow or managed
+    if used and record:
         message_id = message_id or "msg_" + format(int(time.time() * 1000) << 12, "012x") + secrets.token_hex(7)
         payload["messageID"] = message_id
         await asyncio.to_thread(request.app.state.runtime.skills.record_use,
-                                path, session_id, message_id, managed, body.arguments)
+                                path, session_id, message_id, used, body.arguments)
     model = _model_choice(body.provider_id, body.model_id, request, body.variant)
     if model:
         payload["model"] = f"{model['providerID']}/{model['modelID']}"
@@ -728,7 +764,7 @@ async def _queue_payload(project_id: str, session_id: str, body: QueuedMessageBo
         parsed = (PromptBody if body.kind == "prompt" else CommandBody).model_validate(body.payload)
     except ValidationError as exc:
         raise HTTPException(422, "排队消息格式无效") from exc
-    async with request.app.state.runtime.workspace.task_dispatch():
+    async with request.app.state.runtime.workspace.task_dispatch(path):
         if body.kind == "prompt":
             prepared = _prepare_prompt(path, parsed, request)
         else:
@@ -788,8 +824,8 @@ def configure_workspace_queue(app: FastAPI) -> None:
         return statuses, messages
 
     async def dispatch(entry: dict, item: dict) -> object:
-        async with app.state.runtime.workspace.task_dispatch():
-            path = _project_path(request, entry["project_id"])
+        path = _project_path(request, entry["project_id"])
+        async with app.state.runtime.workspace.task_dispatch(path):
             message_id = item.get("message_id", item["id"])
             if item["kind"] == "prompt":
                 payload = _prepare_prompt(path, PromptBody.model_validate(item["payload"]), request)
@@ -866,6 +902,9 @@ async def project_skills(project_id: str, request: Request, agent: str | None = 
     installed_names = {item["name"] for item in installed["items"]}
     extra = [item for item in _native_skill_items(catalog) if item["name"] not in installed_names]
     for item in extra:
+        openspec = request.app.state.runtime.openspec
+        if openspec.workflow(path, item["name"]) and not openspec.record(path)["enabled"]:
+            continue
         if await asyncio.to_thread(request.app.state.runtime.skills.permission, item["name"]) != "deny":
             enabled.append(item)
             names.add(item["name"])

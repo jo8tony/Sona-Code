@@ -620,6 +620,15 @@
 @media (prefers-reduced-motion: reduce) { .wsp-status-spinning { animation-duration: 2.4s; } }
 .wsp-picker-head > strong { flex: 1; }
 .wsp-picker-head button:disabled { opacity: .5; cursor: wait; }
+.wsp-openspec-option { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; }
+.wsp-openspec-option input { width: auto; margin: 0; }
+.wsp-openspec-status { font-weight: 650; color: var(--accent); }
+.wsp-openspec-details { margin: 14px 0; font-size: 13px; }
+.wsp-openspec-details summary { cursor: pointer; color: var(--text-dim); }
+.wsp-openspec-commands { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.wsp-openspec-commands code { color: var(--accent); white-space: nowrap; }
+.wsp-openspec-error { white-space: pre-wrap; overflow-wrap: anywhere; }
+.wsp-openspec-project { display: block; width: 100%; text-align: left; margin-top: 8px; }
 
 /* Keep controls outside the bubble and reserve their space on hover. */
 .wsp-change-summary { display: inline-flex; align-items: center; gap: 10px; max-width: 100%; margin-top: 16px; padding: 9px 12px; border: 1px solid #e5e9ef; border-radius: 9px; background: #fafbfd; color: var(--text-dim); font-size: 13.5px; cursor: pointer; transition: border-color .15s, background .15s; }

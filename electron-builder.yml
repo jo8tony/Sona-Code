@@ -9,6 +9,8 @@ files:
   - desktop/index.html
   - package.json
 extraResources:
+  - from: build/openspec
+    to: tools/openspec
   - from: src-tauri/icons/icon.ico
     to: icon.ico
   - from: src-tauri/binaries/sona-code-sidecar-x86_64-pc-windows-msvc.exe

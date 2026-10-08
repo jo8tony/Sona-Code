@@ -6,6 +6,7 @@
       "binaries/opencode"
     ],
     "resources": {
+      "../build/openspec/": "tools/openspec/",
       "../third_party/opencode/LICENSE": "licenses/OpenCode-LICENSE.txt",
       "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
     },

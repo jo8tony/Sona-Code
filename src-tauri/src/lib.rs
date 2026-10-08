@@ -227,6 +227,11 @@ pub fn run() {
                 SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
             );
             let mut sidecar = app.shell().sidecar("sona-code-sidecar")?;
+            let mut bundled_openspec = app.path().resource_dir()?.join("tools/openspec");
+            if cfg!(debug_assertions) && !bundled_openspec.exists() {
+                bundled_openspec = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../build/openspec");
+            }
             for key in [
                 "XDG_CONFIG_HOME",
                 "XDG_DATA_HOME",
@@ -242,6 +247,7 @@ pub fn run() {
                 .env("PYTHONIOENCODING", "utf-8")
                 .env("SONACODE_DESKTOP_INSTANCE_ID", &instance_id)
                 .env("SONACODE_BUNDLED_OPENCODE", bundled_opencode)
+                .env("SONACODE_BUNDLED_OPENSPEC", bundled_openspec)
                 .env("XDG_CONFIG_HOME", &config_dir)
                 .env("XDG_DATA_HOME", &data_dir)
                 .env("XDG_CACHE_HOME", &cache_dir)

@@ -58,8 +58,17 @@ class WorkspaceManager:
         self._lock = asyncio.Lock()
         self._skill_changes = asyncio.Lock()
         self._task_requests = 0
+        self._project_requests: dict[str | None, int] = {}
+        self._project_changes: dict[str, asyncio.Lock] = {}
+        self._changing: set[str] = set()
+        self.environment = None
 
     async def ensure(self, project: str, config: AppConfig) -> OpenCodeServer:
+        path = str(Path(project).expanduser().resolve())
+        async with self._project_changes.setdefault(path, asyncio.Lock()):
+            return await self._ensure(path, config)
+
+    async def _ensure(self, project: str, config: AppConfig) -> OpenCodeServer:
         path = str(Path(project).expanduser().resolve())
         if not Path(path).is_dir():
             raise WorkspaceError(f"项目目录不存在：{path}", 404)
@@ -92,6 +101,8 @@ class WorkspaceManager:
                 raise WorkspaceError("OpenCode 程序路径无效", 503)
 
             env = await asyncio.to_thread(_build_env, config, "opencode")
+            if self.environment is not None:
+                env = await asyncio.to_thread(self.environment, path, "opencode", env)
             password = secrets.token_urlsafe(32)
             env["OPENCODE_SERVER_USERNAME"] = "sona-code"
             env["OPENCODE_SERVER_PASSWORD"] = password
@@ -144,19 +155,55 @@ class WorkspaceManager:
     ) -> object:
         # Exclude skill changes during task dispatch while keeping project tasks parallel.
         if method == "POST" and endpoint.endswith(("/prompt_async", "/command", "/shell", "/summarize")):
-            async with self.task_dispatch():
+            async with self.task_dispatch(project):
                 return await self._request(project, config, method, endpoint, body=body, params=params)
         return await self._request(project, config, method, endpoint, body=body, params=params)
 
     @asynccontextmanager
-    async def task_dispatch(self) -> AsyncIterator[None]:
+    async def task_dispatch(self, project: str | None = None) -> AsyncIterator[None]:
         """Protect preflight validation and dispatch from concurrent skill mutations."""
+        path = str(Path(project).expanduser().resolve()) if project is not None else None
         async with self._skill_changes:
+            if path in self._changing:
+                raise WorkspaceError("当前项目正在准备 OpenSpec，请完成后重试", 409)
             self._task_requests += 1
+            self._project_requests[path] = self._project_requests.get(path, 0) + 1
         try:
             yield
         finally:
             self._task_requests -= 1
+            self._project_requests[path] -= 1
+
+    async def update_project_configuration(self, project: str, operation: Callable[[], Awaitable[dict]]) -> dict:
+        """Protect one project's files/caches without interrupting other projects."""
+        path = str(Path(project).expanduser().resolve())
+        async with self._project_changes.setdefault(path, asyncio.Lock()):
+            async with self._skill_changes:
+                if self._project_requests.get(path, 0) or self._project_requests.get(None, 0):
+                    raise WorkspaceError("当前项目有任务正在派发，请任务结束后再准备 OpenSpec", 409)
+                self._changing.add(path)
+            try:
+                pending = self._starting.get(path)
+                if pending:
+                    await asyncio.shield(pending)
+                server = self._servers.get(path)
+                if server and server.process.poll() is None:
+                    try:
+                        response = await server.client.get("/session/status", params={"directory": path})
+                        response.raise_for_status()
+                        statuses = response.json()
+                    except (httpx.HTTPError, ValueError) as exc:
+                        raise WorkspaceError("无法确认当前项目任务状态，请稍后重试", 503) from exc
+                    if not isinstance(statuses, dict) or any(not isinstance(status, dict) or status.get("type") != "idle" for status in statuses.values()):
+                        raise WorkspaceError("当前项目有任务正在运行，请任务结束后再准备 OpenSpec", 409)
+                result = await operation()
+                if server:
+                    self._servers.pop(path, None)
+                    await server.client.aclose()
+                    await self._stop_process(server.process)
+                return result
+            finally:
+                self._changing.discard(path)
 
     async def running_statuses(self) -> dict[str, dict]:
         """Read existing servers in parallel without starting unopened projects."""
@@ -219,7 +266,7 @@ class WorkspaceManager:
     async def update_configuration(self, operation: Callable[[], Awaitable[dict]], noun: str = "模型配置") -> dict:
         """Serialize config changes with task preflight; recycle idle native caches."""
         async with self._skill_changes, self._lock:
-            if self._task_requests:
+            if self._task_requests or self._changing:
                 raise WorkspaceError(f"工作区有任务正在运行，请任务结束后再修改{noun}", 409)
             await self._wait_for_starts()
             active = [(path, server) for path, server in self._servers.items()

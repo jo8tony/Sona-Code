@@ -41,3 +41,8 @@ Write-Host "sidecar: $Destination"
 if ($LASTEXITCODE -ne 0) {
     throw "Preparing bundled OpenCode failed with exit code $LASTEXITCODE"
 }
+
+& $BuildPython (Join-Path $PSScriptRoot "prepare-openspec.py")
+if ($LASTEXITCODE -ne 0) {
+    throw "Preparing bundled OpenSpec failed with exit code $LASTEXITCODE"
+}

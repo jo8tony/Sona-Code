@@ -17,6 +17,9 @@ from sona_code.admin.api import router as admin_router
 from sona_code.admin.skills import SkillStore
 from sona_code.admin.model_routes import router as models_router
 from sona_code.admin.skill_routes import router as skills_router
+from sona_code.admin.openspec_routes import router as openspec_router
+from sona_code.openspec.projects import OpenSpecProjects
+from sona_code.openspec.bundle import OpenSpecError
 from sona_code.config import CONFIG_PATH, AppConfig, resolved_records_dir
 from sona_code.proxy.client import UpstreamClient
 from sona_code.proxy.handler import proxy_endpoint
@@ -83,6 +86,9 @@ class RuntimeState:
         self.workspace = WorkspaceManager(self.provider_config)
         self.workspace_queue = WorkspaceQueue(config_path)
         self.skills = SkillStore()
+        self.openspec = OpenSpecProjects(config_path)
+        self.workspace.environment = self.openspec.environment
+        self.terminal.environment = self.openspec.environment
 
     async def refresh_sona_catalog(self) -> None:
         async with self.sona_refresh_lock:
@@ -202,6 +208,11 @@ def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
         return result
 
     # 管理 API 路由集（ping 之后、兜底代理路由之前）
+    @app.exception_handler(OpenSpecError)
+    async def openspec_error(request, exc):
+        detail = {"message": exc.detail, "conflicts": exc.conflicts} if exc.conflicts else exc.detail
+        return JSONResponse(status_code=exc.status, content={"detail": detail})
+
     @app.exception_handler(RequestValidationError)
     async def safe_validation_error(request, exc):
         # Pydantic includes submitted input by default, including API keys.
@@ -211,6 +222,7 @@ def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
     app.include_router(admin_router, prefix=f"{cfg.server.admin_prefix}/api")
     app.include_router(models_router, prefix=f"{cfg.server.admin_prefix}/api")
     app.include_router(skills_router, prefix=f"{cfg.server.admin_prefix}/api")
+    app.include_router(openspec_router, prefix=f"{cfg.server.admin_prefix}/api")
     app.include_router(sona_router, prefix=f"{cfg.server.admin_prefix}/api")
 
     # 终端 API（REST + WebSocket，同样先于兜底代理路由注册）
