@@ -15,6 +15,7 @@ def test_workspace_submit_preserves_reasoning_variants_for_prompts_and_commands(
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
 const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
 const state = {projectId: "project", sessionId: "session", attachments: [], commands: [{name: "review"}],
+  messages: [{info: {id: "previous-user", role: "user"}}],
   check: {found: true}, chosenModels: new Map(), chosenVariants: new Map(),
   providers: [{id: "provider", models: {
     reasoning: {name: "Reasoning", variants: {high: {}, none: {}, max: {}}},
@@ -25,7 +26,8 @@ const variantTrigger = {dataset: {}};
 const composer = {value: "", fileReferences: [], snapshot: () => ({text: composer.value})};
 let submit, captured;
 const noop = () => {};
-const context = vm.createContext({state, variantSelect, variantTrigger, composer,
+const context = vm.createContext({state, variantSelect, variantTrigger, composer, creatingSessions: new Set(),
+  roundClocks: new Map(), renderRoundClock: noop,
   variantLabel: {}, variantPicker: {hidden: true}, agentSelect: {value: "build"},
   modelButton: {replaceChildren: noop}, el: (tag, props) => props,
   closeVariantPicker: noop, renderVariantPicker: noop,
@@ -38,7 +40,7 @@ const context = vm.createContext({state, variantSelect, variantTrigger, composer
   saveDraft: noop, renderHeader: noop, hideAutocomplete: noop, applyQueue: noop,
   ensureSessionForSend: async () => ({projectId: state.projectId, sessionId: state.sessionId}),
   sessionPath: (project, session) => `workspace/projects/${project}/sessions/${session}`,
-  api: async (path, options) => {captured = {path, ...options}; return {};},
+  api: async (path, options) => {captured = {path, ...options}; return {items: [{id: "admission"}]};},
   alive: () => false, detail: error => error.message,
   toast: message => {throw new Error(message);}
 });
@@ -66,10 +68,17 @@ vm.runInContext(source.slice(start, end), context);
       if (modelID === "plain") assert.equal(state.chosenVariants.get(state.projectId), "");
       composer.value = text;
       captured = undefined;
+      const previousClock = context.roundClocks.get("project:session");
+      const before = Date.now();
       let prevented = false;
       await submit({preventDefault: () => {prevented = true;}});
       assert(prevented);
       assert(captured);
+      const clock = context.roundClocks.get("project:session");
+      assert.notEqual(clock, previousClock);
+      assert(clock.startedAt >= before && clock.startedAt <= Date.now());
+      assert.equal(clock.baselineId, "previous-user");
+      assert.equal(clock.queueId, "admission");
       assert.equal(captured.path, "workspace/projects/project/sessions/session/queue");
       assert.equal(captured.method, "POST");
       const {kind, payload} = captured.body;

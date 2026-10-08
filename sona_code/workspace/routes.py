@@ -195,6 +195,41 @@ def _project_entry(request: Request, project_id: str, relative: str) -> tuple[Pa
     return root, entry
 
 
+_TREE_EXCLUDED = {"node_modules", "__pycache__", "build", "dist", "target"}
+
+
+@router.get("/workspace/projects/{project_id}/file-index")
+def project_file_index(project_id: str, request: Request) -> dict:
+    """Index visible project files without starting a native server or following links."""
+    root, _ = _project_entry(request, project_id, "")
+    items: list[str] = []
+    pending = [root]
+    visited = 0
+    deadline = time.monotonic() + 3
+    while pending:
+        directory = pending.pop()
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    visited += 1
+                    if visited > 50000 or len(items) >= 20000 or time.monotonic() > deadline:
+                        return {"items": sorted(items), "truncated": True}
+                    if entry.name.startswith(".") or entry.name in _TREE_EXCLUDED or entry.is_symlink():
+                        continue
+                    try:
+                        path = Path(entry.path)
+                        path.resolve(strict=True).relative_to(root)
+                        if entry.is_dir(follow_symlinks=False):
+                            pending.append(path)
+                        elif entry.is_file(follow_symlinks=False):
+                            items.append(path.relative_to(root).as_posix())
+                    except (OSError, ValueError):
+                        continue
+        except OSError:
+            continue
+    return {"items": sorted(items), "truncated": False}
+
+
 @router.get("/workspace/projects/{project_id}/tree")
 def project_tree(project_id: str, request: Request, path: str = Query(default="", max_length=2000)) -> dict:
     root, directory = _project_entry(request, project_id, path)
@@ -203,7 +238,7 @@ def project_tree(project_id: str, request: Request, path: str = Query(default=""
     items = []
     try:
         for entry in directory.iterdir():
-            if entry.name.startswith(".") or entry.name in {"node_modules", "__pycache__", "build", "dist", "target"}:
+            if entry.name.startswith(".") or entry.name in _TREE_EXCLUDED:
                 continue
             if entry.is_symlink():
                 continue

@@ -38,6 +38,38 @@ def test_tree_lists_project_entries_and_rejects_traversal(tmp_path, monkeypatch)
         assert opened == [(project / "src" / "page.html").as_uri()]
 
 
+def test_file_index_is_local_and_excludes_hidden_generated_and_linked_entries(tmp_path):
+    app = create_app(AppConfig(default_upstream="main", upstreams=[
+        UpstreamConfig(name="main", base_url="http://127.0.0.1:9001")
+    ]), config_path=str(tmp_path / "config.json"))
+    project = tmp_path / "project"
+    deep = project / "src" / "deep" / "views"
+    deep.mkdir(parents=True)
+    (deep / "页面.html").write_text("<h1>Hi</h1>", encoding="utf-8")
+    (project / "AGENTS.md").write_text("test", encoding="utf-8")
+    for name in (".secret", "node_modules", "build", "dist", "target", "__pycache__"):
+        (project / name).mkdir()
+        (project / name / "excluded.txt").write_text("excluded")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside")
+    try:
+        (project / "linked.txt").symlink_to(outside)
+    except OSError:
+        pass  # Windows ordinary users may not have symlink privileges.
+    app.state.runtime.terminal_projects.add(str(project), "opencode")
+
+    async def no_native_request(*args, **kwargs):
+        raise AssertionError("Indexing project files must not start OpenCode")
+
+    app.state.runtime.workspace.request = no_native_request
+    with TestClient(app) as client:
+        project_id = client.get("/__recorder/api/workspace/projects").json()["items"][0]["id"]
+        response = client.get(f"/__recorder/api/workspace/projects/{project_id}/file-index")
+        assert response.status_code == 200
+        assert response.json() == {"items": ["AGENTS.md", "src/deep/views/页面.html"], "truncated": False}
+        assert client.get("/__recorder/api/workspace/projects/unknown/file-index").status_code == 404
+
+
 def test_directory_reference_is_sent_as_context_text(tmp_path):
     config = AppConfig(
         upstreams=[UpstreamConfig(name="main", base_url="http://127.0.0.1:9001")],

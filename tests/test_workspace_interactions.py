@@ -14,6 +14,107 @@ def run_node(script):
     subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
 
 
+def test_fuzzy_file_search_and_verified_unambiguous_message_links():
+    run_node(r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+vm.runInThisContext(fs.readFileSync("sona_code/web/static/workspace.js", "utf8"));
+const files = ["src/deep/components/Page.html", "src/a/config.json", "src/b/config.json", "AGENTS.md", "docs/my notes.md"];
+assert.deepEqual(workspaceFuzzyFiles(files, "pght"), ["src/deep/components/Page.html"]);
+assert.equal(workspaceFuzzyFiles(files, "PAGE")[0], files[0]);
+assert.deepEqual(workspaceFuzzyFiles(files, "不存在"), []);
+const lookup = workspaceFileLookup(files);
+assert.equal(lookup.get("config.json"), null);
+assert.equal(lookup.get("Page.html"), files[0]);
+assert.equal(lookup.get("src/a/config.json"), files[1]);
+const text = "修改 Page.html、AGENTS.md，并查看 ./src/a/config.json:12。config.json 和 missing.py 不应链接。";
+assert.deepEqual(workspaceFileTextMatches(text, lookup).map(m => m.path), [files[0], files[3], files[1]]);
+assert.deepEqual(workspaceFileTextMatches("docs/my notes.md", lookup).map(m => m.path), [files[4]]);
+assert.deepEqual(workspaceFileTextMatches("C:\\repo\\src\\deep\\components\\Page.html", lookup, "C:/repo").map(m => m.path), [files[0]]);
+assert.deepEqual(workspaceFileTextMatches("https://site.test/Page.html /other/Page.html", lookup), []);
+assert.deepEqual(workspaceFileTextMatches("NotPage.html", lookup), []);
+assert.deepEqual(workspaceFileTextMatches("请修改Page.html文件", lookup).map(m => m.text), ["Page.html"]);
+''')
+
+
+def test_streaming_reasoning_preserves_details_text_node_and_user_scroll():
+    run_node(r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+vm.runInThisContext(fs.readFileSync("sona_code/web/static/workspace.js", "utf8"));
+global.el = (tag, props, ...children) => ({tag, ...props, children, textContent: props?.text || "", open: false,
+  firstChild: tag === "div" ? {data: ""} : null, scrollTop: 0, clientHeight: 140, scrollHeight: 500,
+  querySelector(selector) {return selector === "summary" ? this.children[0] : this.children[1];},
+  addEventListener(type, fn) {this.toggle = fn;}});
+const expanded = new Map();
+const node = workspaceReasoningNode(null, "reason", "first", expanded, true);
+node.open = true; node.toggle();
+const cached = {querySelectorAll: () => [node]};
+const body = node.children[1], textNode = body.firstChild;
+body.scrollTop = 50;
+assert.equal(workspaceReasoningNode(cached, "reason", "first\nsecond", expanded, true), node);
+assert.equal(node.open, true); assert.equal(body.firstChild, textNode);
+assert.equal(textNode.data, "first\nsecond"); assert.equal(body.scrollTop, 50);
+body.scrollTop = 360;
+workspaceReasoningNode(cached, "reason", "third", expanded, false);
+assert.equal(body.scrollTop, 500); assert.equal(node.children[0].textContent, "思考过程");
+node.open = false; node.toggle(); assert.equal(expanded.get("reason"), false);
+''')
+
+
+def test_new_session_opens_immediately_migrates_draft_and_respects_navigation():
+    run_node(r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
+vm.runInThisContext(source);
+const requests = [], selected = [], notices = [];
+global.creatingSessions = new Set(); global.conversationViews = new Map();
+global.pendingImages = new Map(); global.creationDraftDestinations = new Map();
+global.state = {projectId: "p", sessionId: "old", sessions: new Map(), sessionDetails: new Map(),
+  attachments: [], fileReferences: [], pendingImageBytes: 0, pendingImageCount: 0};
+let editor = "previous task", renders = 0;
+global.alive = () => true;
+global.saveDraft = () => workspaceWriteDraft(workspaceConversationKey(state.projectId, state.sessionId), {text: editor, attachments: [...state.attachments]});
+global.selectSession = (projectId, sessionId) => {saveDraft(); state.projectId = projectId; state.sessionId = sessionId; editor = ""; selected.push(sessionId);};
+global.applyLatestModel = global.persistWorkspaceSelection = global.refreshSelected = () => {};
+global.renderHeader = global.renderMain = global.renderSidebar = global.renderAttachments = () => {renders++;};
+global.input = {focus() {}};
+global.toast = msg => notices.push(msg); global.detail = error => error.message;
+global.api = () => new Promise((resolve, reject) => requests.push({resolve, reject}));
+vm.runInThisContext(source.slice(source.indexOf("  function migrateCreationDraft("), source.indexOf("  async function ensureSessionForSend(")));
+vm.runInThisContext(source.slice(source.indexOf("  async function addImageFiles("), source.indexOf("  function detail(")));
+let imageResolved; global.readImage = () => new Promise(resolve => {imageResolved = resolve;});
+(async () => {
+  const first = createSession("p"), placeholder = state.sessionId;
+  assert(creatingSessions.has(placeholder)); assert(renders > 0);
+  assert.equal(state.messagesLoaded, true); assert.equal(editor, "");
+  assert.equal(workspaceReadDraft(workspaceConversationKey("p", "old")).text, "previous task");
+  editor = "draft typed during native startup";
+  const image = addImageFiles([{name: "during-startup.png", type: "image/png", size: 5}]);
+  requests[0].resolve({id: "native-1"}); await first;
+  assert.equal(state.sessionId, "native-1"); assert.equal(editor, "draft typed during native startup");
+  assert.equal(selected.length, 1, "Native creation must not clear or refocus the editor");
+  assert.equal(workspaceReadDraft(workspaceConversationKey("p", "native-1")).text, editor);
+  assert.equal(pendingImages.get(workspaceConversationKey("p", "native-1")).count, 1);
+  imageResolved("data:image/png;base64,AAAA"); await image;
+  assert.equal(state.attachments[0].filename, "during-startup.png");
+  assert.equal(workspaceReadDraft(workspaceConversationKey("p", "native-1")).attachments.length, 1);
+  assert.equal(creationDraftDestinations.size, 0);
+  assert.equal(creatingSessions.size, 0);
+  const second = createSession("p"), pending = state.sessionId;
+  editor = "draft before leaving"; saveDraft();
+  state.projectId = "other"; state.sessionId = "other-session"; editor = "other draft";
+  requests[1].resolve({id: "native-2"}); await second;
+  assert.equal(state.projectId, "other"); assert.equal(state.sessionId, "other-session"); assert.equal(editor, "other draft");
+  assert.equal(workspaceReadDraft(workspaceConversationKey("p", "native-2")).text, "draft before leaving");
+  assert.equal(workspaceReadDraft(workspaceConversationKey("p", pending)), undefined);
+  const failed = createSession("p"); editor = "preserve failed creation draft";
+  requests[2].reject(Error("native unavailable")); await failed;
+  assert.equal(state.sessionId, null); assert.equal(editor, "preserve failed creation draft");
+  assert.equal(workspaceReadDraft(workspaceConversationKey("p", null)).text, editor);
+  assert.equal(creatingSessions.size, 0); assert.equal(notices.length, 1);
+})().catch(error => {console.error(error); process.exitCode = 1;});
+''')
+
+
 def test_question_refresh_preserves_live_input_and_custom_reply():
     run_node(r'''
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");

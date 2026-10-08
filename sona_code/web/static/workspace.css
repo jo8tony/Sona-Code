@@ -118,7 +118,11 @@
 .wsp-tool, .wsp-permission, .wsp-diff-file { overflow: hidden; margin: 11px 0; border: 1px solid var(--border); border-radius: 9px; background: #fff; }
 .wsp-tool-head, .wsp-diff-head { padding: 9px 12px; border-bottom: 1px solid var(--border); background: #fbfcfe; color: var(--text); font-size: 13px; font-weight: 700; }
 .wsp-tool-body { padding: 10px 12px; color: var(--text-dim); font: 12.5px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow-y: auto; }
-.wsp-reasoning { margin: 7px 0; padding: 9px 11px; border-left: 2px solid #c5d4ec; color: var(--text-dim); font-size: 13px; white-space: pre-wrap; }
+.wsp-reasoning { min-width: 0; max-width: 100%; margin: 7px 0; padding: 9px 11px; border-left: 2px solid #c5d4ec; color: var(--text-dim); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wsp-reasoning summary { cursor: pointer; white-space: normal; }
+.wsp-skill-content pre { margin: 12px 0 0; max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.wsp-reasoning-content { max-height: 280px; overflow-y: auto; scrollbar-gutter: stable; overflow-anchor: none; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wsp-live-reasoning[open] .wsp-reasoning-content { height: clamp(140px, 28vh, 280px); margin-top: 10px; }
 .wsp-permission { padding: 12px 14px; border-color: #f0dbb5; background: #fffbf3; }
 .wsp-permission strong { font-size: 13.5px; }
 .wsp-permission p { margin: 5px 0 10px; color: #78694e; font-size: 13px; overflow-wrap: anywhere; }
@@ -593,6 +597,7 @@
 /* Refined composer and status presentation. */
 .wsp-stats { display: flex; align-items: center; gap: 12px; }
 .wsp-stats-left { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.wsp-stat-round { display: inline-block; min-width: 108px; font-variant-numeric: tabular-nums; }
 .wsp-stat-context { flex: none; margin-left: auto; }
 .wsp-message.user .wsp-message-inner { padding: 9px 15px; line-height: 1.5; }
 .wsp-status { width: 27px; height: 27px; padding: 0; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 50%; background: #fff; color: var(--text-faint); }
@@ -698,29 +703,54 @@
 .wsp-input[contenteditable] { position: relative; box-sizing: border-box; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; }
 .wsp-input[data-empty="true"]::before { content: attr(data-placeholder); position: absolute; top: 13px; left: 15px; color: var(--text-faint); pointer-events: none; }
 
-.wsp:has(.wsp-tree:not([hidden])) { grid-template-columns: 292px 245px minmax(0, 1fr); }
+.wsp:has(.wsp-tree:not([hidden])) { grid-template-columns: 292px 280px minmax(0, 1fr); transition: none; }
+.wsp:has(.wsp-tree:not([hidden])).tree-right { grid-template-columns: 292px minmax(0, 1fr) 280px; }
+.wsp-tree { grid-column: 2; grid-row: 1; }
+.wsp:has(.wsp-tree:not([hidden])) .wsp-main { grid-column: 3; grid-row: 1; }
+.wsp.tree-right .wsp-tree { grid-column: 3; border-right: 0; border-left: 1px solid var(--border); }
+.wsp.tree-right:has(.wsp-tree:not([hidden])) .wsp-main { grid-column: 2; }
 .wsp-tree[hidden] { display: none; }
 .wsp-tree { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: #fbfcfe; }
 .wsp-tree-head { display: flex; align-items: center; gap: 4px; height: 52px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--border); }
 .wsp-tree-head strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .wsp-tree-head button { width: 26px; height: 26px; border: 0; border-radius: 5px; background: transparent; color: #718099; cursor: pointer; font-size: 20px; }
 .wsp-tree-head button:hover { background: #eaf0fb; }
-.wsp-tree-body { flex: 1; overflow: auto; padding: 7px 0; scrollbar-width: thin; }
-.wsp-tree-row { display: flex; align-items: center; gap: 5px; min-height: 27px; padding-right: 7px; color: #43526b; font-size: 13px; cursor: pointer; user-select: none; }
+.wsp-tree-search { display: flex; align-items: center; gap: 7px; margin: 10px 10px 4px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: var(--text-faint); }
+.wsp-tree-search input { width: 100%; min-width: 0; border: 0; outline: 0; font: 12px var(--sans); background: transparent; }
+.wsp-tree-search:focus-within { border-color: var(--accent); }
+.wsp-tree-position { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 12px 8px; color: var(--text-faint); font-size: 12px; }
+.wsp-tree-position select { max-width: 120px; padding: 3px 5px; border: 1px solid var(--border); border-radius: 5px; background: #fff; color: var(--text-dim); font: inherit; }
+.wsp-tree-trigger { display: grid; place-items: center; flex: none; width: 30px; height: 30px; padding: 5px; border: 0; border-radius: 6px; background: transparent; color: var(--text-dim); cursor: pointer; }
+.wsp-tree-trigger:hover, .wsp-tree-trigger[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); }
+.wsp-tree-trigger:disabled { opacity: .4; cursor: default; }
+.wsp-tree-body { flex: 1; min-height: 0; overflow: auto; padding: 7px 0; scrollbar-width: thin; }
+.wsp-tree-body > div { width: max-content; min-width: 100%; }
+.wsp-tree-row { display: flex; align-items: center; gap: 5px; width: max-content; min-width: 100%; box-sizing: border-box; min-height: 27px; padding-right: 14px; color: #43526b; font-size: 13px; cursor: pointer; user-select: none; }
 .wsp-tree-row:hover { background: #edf3fc; }
 .wsp-tree-row.selected { background: #e5efff; color: #245abb; }
 .wsp-tree-toggle { width: 13px; flex: none; text-align: center; color: #8796ac; font-size: 19px; }
 .wsp-tree-kind { display: grid; place-items: center; width: 17px; flex: none; color: #8b9cb7; }
-.wsp-tree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wsp-tree-browser { display: grid; place-items: center; width: 24px; height: 24px; flex: none; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #8b9cb7; cursor: pointer; }
-.wsp-tree-browser:hover { background: #d9e8ff; }
+.wsp-tree-name { flex: none; white-space: nowrap; }
+.wsp-tree-result .wsp-tree-name { padding: 5px 0; }
+.wsp-tree-result small { display: block; color: var(--text-faint); font-size: 11px; }
 .wsp-tree-empty { padding: 8px 13px; color: var(--text-faint); font-size: 13px; }
 .wsp-tree-menu { position: fixed; z-index: 80; min-width: 165px; padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: #fff; box-shadow: 0 10px 32px rgba(30,45,70,.17); }
 .wsp-tree-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px; border: 0; border-radius: 5px; background: transparent; color: var(--text); text-align: left; font-size: 13px; cursor: pointer; }
-.wsp.side-collapsed:has(.wsp-tree:not([hidden])) { grid-template-columns: 0 245px minmax(0, 1fr); }
+.wsp.side-collapsed:has(.wsp-tree:not([hidden])) { grid-template-columns: 0 280px minmax(0, 1fr); }
+.wsp.side-collapsed.tree-right:has(.wsp-tree:not([hidden])) { grid-template-columns: 0 minmax(0, 1fr) 280px; }
 .wsp-tree-menu button:hover { background: #f2f6ff; }
-@media (max-width: 1000px) { .wsp:has(.wsp-tree:not([hidden])) { grid-template-columns: 230px 210px minmax(0, 1fr); } .wsp.side-collapsed:has(.wsp-tree:not([hidden])) { grid-template-columns: 0 210px minmax(0, 1fr); } }
-@media (max-width: 700px) { .wsp:has(.wsp-tree:not([hidden])), .wsp.side-collapsed:has(.wsp-tree:not([hidden])) { grid-template-columns: minmax(0, 1fr); } .wsp-tree:not([hidden]) { position: absolute; z-index: 25; top: 60px; bottom: 0; left: 0; width: min(280px, 85vw); box-shadow: 8px 0 28px rgba(30,45,70,.12); } }
+@media (max-width: 1000px) {
+  .wsp:has(.wsp-tree:not([hidden])) { grid-template-columns: 230px 245px minmax(0, 1fr); }
+  .wsp.tree-right:has(.wsp-tree:not([hidden])) { grid-template-columns: 230px minmax(0, 1fr) 245px; }
+  .wsp.side-collapsed:has(.wsp-tree:not([hidden])) { grid-template-columns: 0 245px minmax(0, 1fr); }
+  .wsp.side-collapsed.tree-right:has(.wsp-tree:not([hidden])) { grid-template-columns: 0 minmax(0, 1fr) 245px; }
+}
+@media (max-width: 700px) {
+  .wsp:has(.wsp-tree:not([hidden])), .wsp.side-collapsed:has(.wsp-tree:not([hidden])), .wsp.tree-right:has(.wsp-tree:not([hidden])), .wsp.side-collapsed.tree-right:has(.wsp-tree:not([hidden])) { grid-template-columns: minmax(0, 1fr); }
+  .wsp:has(.wsp-tree:not([hidden])) .wsp-main { grid-column: 1; }
+  .wsp-tree:not([hidden]) { position: absolute; z-index: 25; top: 60px; bottom: 0; left: 0; width: min(320px, 85vw); box-shadow: 8px 0 28px rgba(30,45,70,.12); }
+  .wsp.tree-right .wsp-tree:not([hidden]) { left: auto; right: 0; grid-column: 1; }
+}
 .wsp-skill-error { padding: 0 16px 6px; color: #b84f4b; font-size: 14px; }
 .wsp-skill-error[hidden] { display: none; }
 .wsp-skill-mention, .wsp-file-mention { display: inline-flex; align-items: center; gap: 4px; color: #245abb; font-weight: 500; vertical-align: baseline; white-space: nowrap; }
@@ -730,7 +760,13 @@
 .wsp-skill-mention .wsp-skill-icon { width: 17px; height: 17px; align-self: center; }
 .wsp-file-icon { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.4; flex-shrink: 0; }
 .wsp-file-mention { max-width: 100%; }
-.wsp-file-mention > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.wsp-file-mention > span { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+button.wsp-file-mention { padding: 0; border: 0; border-radius: 3px; background: transparent; font: inherit; font-weight: 500; cursor: pointer; text-align: left; }
+button.wsp-file-mention:hover { background: var(--accent-soft); text-decoration: underline; }
+.wsp-input .wsp-file-mention { max-width: 100%; }
+.wsp-command-menu .wsp-file-option-path { display: flex; flex: 1; min-width: 0; max-width: 100%; align-items: center; overflow: hidden; }
+.wsp-command-menu .wsp-file-option .wsp-file-parent { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; color: var(--text-faint); font: inherit; }
+.wsp-command-menu .wsp-file-option .wsp-file-basename { flex: 0 0 auto; max-width: 100%; white-space: normal; overflow-wrap: anywhere; color: var(--accent); font: inherit; }
 .wsp-skill-message { white-space: pre-wrap; overflow-wrap: anywhere; }
 .wsp-skill-use { border-color: #d5e3ff; }
 .wsp-skill-use .wsp-tool-head { color: #245abb; }
@@ -829,7 +865,6 @@
 .wsp-tree-row { min-height: 31px; gap: 6px; }
 .wsp-tree-toggle { display: inline-grid; place-items: center; width: 15px; }
 .wsp-tree-toggle .wsp-icon { width: 14px; height: 14px; }
-.wsp-tree-browser { width: 26px; height: 26px; }
 .wsp-new { height: 42px; }
 .wsp-search-wrap { height: 40px; }
 .wsp-send { width: 38px; height: 38px; }

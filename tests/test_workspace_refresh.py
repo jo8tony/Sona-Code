@@ -7,6 +7,48 @@ from pathlib import Path
 import pytest
 
 
+def test_native_part_events_stream_and_survive_older_history_response():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for workspace refresh coverage")
+    script = r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
+const info = {id: "a", role: "assistant", sessionID: "s", parentID: "u"};
+const part = {id: "reason", messageID: "a", sessionID: "s", type: "reasoning", text: "first", time: {start: 1}};
+const requests = [], state = {projectId: "p", sessionId: "s", messages: [{info, parts: [part]}], tab: "chat", projectStatuses: new Map(), statuses: {}, sessionDetails: new Map()};
+let renders = 0;
+const context = vm.createContext({state, AbortController, selectedRefresh: null, creatingSessions: new Set(),
+  lastSelectedRefresh: 0, queueUpdateVersion: 0, statusVersions: new Map(), messageVersion: 0,
+  messageInfoVersions: new Map(), messagePartVersions: new Map(),
+  alive: () => true, sessionPath: () => "session", detail: e => e.message,
+  api(path) {return new Promise(resolve => requests.push({path, resolve}));},
+  scheduleSelectedRender() {renders++;}, renderHeader() {}, renderSidebar() {}, observeProjectStatuses() {},
+});
+vm.runInContext(source.slice(source.indexOf("  function applyMessageEvent("), source.indexOf("  function observeSessionStatus(")), context);
+vm.runInContext(source.slice(source.indexOf("  async function refreshSelected("), source.indexOf("  function saveConversationView(")), context);
+const event = (type, properties) => context.applyMessageEvent("p", {type, properties});
+const tick = () => new Promise(resolve => setImmediate(resolve));
+(async () => {
+  event("message.part.updated", {part: {...part, text: "first full"}, delta: " full"});
+  assert.equal(state.messages[0].parts[0].text, "first full", "Authoritative text must not double optional deltas");
+  const refresh = context.refreshSelected();
+  event("message.part.delta", {sessionID: "s", messageID: "a", partID: "reason", field: "text", delta: " streamed"});
+  event("message.part.delta", {sessionID: "other", messageID: "a", partID: "reason", field: "text", delta: " wrong"});
+  requests[0].resolve([{info, parts: [{...part, text: "older"}, {id: "new", type: "text", text: "fresh fetched response"}]}]);
+  await tick();
+  assert.equal(state.messages[0].parts[0].text, "first full streamed");
+  assert.equal(state.messages[0].parts[1].text, "fresh fetched response");
+  for (const request of requests.slice(1)) request.resolve([]);
+  await refresh;
+  assert(renders >= 3);
+  event("message.part.removed", {sessionID: "s", messageID: "a", partID: "reason"});
+  assert.equal(state.messages[0].parts.length, 1);
+})().catch(error => {console.error(error); process.exitCode = 1;});
+'''
+    subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
+
+
 def test_workspace_refresh_does_not_block_switches_or_discard_streamed_parts():
     node = shutil.which("node")
     if not node:
@@ -20,7 +62,7 @@ const state = {projectId: "p", sessionId: "a", tab: "chat", messages: [],
   questionDrafts: new Map(), questionPages: new Map(), questionErrors: new Map(), diffs: [], todos: [], children: []};
 const context = vm.createContext({state, AbortController, setTimeout, clearTimeout,
   selectedRefresh: null, refreshTimer: null, renderTimer: null, queueUpdateVersion: 0,
-  messageVersion: 0, lastSelectedRefresh: 0, messageInfoVersions: new Map(), statusVersions: new Map(), conversationViews: new Map(),
+  messageVersion: 0, lastSelectedRefresh: 0, messageInfoVersions: new Map(), messagePartVersions: new Map(), creatingSessions: new Set(), statusVersions: new Map(), conversationViews: new Map(),
   alive: () => true, sessionPath: (p,s) => `${p}/${s}`, detail: e => e.message,
   api(path, options) { return new Promise((resolve, reject) => requests.push({path, options, resolve, reject})); },
   renderMain() {}, renderSidebar() {}, renderHeader() {},

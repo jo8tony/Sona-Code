@@ -24,6 +24,48 @@ function workspaceMoveItem(items, sourceId, targetId, after) {
 function workspaceConversationKey(projectId, sessionId) {
   return JSON.stringify([projectId, sessionId || null]);
 }
+
+function workspaceRoundDuration(milliseconds) {
+  const seconds = Math.floor(Math.max(0, Number(milliseconds) || 0) / 1000);
+  return `${Math.floor(seconds / 3600)}:${Math.floor(seconds / 60) % 60}:${seconds % 60}`;
+}
+
+function workspaceRoundElapsed(messages, status, queue, clock, now = Date.now()) {
+  const users = messages.filter(message => message.info?.role === "user" &&
+    !message.parts?.some(part => part.type === "compaction"));
+  const latest = users.at(-1);
+  const queued = clock?.queueId ? queue?.items?.find(item => item.id === clock.queueId) : undefined;
+  if (queued?.message_id) clock.userId = queued.message_id;
+  if (queued && !clock.userId) return Math.max(0, now - clock.startedAt);
+  if (clock && !clock.userId && latest?.info.id !== clock.baselineId &&
+      Number(latest?.info.time?.created) >= clock.startedAt - 1000) clock.userId = latest.info.id;
+  let user = clock ? users.find(message => message.info.id === clock.userId) : latest;
+  if (clock?.userId && latest && user && latest.info.id !== user.info.id &&
+      Number(latest.info.time?.created) > Number(user.info.time?.created)) {
+    clock = null; user = latest;
+  }
+  const start = clock?.startedAt ?? Number(user?.info.time?.created);
+  if (!Number.isFinite(start)) return 0;
+  if (clock?.endedAt != null) return Math.max(0, clock.endedAt - start);
+  const busy = ["busy", "retry"].includes(status?.type);
+  if (busy && clock && user) clock.observedRunning = true;
+  const replies = user ? messages.filter(message => message.info?.role === "assistant" &&
+    message.info.parentID === user.info.id) : [];
+  const finalReply = replies.at(-1)?.info;
+  const completed = finalReply?.time?.completed != null || finalReply?.error ? replies.map(message =>
+    Number(message.info.time?.completed ?? (message.info.error ? message.info.time?.created : undefined)))
+    .filter(Number.isFinite) : [];
+  if (!busy && completed.length) {
+    const end = Math.max(...completed);
+    if (clock) clock.endedAt = end;
+    return Math.max(0, end - start);
+  }
+  if (clock && status?.type === "idle" && clock.observedRunning) {
+    clock.endedAt = now;
+    return Math.max(0, now - start);
+  }
+  return busy || clock ? Math.max(0, now - start) : 0;
+}
 function workspaceReadDraft(key) {
   if (!workspaceDrafts.has(key)) {
     try {
@@ -217,6 +259,85 @@ function workspaceSyncChildren(container, children) {
   while (container.childNodes.length > children.length) container.lastChild.remove();
 }
 
+function workspaceFuzzyFiles(paths, query, limit = 100) {
+  const needle = query.toLocaleLowerCase().replaceAll("\\", "/").replace(/\s+/g, "");
+  const score = path => {
+    const text = path.toLocaleLowerCase();
+    const name = text.slice(text.lastIndexOf("/") + 1);
+    if (name === needle) return 0;
+    if (name.startsWith(needle)) return 1;
+    if (name.includes(needle)) return 2;
+    if (text.includes(needle)) return 3;
+    let offset = 0;
+    for (const char of needle) { offset = text.indexOf(char, offset); if (offset < 0) return Infinity; offset++; }
+    return 4;
+  };
+  return paths.map(path => ({path, score: score(path)})).filter(item => Number.isFinite(item.score))
+    .sort((a, b) => a.score - b.score || a.path.length - b.path.length || a.path.localeCompare(b.path))
+    .slice(0, limit).map(item => item.path);
+}
+
+function workspaceFileLookup(paths) {
+  const lookup = new Map();
+  for (const path of paths) {
+    lookup.set(path, path);
+    const name = path.split("/").at(-1);
+    if (name !== path) lookup.set(name, lookup.has(name) && lookup.get(name) !== path ? null : path);
+  }
+  // Exact root paths always win over ambiguous basenames.
+  for (const path of paths) lookup.set(path, path);
+  return lookup;
+}
+
+function workspaceFileTextMatches(text, lookup, projectPath = "") {
+  const resolve = raw => lookup.get(workspaceRelativeFile(raw, projectPath).replace(/^\.\//, ""));
+  const full = resolve(text.trim());
+  if (full) return [{start: text.indexOf(text.trim()), text: text.trim(), path: full}];
+  const matches = [];
+  for (const match of text.matchAll(/[^\s<>"'`，。；：、!?()[\]{}*|]+/gu)) {
+    const token = match[0];
+    if (token.includes("://")) continue;
+    const value = token.replace(/[.,;:]+$/, "").replace(/(?::\d+(?::\d+)?|#L\d+(?:-L\d+)?)$/, "");
+    let path = resolve(value), start = 0, end = value.length;
+    // Chinese prose commonly touches a filename without spaces or Markdown.
+    if (!path && /\p{Script=Han}/u.test(value)) {
+      while (end && /\p{Script=Han}/u.test(value[end - 1])) end--;
+      for (; start < end; start++) {
+        if (start && !/\p{Script=Han}/u.test(value[start - 1])) break;
+        path = resolve(value.slice(start, end));
+        if (path) break;
+      }
+    }
+    if (path) matches.push({start: match.index + start, text: value.slice(start, end), path});
+  }
+  return matches;
+}
+
+// Reuse the native details element while new reasoning tokens arrive.
+function workspaceReasoningNode(cached, key, text, expanded, streaming) {
+  const previous = Array.from(cached?.querySelectorAll?.(".wsp-reasoning") || [])
+    .find(node => node.workspaceReasoningKey === key);
+  const node = previous || el("details", {class: "wsp-reasoning wsp-live-reasoning"},
+    el("summary", {text: "思考过程"}), el("div", {class: "wsp-reasoning-content", text: ""}));
+  if (!previous) {
+    node.workspaceReasoningKey = key;
+    node.open = !!expanded.get(key);
+    node.addEventListener("toggle", () => expanded.set(key, node.open));
+  }
+  const body = node.querySelector(".wsp-reasoning-content");
+  if (body && body.textContent !== text) {
+    const top = body.scrollTop;
+    const follow = body.scrollHeight - body.clientHeight - top <= 40;
+    // Keep the same text node, avoiding repeated details/layout resets.
+    if (body.firstChild) body.firstChild.data = text;
+    else body.textContent = text;
+    body.scrollTop = follow ? body.scrollHeight : top;
+  }
+  const summary = node.querySelector("summary");
+  if (summary) summary.textContent = streaming ? "思考过程 · 生成中" : "思考过程";
+  return node;
+}
+
 function renderWorkspace(view) {
   // The router keeps this page mounted across settings visits.
   const cleanups = [];
@@ -227,6 +348,11 @@ function renderWorkspace(view) {
   let checkLoading = null;
   let lastSelectedRefresh = 0;
   const sessionLoads = new Map();
+  const creatingSessions = new Set();
+  const roundClocks = new Map();
+  const projectFiles = new Map();
+  let fileIndexTimer = null;
+  addCleanup(() => { if (fileIndexTimer) clearTimeout(fileIndexTimer); });
   let events = null;
   let eventProjectId = null;
   let refreshTimer = null;
@@ -255,6 +381,7 @@ function renderWorkspace(view) {
   const sendingConversations = new Set();
   const pendingActions = new Map();
   const pendingImages = new Map();
+  const creationDraftDestinations = new Map();
   const statusVersions = new Map();
   const completionWatches = new Map();
   addCleanup(() => {
@@ -263,6 +390,7 @@ function renderWorkspace(view) {
   });
   let messageVersion = 0;
   const messageInfoVersions = new Map();
+  const messagePartVersions = new Map();
   const conversationViews = new Map();
   const dismissedTodoPanels = new Set();
   const todoPanelTurns = new Map();
@@ -281,7 +409,7 @@ function renderWorkspace(view) {
     queue: { items: [], paused: false, error: "" }, queueLoaded: false,
     chosenAgents: new Map(), chosenVariants: new Map(), providers: [], connectedProviders: new Set(), agents: [], commands: [], skills: [], modelLoadError: "", modelSource: "sona", sonaEnvironment: "prod", sonaConnected: null,
     collapsedProjects: new Set(), sessionLimits: new Map(), expandedTools: new Map(), actionError: "", compactingSessionId: null,
-    attachments: [], fileReferences: [], commandSelectedIndex: 0,
+    attachments: [], fileReferences: [], commandSelectedIndex: 0, fileIndexVersion: 0,
     get pendingImageCount() { return pendingImages.get(workspaceConversationKey(this.projectId, this.sessionId))?.count || 0; },
     get pendingImageBytes() { return pendingImages.get(workspaceConversationKey(this.projectId, this.sessionId))?.bytes || 0; },
   };
@@ -297,11 +425,11 @@ function renderWorkspace(view) {
         <div class="wsp-side-list"><div class="wsp-side-label"><span>项目与对话</span><span class="wsp-side-label-actions"><span id="wsp-project-count"></span></span></div><div id="wsp-projects"></div></div>
         <div class="wsp-side-bottom"><a class="wsp-settings" href="#/preferences" title="打开设置">${workspaceIcon("settings").outerHTML}<span>设置</span></a></div>
       </aside>
-      <aside class="wsp-tree" id="wsp-tree" aria-label="项目目录树" hidden><div class="wsp-tree-head"><strong id="wsp-tree-title">目录树</strong><button id="wsp-tree-refresh" type="button" title="刷新目录树" aria-label="刷新目录树">${workspaceIcon("refresh").outerHTML}</button><button id="wsp-tree-close" type="button" title="关闭目录树" aria-label="关闭目录树">${workspaceIcon("close").outerHTML}</button></div><div class="wsp-tree-body" id="wsp-tree-body" role="tree"></div></aside>
+      <aside class="wsp-tree" id="wsp-tree" aria-label="项目目录树" hidden><div class="wsp-tree-head"><strong id="wsp-tree-title">目录树</strong><button id="wsp-tree-refresh" type="button" title="刷新目录树" aria-label="刷新目录树">${workspaceIcon("refresh").outerHTML}</button><button id="wsp-tree-close" type="button" title="关闭目录树" aria-label="关闭目录树">${workspaceIcon("close").outerHTML}</button></div><label class="wsp-tree-search">${workspaceIcon("search").outerHTML}<input id="wsp-tree-search" type="search" placeholder="模糊搜索项目文件" aria-label="模糊搜索项目文件"></label><label class="wsp-tree-position">目录树位置<select id="wsp-tree-side" aria-label="目录树位置"><option value="left">对话左侧</option><option value="right">对话右侧</option></select></label><div class="wsp-tree-body" id="wsp-tree-body" role="tree"></div></aside>
       <div class="wsp-side-scrim" id="wsp-side-scrim"></div>
       <div class="wsp-main">
         <button class="wsp-todo-trigger" id="wsp-todo-trigger" type="button" aria-label="打开任务进度" aria-controls="wsp-todo-panel" aria-expanded="false" title="打开任务进度" hidden>${workspaceIcon("todo").outerHTML}<span>任务进度</span><small id="wsp-todo-trigger-count"></small></button>
-        <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏">${workspaceIcon("panelLeft").outerHTML}</button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden>${workspaceIcon("stop").outerHTML}</button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span></header>
+        <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏">${workspaceIcon("panelLeft").outerHTML}</button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden>${workspaceIcon("stop").outerHTML}</button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span><button class="wsp-tree-trigger" id="wsp-tree-trigger" type="button" title="打开项目目录树" aria-label="打开项目目录树" aria-controls="wsp-tree" aria-expanded="false">${workspaceIcon("tree").outerHTML}</button></header>
         <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动<span class="wsp-tab-count" id="wsp-change-count" aria-label="修改文件数量">0</span></button><button class="wsp-tab" type="button" data-wsp-tab="trajectory">轨迹</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button><button class="wsp-tab" type="button" data-wsp-tab="tasks">任务</button></nav>
         <aside class="wsp-todo-panel" id="wsp-todo-panel" aria-label="当前对话任务进度" hidden><div class="wsp-todo-panel-head"><span class="wsp-todo-panel-icon" aria-hidden="true">${workspaceIcon("todo").outerHTML}</span><div><strong>任务进度</strong><small>当前对话 · OpenCode</small></div><button class="wsp-todo-panel-close" id="wsp-todo-panel-close" type="button" aria-label="关闭任务进度" title="关闭任务进度">${workspaceIcon("close").outerHTML}</button></div><div class="wsp-todo-panel-summary"><span id="wsp-todo-summary"></span><strong id="wsp-todo-progress"></strong></div><div class="wsp-todo-progress-track"><span id="wsp-todo-progress-fill"></span></div><ol class="wsp-todo-panel-list" id="wsp-todo-panel-list"></ol><button class="wsp-todo-panel-link" id="wsp-todo-panel-link" type="button">查看任务页 ${workspaceIcon("open").outerHTML}</button></aside>
         <div class="wsp-scroll" id="wsp-scroll"><div class="wsp-content" id="wsp-content"></div></div>
@@ -324,17 +452,30 @@ function renderWorkspace(view) {
   const composerDock = view.querySelector(".wsp-composer-dock");
   composerDock.hidden = state.tab !== "chat";
   const composer = createWorkspaceComposer(input, skillMention, fileMention);
-  const browserPreviewFile = (path) => /\.(html?|svg|pdf|txt|xml|css|m?js|json|md|png|jpe?g|gif|webp)$/i.test(path);
-  async function openTreePath(path, mode) {
-    if (!state.projectId) return;
-    try {
-      await api("workspace/projects/" + encodeURIComponent(state.projectId) + "/entries/open?path=" +
-        encodeURIComponent(path) + "&mode=" + mode, { method: "POST", body: {}, silent: true });
-    } catch (error) { toast("打开路径失败：" + detail(error), "error"); }
+  async function loadProjectFiles(projectId, force = false) {
+    const cached = projectFiles.get(projectId);
+    if (cached && !force) return cached.promise;
+    const entry = {lookup: new Map(), promise: null};
+    entry.promise = api(`workspace/projects/${encodeURIComponent(projectId)}/file-index`, {silent: true})
+      .then(data => {
+        entry.lookup = workspaceFileLookup(data.items || []);
+        if (projectFiles.get(projectId) === entry && alive() && state.projectId === projectId) {
+          state.fileIndexVersion++; scheduleSelectedRender();
+        }
+        return data;
+      }).catch(error => { if (projectFiles.get(projectId) === entry) projectFiles.delete(projectId); throw error; });
+    projectFiles.set(projectId, entry);
+    return entry.promise;
   }
   const tree = createWorkspaceTree(view.querySelector("#wsp-tree"), {
     list: (projectId, path) => api("workspace/projects/" + encodeURIComponent(projectId) +
       "/tree?path=" + encodeURIComponent(path), { silent: true }),
+    search: async (projectId, query) => {
+      const data = await loadProjectFiles(projectId);
+      return {...data, items: workspaceFuzzyFiles(data.items || [], query)};
+    },
+    refresh: projectId => { if (projectId) void loadProjectFiles(projectId, true).catch(() => {}); },
+    visibility: visible => view.querySelector("#wsp-tree-trigger").setAttribute("aria-expanded", String(visible)),
     open: async (projectId, path, mode) => {
       try {
         await api("workspace/projects/" + encodeURIComponent(projectId) + "/entries/open?path=" +
@@ -345,6 +486,12 @@ function renderWorkspace(view) {
     error: (message) => toast(message, "error"),
   });
   addCleanup(() => tree.dispose());
+  view.querySelector("#wsp-tree-trigger").addEventListener("click", () => {
+    const project = activeProject();
+    if (!project) return;
+    if (tree.projectId === project.id) tree.close();
+    else openProjectTree(project);
+  });
   function openProjectTree(project) {
     if (state.projectId !== project.id) selectProject(project.id);
     tree.open(project);
@@ -748,6 +895,15 @@ function renderWorkspace(view) {
     const whole = Math.round(seconds);
     return `${Math.floor(whole / 60)} 分 ${whole % 60} 秒`;
   }
+  function roundDurationText() {
+    const clock = roundClocks.get(workspaceConversationKey(state.projectId, state.sessionId));
+    return "本轮耗时 " + workspaceRoundDuration(workspaceRoundElapsed(state.messages,
+      state.statuses?.[state.sessionId], state.queue, clock));
+  }
+  function renderRoundClock() {
+    const timer = statsLine.querySelector(".wsp-stat-round");
+    if (timer) timer.textContent = roundDurationText();
+  }
   function renderStatsLine() {
     const assistantMessages = state.messages.filter((message) => message.info?.role === "assistant");
     const turns = new Set();
@@ -785,7 +941,8 @@ function renderWorkspace(view) {
         if (toolStart !== null && toolEnd !== null) toolMilliseconds += Math.max(0, toolEnd - toolStart);
       }
     }
-    const groups = [];
+    const groups = [el("span", {class: "wsp-stat-round", "aria-live": "off", text: roundDurationText(),
+      title: "本轮用户发送到处理结束的总耗时，包含排队、思考和工具执行（小时:分钟:秒）"})];
     let contextGroup = null;
     if (contextSample) {
       const { info, usage, promptTokens } = contextSample;
@@ -848,6 +1005,7 @@ function renderWorkspace(view) {
     const projectId = state.projectId;
     const sessionId = state.sessionId;
     const key = workspaceConversationKey(projectId, sessionId);
+    let destinationKey = key;
     const pending = pendingImages.get(key) || { count: 0, bytes: 0 };
     pendingImages.set(key, pending);
     const acceptedTypes = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
@@ -866,9 +1024,10 @@ function renderWorkspace(view) {
         if (!alive()) return;
         const attachment = { id: `${Date.now()}-${Math.random()}`, filename: (file.name || `粘贴图片.${file.type.split("/")[1] || "png"}`).replace(/[\\/]/g, "_"),
           mime: file.type, url, size: file.size };
-        if (projectId !== state.projectId || sessionId !== state.sessionId) {
-          const draft = workspaceReadDraft(key) || { text: "", references: [], attachments: [] };
-          workspaceWriteDraft(key, { ...draft, attachments: [...(draft.attachments || []), attachment] });
+        destinationKey = creationDraftDestinations.get(destinationKey) || destinationKey;
+        if (destinationKey !== workspaceConversationKey(state.projectId, state.sessionId)) {
+          const draft = workspaceReadDraft(destinationKey) || { text: "", references: [], attachments: [] };
+          workspaceWriteDraft(destinationKey, { ...draft, attachments: [...(draft.attachments || []), attachment] });
           return;
         }
         state.attachments.push(attachment);
@@ -877,6 +1036,9 @@ function renderWorkspace(view) {
       finally {
         pending.count = Math.max(0, pending.count - 1);
         pending.bytes = Math.max(0, pending.bytes - file.size);
+        if (!pending.count) for (const [source, destination] of creationDraftDestinations) {
+          if (destination === destinationKey) creationDraftDestinations.delete(source);
+        }
         if (alive()) renderHeader();
       }
     }
@@ -1220,6 +1382,7 @@ function renderWorkspace(view) {
   function renderHeader() {
     const project = activeProject();
     const session = activeSession();
+    view.querySelector("#wsp-tree-trigger").disabled = !project;
     view.querySelector("#wsp-breadcrumb").textContent = project ? `${project.name} / 对话记录` : "工作区";
     view.querySelector("#wsp-title").textContent = session ? sessionTitle(session) : (project ? "新建或选择对话" : "选择项目");
     const status = state.statuses?.[state.sessionId];
@@ -1243,7 +1406,7 @@ function renderWorkspace(view) {
     view.querySelector("#wsp-abort").hidden = !session || !busy;
     view.querySelectorAll(".wsp-tab").forEach((button) => button.classList.toggle("active", button.dataset.wspTab === state.tab));
     const send = view.querySelector("#wsp-send");
-    send.disabled = state.sending || !project || !state.check?.found || (!!state.sessionId && !state.queueLoaded);
+    send.disabled = state.sending || !project || !state.check?.found || session?.creating || (!!state.sessionId && !state.queueLoaded);
     const queued = waitingForReply() || state.queue.items.length > 0 || state.queue.paused;
     const sendLabel = queued ? "加入队列" : "发送消息";
     send.title = sendLabel;
@@ -1271,7 +1434,30 @@ function renderWorkspace(view) {
   function textPart(part, role, references = []) {
     const node = el("div", { class: "wsp-part wsp-text" });
     if (role === "user") appendFileMentions(node, isInitCommandPrompt(part.text) ? "/init" : part.text || "", references);
-    else node.append(trjMarkdown(part.text || ""));
+    else {
+      node.append(trjMarkdown(part.text || ""));
+      const lookup = projectFiles.get(state.projectId)?.lookup;
+      if (lookup?.size) {
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+        const texts = [];
+        while (walker.nextNode()) {
+          if (!walker.currentNode.parentElement.closest("pre, a, button, svg")) texts.push(walker.currentNode);
+        }
+        for (const textNode of texts) {
+          const text = textNode.data;
+          const matches = workspaceFileTextMatches(text, lookup, activeProject()?.path);
+          if (!matches.length) continue;
+          const fragment = document.createDocumentFragment();
+          let cursor = 0;
+          for (const match of matches) {
+            fragment.append(document.createTextNode(text.slice(cursor, match.start)), fileMention(match.path, true, match.text));
+            cursor = match.start + match.text.length;
+          }
+          fragment.append(document.createTextNode(text.slice(cursor)));
+          textNode.replaceWith(fragment);
+        }
+      }
+    }
     return node;
   }
 
@@ -1295,13 +1481,16 @@ function renderWorkspace(view) {
 
   function skillMention(skill) {
     return el("span", { class: "wsp-skill-mention", title: skill.description || skill.path }, skillIcon(),
-      el("span", { text: skill.name }));
+      el("span", { text: `/${skill.name}` }));
   }
 
-  function fileMention(path) {
-    return el("span", { class: "wsp-file-mention", title: path },
+  function fileMention(path, clickable = false, label = path.split("/").at(-1)) {
+    const project = activeProject();
+    return el(clickable ? "button" : "span", { class: "wsp-file-mention", title: path,
+      ...(clickable ? {type: "button", "aria-label": `在目录树中定位 ${path}`,
+        onclick: () => { if (project) void tree.locate(project, path); }} : {}) },
       workspaceIcon("file", "wsp-file-icon"),
-      el("span", { text: path.split("/").at(-1) }));
+      el("span", { text: label }));
   }
 
   function fileReferencePattern(paths) {
@@ -1315,7 +1504,7 @@ function renderWorkspace(view) {
     let cursor = 0;
     if (pattern) for (const match of text.matchAll(pattern)) {
       const start = match.index + match[1].length;
-      node.append(document.createTextNode(text.slice(cursor, start)), fileMention(match[2]));
+      node.append(document.createTextNode(text.slice(cursor, start)), fileMention(match[2], true));
       cursor = start + match[2].length + 1;
     }
     node.append(document.createTextNode(text.slice(cursor)));
@@ -1330,12 +1519,13 @@ function renderWorkspace(view) {
     const match = draft.match(/^\/([A-Za-z0-9_-]+)(?:\s|$)/);
     const name = match?.[1] || (draft.startsWith("/") ? draft.slice(1).split(/\s/)[0] : "");
     const skill = state.skills.find(item => item.name === name);
-    const known = builtInCommands.some(item => item.name === name) || state.commands.some(item => item.name === name);
+    const command = state.commands.find(item => item.name === name) || builtInCommands.find(item => item.name === name);
+    const known = !!command;
     const invalid = !!name && !known && !skill;
     errorLine.hidden = !invalid;
     errorLine.textContent = invalid ? `未识别命令 /${name}，请通过 /skills 重新选择` : "";
     input.setAttribute("aria-invalid", String(invalid));
-    composer.highlightSkill(skill);
+    composer.highlightSkill(skill || command);
   }
 
   function skillForTool(part) {
@@ -1615,12 +1805,24 @@ function renderWorkspace(view) {
           streamingText ? "正在回复…" : "正在思考…";
       }
       const key = JSON.stringify([state.projectId, state.sessionId, message.info?.id || messageIndex]);
-      const signature = JSON.stringify([message, modelLabel, diffs, progressLabel,
+      const signatureData = [message, modelLabel, diffs, progressLabel,
         role === "user" ? [message.info?.id === lastUserId, state.sending,
           state.statuses?.[state.sessionId]?.type] : null,
         !message.parts.length ? state.statuses?.[state.sessionId]?.type : null,
-        message.parts.filter(part => part.type === "tool").map(skillForTool)]);
+        message.parts.filter(part => part.type === "tool").map(skillForTool), state.fileIndexVersion];
+      const signature = JSON.stringify(signatureData);
+      const reasoningSignature = JSON.stringify([{...message, parts: message.parts.map(part =>
+        part.type === "reasoning" ? {...part, text: ""} : part)}, ...signatureData.slice(1)]);
       const cached = existing.get(key);
+      if (cached?.workspaceReasoningSignature === reasoningSignature && cached.workspaceMessageSignature !== signature) {
+        for (const [index, part] of message.parts.entries()) if (part.type === "reasoning") {
+          workspaceReasoningNode(cached,
+            `reasoning:${state.projectId}:${state.sessionId}:${part.id || `${message.info?.id}:${index}`}`,
+            part.text || "", state.expandedTools, running && message.info.parentID === lastUserId &&
+              part.time?.end == null && modelInfo?.time?.completed == null);
+        }
+        cached.workspaceMessageSignature = signature;
+      }
       if (cached?.workspaceMessageSignature === signature) {
         const trigger = cached.querySelector(".wsp-change-summary");
         if (trigger) changeTriggers.set(message.info.parentID, { trigger, diffs });
@@ -1632,6 +1834,7 @@ function renderWorkspace(view) {
       const body = el("div", { class: "wsp-message-inner" });
       row.workspaceMessageKey = key;
       row.workspaceMessageSignature = signature;
+      row.workspaceReasoningSignature = reasoningSignature;
       if (role !== "user") body.append(el("div", { class: "wsp-message-meta" },
         el("strong", { text: "Sona" }),
         modelLabel));
@@ -1659,21 +1862,26 @@ function renderWorkspace(view) {
         if (!['text', 'reasoning', 'file'].includes(part.type)) continue;
         flushTools();
         if (part.type === "text" && !part.synthetic && !workspaceDirectoryReference(part) && (role === "user" || part.text)) {
-          if (message.skillUse) body.append(el("details", { class: "wsp-reasoning" }, el("summary", { text: "查看已加载技能内容" }), el("pre", { text: part.text })));
+          if (message.skillUse) {
+            const key = `skill:${state.projectId}:${state.sessionId}:${part.id || `${message.info?.id}:${partIndex}`}`;
+            const details = el("details", { class: "wsp-reasoning wsp-skill-content" }, el("summary", { text: "查看已加载技能内容" }), el("pre", { text: part.text }));
+            details.open = !!state.expandedTools.get(key);
+            details.addEventListener("toggle", () => state.expandedTools.set(key, details.open));
+            body.append(details);
+          }
           else body.append(textPart(part, role, references));
         }
-        else if (part.type === "reasoning" && part.text) {
-          const reasoning = el("details", { class: "wsp-reasoning" }, el("summary", { text: "思考过程" }), el("div", { text: part.text }));
-          const key = `reasoning:${part.id || `${message.info?.id}:${partIndex}`}`;
-          if (state.expandedTools.get(key)) reasoning.open = true;
-          reasoning.addEventListener("toggle", () => state.expandedTools.set(key, reasoning.open));
+        else if (part.type === "reasoning") {
+          const key = `reasoning:${state.projectId}:${state.sessionId}:${part.id || `${message.info?.id}:${partIndex}`}`;
+          const reasoning = workspaceReasoningNode(cached, key, part.text || "", state.expandedTools,
+            running && message.info.parentID === lastUserId && part.time?.end == null && modelInfo?.time?.completed == null);
           body.append(reasoning);
         } else if (part.type === "file") {
           const filename = part.filename || "附件";
           if (references.includes(filename)) {
             const pattern = fileReferencePattern([filename]);
             if (!parts.some(item => item.type === "text" && !item.synthetic && pattern.test(item.text || ""))) {
-              body.append(el("div", { class: "wsp-text" }, fileMention(filename)));
+              body.append(el("div", { class: "wsp-text" }, fileMention(filename, true)));
             }
             continue;
           }
@@ -1841,9 +2049,6 @@ function renderWorkspace(view) {
             el("strong", { text: path.slice(separator + 1) }),
             separator >= 0 ? el("small", { text: path.slice(0, separator) }) : null),
           changeStats([diff]), workspaceIcon("chevron", "wsp-change-arrow")),
-        browserPreviewFile(path) ? el("button", { class: "wsp-change-locate", type: "button",
-          title: "在浏览器中打开", "aria-label": "在浏览器中打开 " + path,
-          onclick: () => openTreePath(path, "browser") }, workspaceIcon("globe")) : null,
         el("button", { class: "wsp-change-locate", type: "button", title: "在目录树中定位",
           "aria-label": "在目录树中定位 " + path,
           onclick: () => { closeChangePopover(); void tree.locate(activeProject(), path); } }, workspaceIcon("locate"))));
@@ -1983,9 +2188,6 @@ function renderWorkspace(view) {
         el("div", { class: "wsp-diff-head" },
           el("span", { class: "wsp-file-badge", text: label }),
           el("span", { class: "wsp-diff-path", title, text: title }),
-          browserPreviewFile(title) ? el("button", { class: "wsp-change-locate", type: "button",
-            title: "在浏览器中打开", "aria-label": "在浏览器中打开 " + title,
-            onclick: () => openTreePath(title, "browser") }, workspaceIcon("globe")) : null,
           el("button", { class: "wsp-change-locate", type: "button", title: "在目录树中定位",
             "aria-label": "在目录树中定位 " + title,
             onclick: () => void tree.locate(activeProject(), title) }, workspaceIcon("locate")),
@@ -2268,6 +2470,9 @@ function renderWorkspace(view) {
 
   function storeSessions(project, sessions) {
     const items = sessions.filter(item => !item.time?.archived);
+    for (const session of state.sessions.get(project.id) || []) {
+      if (session.creating && !items.some(item => item.id === session.id)) items.push(session);
+    }
     items.sort((a, b) => (b.time?.updated || 0) - (a.time?.updated || 0));
     state.sessions.set(project.id, workspaceOrderItems(items, `sona-code:session-order:${project.id}`));
     project.session_count = items.length;
@@ -2676,7 +2881,9 @@ function renderWorkspace(view) {
         class: `wsp-command-option wsp-file-option${index === state.commandSelectedIndex ? " selected" : ""}`,
         onclick: () => selectFileReference(path),
         onmouseenter: () => { state.commandSelectedIndex = index; updateCommandSelection(); } },
-      el("strong", { text: path }), el("span", { text: "文件" })));
+      el("strong", { class: "wsp-file-option-path", title: path },
+        path.includes("/") ? el("span", {class: "wsp-file-parent", dir: "rtl"}, el("bdi", {dir: "ltr", text: path.slice(0, path.lastIndexOf("/") + 1)})) : null,
+        el("span", {class: "wsp-file-basename", text: path.split("/").at(-1)})), el("span", { text: "文件" })));
     }
     if (!fileMatches.length) commandMenu.append(el("div", { class: "wsp-file-state", text: "没有找到匹配的项目文件" }));
     commandMenu.hidden = false;
@@ -2838,6 +3045,35 @@ function renderWorkspace(view) {
   }
 
   function applyMessageEvent(projectId, update) {
+    if (projectId !== state.projectId) return;
+    const props = update.properties || {};
+    const part = update.type === "message.part.updated" ? props.part : null;
+    if (part || ["message.part.delta", "message.part.removed"].includes(update.type)) {
+      const sessionId = part?.sessionID || props.sessionID;
+      const messageId = part?.messageID || props.messageID;
+      const partId = part?.id || props.partID;
+      if (sessionId !== state.sessionId || !messageId || !partId) return;
+      const message = state.messages.find(item => item.info?.id === messageId);
+      if (!message) return; // The history refresh recovers events preceding message metadata.
+      message.parts ||= [];
+      const index = message.parts.findIndex(item => item.id === partId);
+      if (part) {
+        // V1 updates include authoritative full text; never append their optional delta twice.
+        if (index < 0) message.parts.push(part);
+        else message.parts[index] = part;
+      } else if (update.type === "message.part.removed") {
+        if (index >= 0) message.parts.splice(index, 1);
+      } else {
+        if (index < 0 || props.field !== "text" || typeof props.delta !== "string") return;
+        message.parts[index].text = (message.parts[index].text || "") + props.delta;
+      }
+      messageVersion++;
+      messagePartVersions.set(messageId, messageVersion);
+      messagePartVersions.set(partId, messageVersion);
+      state.messagesLoaded = true;
+      scheduleSelectedRender();
+      return;
+    }
     const info = update.type === "message.updated" ? update.properties?.info : null;
     if (!info?.id || !info.sessionID || projectId !== state.projectId || info.sessionID !== state.sessionId) return;
     const message = state.messages.find(item => item.info?.id === info.id);
@@ -2908,6 +3144,15 @@ function renderWorkspace(view) {
           (update.type === "session.updated" ? properties.info?.id : null);
         if ((!sessionId || sessionId === state.sessionId) && !["server.heartbeat", "server.connected"].includes(update.type)) scheduleRefresh();
         applyMessageEvent(projectId, update);
+        if (update.type === "file.edited" || update.type === "session.status" && properties.status?.type === "idle" &&
+            state.statuses?.[properties.sessionID]?.type !== "idle") {
+          if (fileIndexTimer) clearTimeout(fileIndexTimer);
+          fileIndexTimer = setTimeout(() => {
+            fileIndexTimer = null;
+            projectFiles.delete(projectId);
+            if (alive() && state.projectId === projectId) void loadProjectFiles(projectId).catch(() => {});
+          }, 350);
+        }
         if (update.type === "todo.updated" && sessionId === state.sessionId && Array.isArray(properties.todos)) {
           state.todoVersion = (state.todoVersion || 0) + 1;
           state.todos = properties.todos;
@@ -2992,7 +3237,7 @@ function renderWorkspace(view) {
   }
 
   async function refreshSelected() {
-    if (!alive() || !state.projectId || !state.sessionId) return;
+    if (!alive() || !state.projectId || !state.sessionId || creatingSessions.has(state.sessionId)) return;
     if (selectedRefresh) { selectedRefresh.pending = true; return; }
     const refresh = { controller: new AbortController(), pending: false };
     selectedRefresh = refresh;
@@ -3027,9 +3272,21 @@ function renderWorkspace(view) {
           for (const message of messages) {
             if ((messageInfoVersions.get(message.info?.id) || 0) > messagesVersion && live.has(message.info?.id))
               message.info = { ...message.info, ...live.get(message.info.id).info };
+            if ((messagePartVersions.get(message.info?.id) || 0) > messagesVersion && live.has(message.info?.id)) {
+              const parts = new Map(live.get(message.info.id).parts.map(part => [part.id, part]));
+              const receivedParts = new Set();
+              message.parts = (message.parts || []).flatMap(part => {
+                receivedParts.add(part.id);
+                if ((messagePartVersions.get(part.id) || 0) <= messagesVersion) return [part];
+                return parts.has(part.id) ? [parts.get(part.id)] : [];
+              });
+              for (const part of parts.values()) if (!receivedParts.has(part.id) &&
+                  (messagePartVersions.get(part.id) || 0) > messagesVersion) message.parts.push(part);
+            }
           }
           for (const message of state.messages) {
-            if (!received.has(message.info?.id) && (messageInfoVersions.get(message.info?.id) || 0) > messagesVersion) messages.push(message);
+            if (!received.has(message.info?.id) && Math.max(messageInfoVersions.get(message.info?.id) || 0,
+                messagePartVersions.get(message.info?.id) || 0) > messagesVersion) messages.push(message);
           }
         }
         state.messages = messages;
@@ -3127,6 +3384,7 @@ function renderWorkspace(view) {
     state.questionDrafts.clear(); state.questionPages.clear(); state.questionErrors.clear();
     state.actionError = "";
     messageInfoVersions.clear();
+    messagePartVersions.clear();
     messageVersion++;
     workspaceSyncChildren(content, state.tab === "chat" ? cached?.nodes || [] : []);
     if (state.tab === "chat" && cached?.scrollTop != null) {
@@ -3173,6 +3431,7 @@ function renderWorkspace(view) {
       if (project) loadSessions(project);
     }
     connectEvents(projectId);
+    void loadProjectFiles(projectId).catch(() => {});
     loadModels(projectId);
     loadAgents(projectId);
   }
@@ -3210,6 +3469,7 @@ function renderWorkspace(view) {
     refreshSelected();
     connectEvents(projectId);
     if (projectChanged) {
+      void loadProjectFiles(projectId).catch(() => {});
       loadModels(projectId);
       loadAgents(projectId);
     }
@@ -3230,19 +3490,58 @@ function renderWorkspace(view) {
     } catch (_) { /* Storage may be unavailable. */ }
   }
 
+  function migrateCreationDraft(oldKey, newKey) {
+    const draft = workspaceReadDraft(oldKey);
+    if (draft) workspaceWriteDraft(newKey, draft);
+    workspaceWriteDraft(oldKey, null);
+    const pending = pendingImages.get(oldKey);
+    if (pending?.count) {
+      pendingImages.set(newKey, pending);
+      creationDraftDestinations.set(oldKey, newKey);
+    }
+    pendingImages.delete(oldKey);
+    conversationViews.delete(oldKey);
+  }
+
   async function createSession(projectId = state.projectId || state.projects[0]?.id) {
     if (!projectId) { openAddProject(); return; }
+    const id = `creating:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    const placeholder = {id, title: "新对话", creating: true, time: {created: Date.now(), updated: Date.now()}};
+    creatingSessions.add(id);
+    state.sessions.set(projectId, [placeholder, ...(state.sessions.get(projectId) || [])]);
+    applyLatestModel(projectId);
+    selectSession(projectId, id);
+    state.messagesLoaded = true;
+    renderHeader(); renderMain(); input.focus();
     try {
       const session = await api(`workspace/projects/${encodeURIComponent(projectId)}/sessions`, {
         method: "POST", body: {}, silent: true,
       });
-      if (!alive()) return;
       const items = state.sessions.get(projectId) || [];
-      state.sessions.set(projectId, [session, ...items.filter((item) => item.id !== session.id)]);
-      applyLatestModel(projectId);
-      selectSession(projectId, session.id);
-      input.focus();
-    } catch (error) { toast("新建对话失败：" + detail(error), "error"); }
+      state.sessions.set(projectId, [session, ...items.filter(item => item.id !== id && item.id !== session.id)]);
+      state.sessionDetails.delete(workspaceConversationKey(projectId, id));
+      const oldKey = workspaceConversationKey(projectId, id), newKey = workspaceConversationKey(projectId, session.id);
+      state.sessionDetails.set(newKey, session);
+      if (state.projectId === projectId && state.sessionId === id) saveDraft();
+      migrateCreationDraft(oldKey, newKey);
+      if (state.projectId === projectId && state.sessionId === id) {
+        state.sessionId = session.id;
+        workspaceSelection.sessionId = session.id; persistWorkspaceSelection();
+        state.queueLoaded = false;
+        if (alive()) { renderSidebar(); renderHeader(); refreshSelected(); }
+      } else if (alive()) renderSidebar();
+    } catch (error) {
+      state.sessions.set(projectId, (state.sessions.get(projectId) || []).filter(item => item.id !== id));
+      state.sessionDetails.delete(workspaceConversationKey(projectId, id));
+      if (state.projectId === projectId && state.sessionId === id) {
+        saveDraft();
+        migrateCreationDraft(workspaceConversationKey(projectId, id), workspaceConversationKey(projectId, null));
+        state.sessionId = null;
+        workspaceSelection.sessionId = null; persistWorkspaceSelection();
+        state.messagesLoaded = true; state.queueLoaded = true;
+      }
+      if (alive()) { renderSidebar(); renderHeader(); renderMain(); toast("新建对话失败：" + detail(error), "error"); }
+    } finally { creatingSessions.delete(id); }
   }
 
   async function ensureSessionForSend() {
@@ -3570,6 +3869,7 @@ function renderWorkspace(view) {
     if (consumeMenuCommand()) return;
     state.fileReferences = composer.fileReferences;
     const text = composer.value.trim();
+    if (creatingSessions.has(state.sessionId)) return;
     if ((!text && !state.attachments.length && !state.fileReferences.length) || state.sending) return;
     if (state.pendingImageCount) { toast("图片正在读取，请稍后发送", "error"); return; }
     if (!state.projectId) { openAddProject(); return; }
@@ -3594,6 +3894,7 @@ function renderWorkspace(view) {
     const references = state.fileReferences.map(({ path }) => ({ path }));
     const sendKey = workspaceConversationKey(state.projectId, state.sessionId);
     let operationKey = sendKey;
+    let sendClock = null;
     const originalDraft = { ...composer.snapshot(), attachments: state.attachments.map(item => ({ ...item })) };
     saveDraft();
     sendingConversations.add(sendKey); renderHeader();
@@ -3601,10 +3902,16 @@ function renderWorkspace(view) {
     state.actionError = "";
     try {
       if (slash && await executeBuiltIn(slash[1])) return;
+      sendClock = {startedAt: Date.now(), baselineId: (state.messages || [])
+        .filter(message => message.info?.role === "user").at(-1)?.info.id};
+      roundClocks.set(sendKey, sendClock);
+      renderRoundClock();
       if (!shell) void workspacePrepareNotifications();
       const { projectId, sessionId } = await ensureSessionForSend();
       model = selectedModel();
       operationKey = workspaceConversationKey(projectId, sessionId);
+      roundClocks.set(operationKey, sendClock);
+      if (operationKey !== sendKey) roundClocks.delete(sendKey);
       sendingConversations.add(operationKey);
       const base = sessionPath(projectId, sessionId);
       if (shell) {
@@ -3616,6 +3923,7 @@ function renderWorkspace(view) {
         const queue = await api(`${base}/queue`, {
           method: "POST", body: { kind: "command", payload: { command: slash[1], arguments: slash[2] || "", agent, ...model, ...variant } }, silent: true,
         });
+        sendClock.queueId = queue.items?.at(-1)?.id;
         applyQueue(queue, projectId, sessionId);
       } else if (shell) {
         await api(`${base}/shell`, {
@@ -3625,6 +3933,7 @@ function renderWorkspace(view) {
         const queue = await api(`${base}/queue`, {
           method: "POST", body: { kind: "prompt", payload: { text, files, references, agent, ...model, ...variant } }, silent: true,
         });
+        sendClock.queueId = queue.items?.at(-1)?.id;
         applyQueue(queue, projectId, sessionId);
       }
       if (!alive()) return;
@@ -3648,6 +3957,7 @@ function renderWorkspace(view) {
       await loadSessions(state.projects.find((project) => project.id === projectId));
       await refreshSelected();
     } catch (error) {
+      if (sendClock) sendClock.endedAt = Date.now();
       const failure = `操作失败：${detail(error)}`;
       if (workspaceConversationKey(state.projectId, state.sessionId) === sendKey) state.actionError = failure;
       toast(failure, "error");
@@ -3743,6 +4053,8 @@ function renderWorkspace(view) {
       if (project) loadSessions(project);
     }
   }, 2500);
+  const roundClockTick = setInterval(() => { if (alive()) renderRoundClock(); }, 1000);
+  addCleanup(() => clearInterval(roundClockTick));
   window.addEventListener("pagehide", saveDraft);
   addCleanup(() => window.removeEventListener("pagehide", saveDraft));
   const reloadSonaModels = () => {

@@ -65,6 +65,9 @@ const selectedModel = () => ({provider_id:'p',model_id:'m'});
 const state = {projectId:'project',sessionId:'session',messages:[],statuses:{},providers:[{id:'p',models:{m:{limit:{context:10000}}}}]};
 let messageVersion=0;
 const messageInfoVersions=new Map();
+const messagePartVersions=new Map(), creatingSessions=new Set();
+const roundClocks=new Map();
+eval(source.slice(source.indexOf('function workspaceConversationKey('), source.indexOf('function workspaceReadDraft(')));
 eval(source.slice(source.indexOf('  function numeric('), source.indexOf('  function renderAttachments(')));
 eval(source.slice(source.indexOf('  function applyMessageEvent('), source.indexOf('  function connectEvents(')));
 const info = {id:'first',sessionID:'session',role:'assistant',providerID:'p',modelID:'m',time:{created:1},
@@ -73,6 +76,7 @@ const event = info => ({type:'message.updated',properties:{info}});
 applyMessageEvent('project',event(info));
 renderStatsLine();
 assert.match(statsLine.textContent,/上下文 1.4K \/ 10K · 14%/);
+assert.match(statsLine.textContent,/本轮耗时 0:0:0/);
 // OpenCode initializes the next assistant's tokens to zero while streaming.
 const next = {...info,id:'next',time:{created:2},tokens:{input:0,output:0,reasoning:0,cache:{read:0,write:0}}};
 applyMessageEvent('project',event(next));
@@ -109,5 +113,69 @@ state.providers[0].models.m = {limit:{context:10000}};
   resolveMessages([{info}]); await refresh;
   assert.match(statsLine.textContent,/上下文 4.1K \/ 10K · 41%/);
 })().catch(error=>{console.error(error);process.exitCode=1;});
+'''
+    subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
+
+
+def test_round_clock_counts_wall_time_resets_on_admission_and_freezes_on_completion():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for workspace round-clock coverage")
+    script = r'''
+const fs = require('node:fs'), assert = require('node:assert/strict');
+const source = fs.readFileSync('sona_code/web/static/workspace.js', 'utf8');
+eval(source.slice(source.indexOf('function workspaceConversationKey('), source.indexOf('function workspaceReadDraft(')));
+assert.equal(workspaceRoundDuration(0), '0:0:0');
+assert.equal(workspaceRoundDuration(3935999), '1:5:35');
+assert.equal(workspaceRoundDuration(86400000), '24:0:0');
+assert.equal(workspaceRoundDuration(-1000), '0:0:0');
+const user = (id, created) => ({info: {id, role: 'user', time: {created}}, parts: []});
+const reply = (id, parentID, created, completed) => ({info: {id, parentID, role: 'assistant',
+  time: {created, ...(completed == null ? {} : {completed})}}, parts: []});
+const old = [user('u1', 1000), reply('a1', 'u1', 2000, 9000)];
+assert.equal(workspaceRoundElapsed([], {type: 'idle'}, null, null, 50000), 0);
+assert.equal(workspaceRoundElapsed(old, {type: 'idle'}, null, null, 50000), 8000);
+// Reset immediately, even though the prior assistant still remains in history.
+const clock = {startedAt: 10000, baselineId: 'u1'};
+assert.equal(workspaceRoundElapsed(old, {type: 'idle'}, null, clock, 10000), 0);
+assert.equal(workspaceRoundElapsed(old, {type: 'idle'}, null, clock, 12000), 2000);
+assert.equal(clock.endedAt, undefined);
+// Native timestamps start after admission; waiting and tool continuations count too.
+const messages = [...old, user('u2', 11000), reply('a2', 'u2', 11500, 13000),
+  reply('a3', 'u2', 14000)];
+assert.equal(workspaceRoundElapsed(messages, {type: 'busy'}, null, clock, 16000), 6000);
+assert.equal(clock.userId, 'u2');
+assert.equal(workspaceRoundElapsed(messages, {type: 'retry'}, null, clock, 17000), 7000);
+messages.at(-1).info.time.completed = 20000;
+assert.equal(workspaceRoundElapsed(messages, {type: 'idle'}, null, clock, 22000), 10000);
+assert.equal(workspaceRoundElapsed(messages, {type: 'idle'}, null, clock, 40000), 10000);
+assert.equal(workspaceRoundElapsed(messages, {type: 'idle'}, null, null, 40000), 9000);
+// A queued new turn keeps counting when the preceding running turn ends.
+const waiting = {startedAt: 18000, baselineId: 'u2', queueId: 'q3'};
+const queue = {items: [{id: 'q3', status: 'pending'}]};
+assert.equal(workspaceRoundElapsed(messages, {type: 'busy'}, queue, waiting, 18000), 0);
+assert.equal(workspaceRoundElapsed(messages, {type: 'idle'}, queue, waiting, 22000), 4000);
+assert.equal(waiting.endedAt, undefined);
+queue.items[0] = {id: 'q3', status: 'sending', message_id: 'u3'};
+messages.push(user('u3', 23000), reply('a4', 'u3', 24000, 29000));
+assert.equal(workspaceRoundElapsed(messages, {type: 'busy'}, queue, waiting, 25000), 7000);
+assert.equal(waiting.userId, 'u3');
+assert.equal(workspaceRoundElapsed(messages, {type: 'idle'}, {items: []}, waiting, 30000), 11000);
+// Per-conversation clocks do not reset each other when switching projects/sessions.
+const clocks = new Map([[workspaceConversationKey('p1', 's'), clock],
+  [workspaceConversationKey('p2', 's'), waiting]]);
+assert.equal(workspaceRoundElapsed(messages.slice(0, 5), {type: 'idle'}, null,
+  clocks.get(workspaceConversationKey('p1', 's')), 60000), 10000);
+assert.equal(workspaceRoundElapsed(messages, {type: 'idle'}, null,
+  clocks.get(workspaceConversationKey('p2', 's')), 60000), 11000);
+// Stop/error may end before a completed assistant message arrives.
+const stopped = {startedAt: 30000, baselineId: 'u3'};
+messages.push(user('u4', 31000), reply('a5', 'u4', 31500));
+assert.equal(workspaceRoundElapsed(messages, {type: 'busy'}, null, stopped, 33000), 3000);
+assert.equal(workspaceRoundElapsed(messages, {type: 'idle'}, null, stopped, 35000), 5000);
+assert.equal(workspaceRoundElapsed(messages, {type: 'idle'}, null, stopped, 50000), 5000);
+// A later turn sent from another client supersedes a finished local clock.
+messages.at(-1).info.time.completed = 36000;
+assert.equal(workspaceRoundElapsed(messages, {type: 'idle'}, null, waiting, 50000), 5000);
 '''
     subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)

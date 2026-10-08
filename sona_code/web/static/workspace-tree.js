@@ -50,11 +50,19 @@ function workspaceIcon(name, className = "wsp-icon") {
 function createWorkspaceTree(pane, callbacks) {
   const body = pane.querySelector("#wsp-tree-body");
   const title = pane.querySelector("#wsp-tree-title");
+  const search = pane.querySelector("#wsp-tree-search");
+  const side = pane.querySelector("#wsp-tree-side");
+  const root = pane.closest(".wsp");
   const items = new Map();
   const expanded = new Set();
   let project = null;
   let selected = "";
   let menu = null;
+  let searchRequest = 0;
+  let locateRequest = 0;
+  let results = null;
+  let searchError = "";
+  let truncated = false;
   const browserFile = (path) => /\.(html?|svg|pdf|txt|xml|css|m?js|json|md|png|jpe?g|gif|webp)$/i.test(path);
 
   function closeMenu() { menu?.remove(); menu = null; }
@@ -93,40 +101,40 @@ function createWorkspaceTree(pane, callbacks) {
     menu.style.top = Math.max(8, Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 8)) + "px";
   }
 
+  function itemRow(item, depth = 0) {
+    const row = el("div", {
+      class: "wsp-tree-row" + (selected === item.path ? " selected" : ""),
+      role: "treeitem", "aria-level": String(depth + 1),
+      "aria-expanded": item.directory ? String(expanded.has(item.path)) : null,
+      title: item.path, draggable: true,
+      onclick: () => {
+        if (results) { void locate(project, item.path); return; }
+        selected = item.path;
+        if (item.directory) {
+          if (expanded.has(item.path)) expanded.delete(item.path);
+          else { expanded.add(item.path); void load(item.path); }
+        }
+        render();
+      },
+      ondblclick: () => { if (!item.directory) void callbacks.open(project.id, item.path, "default"); },
+      oncontextmenu: (event) => showMenu(event, item),
+      ondragstart: (event) => {
+        event.dataTransfer.setData("application/x-sona-project-reference",
+          JSON.stringify({ projectId: project.id, path: item.path }));
+        event.dataTransfer.setData("text/plain", "@" + item.path);
+        event.dataTransfer.effectAllowed = "copy";
+      },
+    },
+    el("span", { class: "wsp-tree-toggle" }, item.directory ? workspaceIcon(expanded.has(item.path) ? "chevronDown" : "chevron") : null),
+    el("span", { class: "wsp-tree-kind" }, workspaceIcon(item.directory ? expanded.has(item.path) ? "folderOpen" : "folder" : "file")),
+    el("span", { class: "wsp-tree-name", text: item.name }));
+    row.style.paddingLeft = 8 + depth * 15 + "px";
+    return row;
+  }
+
   function branch(path, depth) {
     return (items.get(path) || []).map((item) => {
-      const row = el("div", {
-        class: "wsp-tree-row" + (selected === item.path ? " selected" : ""),
-        role: "treeitem", "aria-level": String(depth + 1),
-        "aria-expanded": item.directory ? String(expanded.has(item.path)) : null,
-        title: item.path, draggable: true,
-        onclick: () => {
-          selected = item.path;
-          if (item.directory) {
-            if (expanded.has(item.path)) expanded.delete(item.path);
-            else { expanded.add(item.path); void load(item.path); }
-          }
-          render();
-        },
-        ondblclick: () => { if (!item.directory) void callbacks.open(project.id, item.path, "default"); },
-        oncontextmenu: (event) => showMenu(event, item),
-        ondragstart: (event) => {
-          event.dataTransfer.setData("application/x-sona-project-reference",
-            JSON.stringify({ projectId: project.id, path: item.path }));
-          event.dataTransfer.setData("text/plain", "@" + item.path);
-          event.dataTransfer.effectAllowed = "copy";
-        },
-      },
-      el("span", { class: "wsp-tree-toggle" }, item.directory ? workspaceIcon(expanded.has(item.path) ? "chevronDown" : "chevron") : null),
-      el("span", { class: "wsp-tree-kind" }, workspaceIcon(item.directory ? expanded.has(item.path) ? "folderOpen" : "folder" : "file")),
-      el("span", { class: "wsp-tree-name", text: item.name }),
-      !item.directory && browserFile(item.path) ? el("button", {
-        class: "wsp-tree-browser", type: "button",
-        title: "在浏览器中打开", "aria-label": "在浏览器中打开 " + item.name,
-        onclick: (event) => { event.stopPropagation(); void callbacks.open(project.id, item.path, "browser"); },
-      }, workspaceIcon("globe")) : null);
-      row.style.paddingLeft = 8 + depth * 15 + "px";
-      return el("div", null, row,
+      return el("div", null, itemRow(item, depth),
         item.directory && expanded.has(item.path) ? el("div", { role: "group" }, ...branch(item.path, depth + 1)) : null);
     });
   }
@@ -135,34 +143,87 @@ function createWorkspaceTree(pane, callbacks) {
     pane.hidden = !project;
     if (!project) return;
     title.textContent = project.name;
-    body.replaceChildren(...branch("", 0));
+    callbacks.visibility?.(true);
+    body.replaceChildren(...(results ? results.map(path => itemRow({name: path.split("/").at(-1), path, directory: false})) : branch("", 0)));
+    if (results?.length) for (const row of body.children) {
+      const path = row.title;
+      row.classList.add("wsp-tree-result");
+      row.querySelector(".wsp-tree-name").append(el("small", {text: path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "项目根目录"}));
+    }
+    if (search.value.trim() && !results) body.replaceChildren(el("p", {class: "wsp-tree-empty", text: searchError || "正在搜索…"}));
+    else if (results && !results.length) body.append(el("p", {class: "wsp-tree-empty", text: "没有找到匹配文件"}));
+    if (results && truncated) body.append(el("p", {class: "wsp-tree-empty", text: "项目较大，搜索基于已索引的文件；可展开目录查找其余文件。"}));
     if (!body.childNodes.length) body.append(el("p", { class: "wsp-tree-empty", text: "目录为空或正在加载…" }));
   }
 
   function open(projectInfo) {
-    if (project?.id !== projectInfo.id) { items.clear(); expanded.clear(); selected = ""; }
+    if (project?.id !== projectInfo.id) {
+      items.clear(); expanded.clear(); selected = ""; results = null; search.value = ""; searchRequest++; locateRequest++;
+    }
     project = projectInfo;
     render();
-    return load();
+    if (!items.has("")) return load();
+    return Promise.resolve();
   }
 
   async function locate(projectInfo, path) {
-    await open(projectInfo);
+    if (!projectInfo) return;
+    const opening = open(projectInfo);
+    const request = ++locateRequest;
+    const projectId = projectInfo.id;
+    await opening;
+    if (project?.id !== projectId || request !== locateRequest) return;
+    search.value = ""; results = null; searchRequest++;
     const normalized = path.replaceAll("\\", "/");
     let parent = "";
     for (const part of normalized.split("/").slice(0, -1)) {
       parent = parent ? parent + "/" + part : part;
       expanded.add(parent);
       if (!items.has(parent)) await load(parent);
+      if (project?.id !== projectId || request !== locateRequest) return;
     }
     selected = normalized;
     render();
-    body.querySelector(".wsp-tree-row.selected")?.scrollIntoView({ block: "center" });
+    body.querySelector(".wsp-tree-row.selected .wsp-tree-name")?.scrollIntoView({ block: "center", inline: "nearest" });
   }
 
-  function close() { project = null; closeMenu(); render(); }
+  function close() { project = null; searchRequest++; locateRequest++; closeMenu(); render(); callbacks.visibility?.(false); }
   pane.querySelector("#wsp-tree-close").addEventListener("click", close);
-  pane.querySelector("#wsp-tree-refresh").addEventListener("click", () => { items.clear(); void load(); });
+  pane.querySelector("#wsp-tree-refresh").addEventListener("click", () => {
+    items.clear(); callbacks.refresh?.(project?.id);
+    if (search.value.trim()) void runSearch();
+    else { for (const path of ["", ...expanded]) void load(path); }
+  });
+  async function runSearch() {
+    const request = ++searchRequest;
+    const current = project?.id;
+    const query = search.value.trim();
+    results = null; searchError = "";
+    render();
+    if (!query || !current) return;
+    try {
+      const data = await callbacks.search(current, query);
+      if (request !== searchRequest || current !== project?.id) return;
+      results = data.items; truncated = !!data.truncated; render();
+    } catch (error) {
+      if (request !== searchRequest || current !== project?.id) return;
+      searchError = "搜索失败：" + error.message; render();
+    }
+  }
+  search.addEventListener("input", () => { void runSearch(); });
+  search.addEventListener("keydown", event => {
+    if (event.key === "Escape") { search.value = ""; void runSearch(); }
+    if (event.key === "Enter" && results?.[0]) { event.preventDefault(); void locate(project, results[0]); }
+  });
+  function setSide(value) {
+    const position = value === "right" ? "right" : "left";
+    side.value = position;
+    root.classList.toggle("tree-right", position === "right");
+    if (project) body.querySelector(".wsp-tree-row.selected .wsp-tree-name")?.scrollIntoView({block: "nearest", inline: "nearest"});
+    try { localStorage.setItem("sona-code:tree-side", position); } catch (_) {}
+  }
+  try { setSide(localStorage.getItem("sona-code:tree-side")); } catch (_) { setSide("left"); }
+  side.addEventListener("change", () => setSide(side.value));
   const outsideMenu = (event) => { if (menu && !menu.contains(event.target)) closeMenu(); };
   document.addEventListener("pointerdown", outsideMenu);
   return { open, close, locate,

@@ -61,6 +61,7 @@ assert.equal(workspaceReadDraft(workspaceConversationKey('p2','same')).text, 'ot
   const api = path => path.endsWith('/messages') ? pending : Promise.resolve({});
   const alive = () => true, sessionPath = (p,s) => `${p}/${s}`;
   const queueUpdateVersion = 0, statusVersions = new Map(), messageVersion = 0;
+  const creatingSessions = new Set(), messagePartVersions = new Map();
   const scheduleRefresh = () => {}, renderSidebar = () => {}, renderHeader = () => {};
   let rendered = 0; const renderMain = () => {rendered++;};
   const scheduleSelectedRender = renderMain;

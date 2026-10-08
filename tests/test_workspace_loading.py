@@ -168,8 +168,12 @@ def test_idle_polling_uses_events_with_fallback_and_pauses_in_settings():
     run_node(r'''
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
 const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
-let poll, active = true, waiting = false, reads = 0;
-const context = vm.createContext({alive: () => active, setInterval(fn) {poll = fn;},
+let poll, clockTick, active = true, waiting = false, reads = 0, clockUpdates = 0;
+const cleanups = [], cleared = [];
+const context = vm.createContext({alive: () => active,
+  setInterval(fn, delay) {if (delay === 2500) poll = fn; else clockTick = fn; return delay;},
+  clearInterval: id => cleared.push(id), addCleanup: fn => cleanups.push(fn),
+  renderRoundClock() {clockUpdates++;},
   refreshWorkspaceStatuses() {}, refreshSelected() {reads++;}, waitingForReply: () => waiting,
   state: {messagesLoaded: true}, events: {readyState: 1}, lastSelectedRefresh: Date.now(),
   lastSessionListRefresh: Date.now(), activeProject: () => null,
@@ -180,7 +184,10 @@ waiting = true; poll(); assert.equal(reads, 1);
 waiting = false; context.events.readyState = 0; poll(); assert.equal(reads, 2);
 context.events.readyState = 1; context.lastSelectedRefresh = Date.now() - 16000;
 poll(); assert.equal(reads, 3);
+clockTick(); assert.equal(clockUpdates, 1); assert.equal(reads, 3);
 active = false; poll(); assert.equal(reads, 3);
+clockTick(); assert.equal(clockUpdates, 1);
+cleanups.forEach(fn => fn()); assert.deepEqual(cleared, [1000]);
 ''')
 
 
