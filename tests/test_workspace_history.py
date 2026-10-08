@@ -142,7 +142,8 @@ def test_live_status_endpoint_is_not_a_persisted_session(native_store):
     assert history.read_history(store.projects[0], store.config, "/session/status") is None
 
 
-async def test_queue_reads_live_status_with_history_and_after_fork(native_store, tmp_path, monkeypatch):
+@pytest.mark.parametrize("snapshot_source", ["matching", "missing", "other_directory"])
+async def test_queue_reads_live_status_with_history_and_after_fork(native_store, snapshot_source, tmp_path, monkeypatch):
     store = native_store
     store.config.model_settings.source = "native"
     app = create_app(store.config, str(tmp_path / "config.json"))
@@ -153,6 +154,12 @@ async def test_queue_reads_live_status_with_history_and_after_fork(native_store,
     queue.interval = .01
     statuses = {"ses_one": {"type": "busy"}}
     delivered = []
+    native_messages = {}
+    if snapshot_source == "missing":
+        store.db.execute("DELETE FROM session WHERE id = 'ses_one'")
+    elif snapshot_source == "other_directory":
+        store.db.execute("UPDATE session SET directory = ? WHERE id = 'ses_one'", (store.projects[2],))
+    store.db.commit()
 
     async def respond(request):
         if request.url.path == "/session/status":
@@ -160,11 +167,20 @@ async def test_queue_reads_live_status_with_history_and_after_fork(native_store,
         if request.url.path == "/session/ses_one/fork":
             store.session("ses_fork")
             return httpx.Response(200, json={"id": "ses_fork"})
+        if request.url.path in {"/session/ses_one", "/session/ses_fork"}:
+            return httpx.Response(200, json={"id": request.url.path.split("/")[2], "directory": store.projects[0]})
+        if request.url.path.endswith("/message"):
+            return httpx.Response(200, json=native_messages.get(request.url.path.split("/")[2], []))
         if request.url.path.endswith("/prompt_async"):
             body = json.loads(request.content)
             session_id = request.url.path.split("/")[2]
             message_id = body["messageID"]
             delivered.append((session_id, body["parts"][0]["text"]))
+            native_messages.setdefault(session_id, []).extend([
+                {"info": {"id": message_id, "role": "user"}},
+                {"info": {"id": message_id + "_reply", "role": "assistant", "parentID": message_id,
+                          "time": {"completed": 11}}},
+            ])
             store.db.executemany("INSERT INTO message VALUES (?, ?, ?, ?)", [
                 (message_id, session_id, 10, json.dumps({"role": "user"})),
                 (message_id + "_reply", session_id, 11, json.dumps({
@@ -195,6 +211,8 @@ async def test_queue_reads_live_status_with_history_and_after_fork(native_store,
             await queue._step(f"{project_id}:ses_one")
             assert not delivered
             statuses.clear()  # Native V1 omits idle sessions from this live endpoint.
+            await client.patch(original + "/queue", json={"paused": True})
+            await client.patch(original + "/queue", json={"paused": False})
             await asyncio.wait_for(queue._run(f"{project_id}:ses_one"), 2)
             assert delivered == [("ses_one", "next turn")]
             assert (await client.get(original + "/queue")).json() == {"items": [], "paused": False, "error": ""}
@@ -275,6 +293,54 @@ async def test_manager_browses_history_without_ensure_and_preserves_native_mutat
         assert len(ensure_calls) == 3
     finally:
         await client.aclose()
+
+
+async def test_snapshot_miss_is_confirmed_by_native_before_reporting_not_found(native_store, monkeypatch):
+    store = native_store
+    manager = WorkspaceManager()
+    calls = []
+    session = {"id": "ses_native", "directory": store.projects[0]}
+
+    async def respond(request):
+        calls.append(request.url.path)
+        if request.url.path == "/session/ses_native":
+            return httpx.Response(200, json=session)
+        if request.url.path == "/session/ses_native/message":
+            return httpx.Response(200, json=[{"info": {"id": "msg_live", "role": "user"}}])
+        return httpx.Response(404, json={"name": "NotFoundError"})
+
+    async with httpx.AsyncClient(base_url="http://native.test", transport=httpx.MockTransport(respond)) as client:
+        async def ensure(project, config):
+            return SimpleNamespace(client=client)
+
+        monkeypatch.setattr(manager, "ensure", ensure)
+        assert await manager.request(store.projects[0], store.config, "GET", "/session/ses_native") == session
+        messages = await manager.request(store.projects[0], store.config, "GET", "/session/ses_native/message")
+        assert messages[0]["info"]["id"] == "msg_live"
+        with pytest.raises(WorkspaceError) as missing:
+            await manager.request(store.projects[0], store.config, "GET", "/session/ses_deleted")
+        assert missing.value.status == 404
+        assert calls == ["/session/ses_native", "/session/ses_native/message", "/session/ses_deleted"]
+
+
+async def test_running_server_history_is_authoritative_over_local_snapshot(native_store):
+    store = native_store
+    manager = WorkspaceManager()
+    calls = []
+
+    async def respond(request):
+        calls.append(request.url.path)
+        if request.url.path == "/session/ses_one/message":
+            return httpx.Response(200, json=[{"info": {"id": "msg_live", "role": "user"}}])
+        return httpx.Response(200, json={"id": "ses_live", "directory": store.projects[0]})
+
+    async with httpx.AsyncClient(base_url="http://native.test", transport=httpx.MockTransport(respond)) as client:
+        manager._servers[store.projects[0]] = SimpleNamespace(client=client, process=SimpleNamespace(poll=lambda: None))
+        messages = await manager.request(store.projects[0], store.config, "GET", "/session/ses_one/message")
+        assert messages[0]["info"]["id"] == "msg_live"
+        session = await manager.request(store.projects[0], store.config, "GET", "/session/ses_live")
+        assert session["id"] == "ses_live"
+        assert calls == ["/session/ses_one/message", "/session/ses_live"]
 
 
 def test_api_projects_include_collapsed_counts_and_history_keeps_skill_annotations(native_store, tmp_path, monkeypatch):

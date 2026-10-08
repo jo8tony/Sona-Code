@@ -786,9 +786,9 @@ async def get_queue(project_id: str, session_id: str, request: Request):
 @router.post("/workspace/projects/{project_id}/sessions/{session_id}/queue", status_code=202)
 async def enqueue_message(project_id: str, session_id: str, body: QueuedMessageBody, request: Request):
     payload = await _queue_payload(project_id, session_id, body, request)
-    # Confirm the session exists before storing anything for background delivery.
+    # Confirm against the server that will receive the task, not a cold snapshot.
     path = _project_path(request, project_id)
-    await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}")
+    await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}", params={"directory": path})
     return await _queue_result(request.app.state.runtime.workspace_queue.add(project_id, path, session_id, body.kind, payload))
 
 
@@ -820,7 +820,8 @@ def configure_workspace_queue(app: FastAPI) -> None:
         statuses = await _opencode(request, path, "GET", "/session/status")
         if isinstance(statuses, dict) and statuses.get(session_id, {}).get("type", "idle") != "idle":
             return statuses, []
-        messages = await _opencode(request, path, "GET", f"/session/{session_id}/message")
+        # Completion tracking must read the same live database as task dispatch.
+        messages = await _opencode(request, path, "GET", f"/session/{session_id}/message", params={"directory": path})
         return statuses, messages
 
     async def dispatch(entry: dict, item: dict) -> object:

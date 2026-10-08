@@ -156,7 +156,11 @@ def read_history(project: str, config: AppConfig, endpoint: str) -> object | Non
             if not SESSION_COLUMNS <= _columns(db, "session"):
                 return None
             row = db.execute("SELECT * FROM session WHERE id = ?", (session_id,)).fetchone()
-            if row is None or _directory(row["directory"]) != _directory(project):
+            if row is None:
+                # An alternate channel/database or a newly created native session
+                # may not be in this snapshot. Only the native API can confirm 404.
+                return None
+            if _directory(row["directory"]) != _directory(project):
                 raise HistoryNotFound(session_id)
             info = _session(row)
             if resource is None:

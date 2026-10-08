@@ -20,6 +20,8 @@ FastAPI 工作区 API ──► WorkspaceManager ──► opencode serve（每�
 
 OpenCode 服务只监听 `127.0.0.1`，使用每次启动随机生成的 HTTP Basic 密码。页面通过同源的 FastAPI API 获取会话、消息、文件差异和权限请求；SSE 与定时刷新用于更新进行中的对话。应用关闭或影响 OpenCode 的设置变化时，关闭由工作区启动的服务进程。
 
+未启动项目服务时，可通过只读 SQLite 快照浏览历史；快照中缺少会话时必须交给原生 HTTP API 确认，不能直接认定会话不存在。项目服务已运行后，会话及消息读取以该服务为准。发送队列的会话校验、运行状态和回复完成检查始终读取实际接收任务的服务，避免历史快照与原生数据库不一致时阻塞新会话、旧会话或 fork 会话。
+
 ## OpenCode 功能入口
 
 工作区对接的是 OpenCode 官方 `opencode serve` HTTP API。顶部的 **OpenCode 终端** 入口启动原生 TUI；需要尚未移植到工作区的命令、快捷键、插件交互或完整终端体验时，可从那里使用。如果 `opencode` 位于 PATH，通用 shell 会话也可执行 OpenCode CLI。接口以安装包锁定的 OpenCode 版本为准，发布前应核对该版本的 `/doc` OpenAPI 描述。

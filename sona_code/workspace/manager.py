@@ -268,7 +268,11 @@ class WorkspaceManager:
         self, project: str, config: AppConfig, method: str, endpoint: str,
         *, body: dict | None = None, params: dict[str, str | int] | None = None,
     ) -> object:
-        if method == "GET" and not params:
+        path = str(Path(project).expanduser().resolve())
+        active = self._servers.get(path)
+        # Cold history is an optimization; a running server owns the current
+        # database and message state, including newly created/forked sessions.
+        if method == "GET" and not params and (not active or active.process.poll() is not None):
             if self._config_supplier is not None:
                 config = self._config_supplier()
             try:
