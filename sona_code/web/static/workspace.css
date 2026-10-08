@@ -45,7 +45,7 @@
 .wsp-settings { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; color: var(--text-dim); font-size: 15px; font-weight: 650; }
 .wsp-settings:hover { background: #edf1f7; color: var(--text); text-decoration: none; }
 .wsp-settings:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
-.wsp-settings svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.wsp-settings svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .wsp-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: linear-gradient(#fff, #fcfdff); }
 
 /* Skill management uses the same local workspace visual language. */
@@ -182,7 +182,7 @@
 .wsp-new { height: 38px; border-radius: 9px; box-shadow: 0 4px 10px rgba(54,111,232,.17); }
 .wsp-search-wrap { height: 36px; margin-top: 12px; padding: 0 10px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 9px; background: #fff; color: var(--text-faint); }
 .wsp-search-wrap:focus-within { border-color: #a8bdf4; box-shadow: 0 0 0 3px rgba(54,111,232,.08); }
-.wsp-search-wrap svg { width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.wsp-search-wrap svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .wsp-search { width: 100%; min-width: 0; height: 100%; margin: 0; padding: 0; border: 0; outline: 0 !important; background: transparent; font-size: 14px; }
 .wsp-search-wrap kbd { padding: 0 4px; border: 1px solid var(--border); border-radius: 4px; background: #f8fafc; color: var(--text-faint); font: 12px var(--mono); white-space: nowrap; }
 .wsp-project-row { display: flex; align-items: center; border-radius: 8px; }
@@ -190,7 +190,7 @@
 .wsp-project-head { flex: 1; min-width: 0; min-height: 37px; background: transparent; }
 .wsp-project-toggle { width: 27px; height: 30px; margin-right: 2px; border: 0; border-radius: 7px; background: transparent; color: var(--text-faint); display: grid; place-items: center; }
 .wsp-project-toggle:hover { background: #e4eaf4; color: var(--text); }
-.wsp-project-toggle svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; transition: transform .18s ease; }
+.wsp-project-toggle svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; transition: transform .18s ease; }
 .wsp-project.collapsed .wsp-project-toggle svg { transform: rotate(-90deg); }
 .wsp-project.collapsed .wsp-threads { display: none; }
 .wsp-thread { border-radius: 8px; }
@@ -208,7 +208,7 @@
 .wsp-tool-status { flex: none; color: var(--green); font-size: 12px; font-weight: 650; }
 .wsp-tool.running .wsp-tool-status, .wsp-tool.pending .wsp-tool-status { color: #a66817; }
 .wsp-tool.error .wsp-tool-status { color: var(--red); }
-.wsp-tool-chevron { width: 15px; height: 15px; flex: none; fill: none; stroke: var(--text-faint); stroke-width: 2; transition: transform .18s ease; }
+.wsp-tool-chevron { width: 14px; height: 14px; flex: none; fill: none; stroke: var(--text-faint); stroke-width: 2; transition: transform .18s ease; }
 .wsp-tool[open] .wsp-tool-chevron { transform: rotate(180deg); }
 .wsp-tool-body { max-height: 360px; overflow: auto; padding: 10px 12px 12px; white-space: normal; }
 .wsp-tool-label { margin: 6px 0; color: var(--text-faint); font: 12px var(--sans); font-weight: 700; }
@@ -218,7 +218,7 @@
 .wsp-input { min-height: 66px; max-height: 165px; padding: 13px 15px 2px; resize: none; outline: 0 !important; }
 .wsp-model { width: auto; max-width: min(260px, 48vw); min-height: 29px; padding: 5px 30px 5px 8px; border-radius: 6px; background-color: #f8fafc; font-size: 12.5px; }
 .wsp-thinking { display: flex; align-items: center; gap: 8px; margin-top: 9px; color: var(--accent); font-size: 13.5px; }
-.wsp-thinking .wsp-status-icon { width: 18px; height: 18px; flex: none; }
+.wsp-thinking .wsp-status-icon { width: 17px; height: 17px; flex: none; }
 .wsp-change-count-kind { color: var(--text-faint); font-size: 12px; font-weight: 400; white-space: nowrap; }
 .wsp-no-response { margin-top: 5px; color: var(--text-faint); font-size: 13.5px; }
 .wsp-composer { position: relative; }
@@ -260,7 +260,7 @@
 .wsp-attachment button { position: absolute; top: 1px; right: 1px; width: 21px; height: 21px; display: grid; place-items: center; border: 1px solid #d7dce5; border-radius: 50%; background: rgba(255,255,255,.95); color: var(--text-dim); font-size: 17px; line-height: 1; cursor: pointer; }
 .wsp-attach { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--text-dim); cursor: pointer; }
 .wsp-attach:hover { background: #f2f6ff; color: var(--accent); }
-.wsp-attach svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.wsp-attach svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
 .wsp-stats { max-width: 870px; min-height: 17px; margin: 7px auto 0; overflow: hidden; color: var(--text-faint); font: 12px/1.5 var(--sans); text-overflow: ellipsis; white-space: nowrap; }
 .wsp-stat-context { color: #60769a; font-weight: 650; }
 .wsp-message-error { margin: 7px 0 12px; padding: 12px 14px; border: 1px solid #efcecc; border-radius: 9px; background: #fff7f6; color: #8e3632; font-size: 13.5px; }
@@ -299,7 +299,7 @@
 }
 @keyframes wsp-pulse { 50% { opacity: .52; } }
 .wsp-send { padding: 0 7px; display: grid; place-items: center; border-radius: 8px; }
-.wsp-send svg, .wsp-menu svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.wsp-send svg, .wsp-menu svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 @media (prefers-reduced-motion: reduce) {
   .wsp *, .wsp *::before, .wsp *::after { transition-duration: .01ms !important; }
 }
@@ -320,14 +320,14 @@
 .wsp-action-menu { position: absolute; z-index: 50; top: calc(100% + 5px); right: 0; width: 176px; padding: 5px; border: 1px solid var(--border); border-radius: 9px; background: #fff; box-shadow: 0 12px 32px rgba(30,45,70,.17); }
 .wsp-action-menu[hidden] { display: none; }
 .wsp-action-menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; font-size: 13px; cursor: pointer; }
-.wsp-icon { display: block; width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.wsp-icon { display: block; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .wsp-action-icon { display: inline-grid; place-items: center; width: 19px; flex: none; color: #8191aa; }
 .wsp-action-menu button:hover { background: #f2f6ff; }
 .wsp-action-menu button.danger { color: var(--red); }
 .wsp-model-trigger { display: inline-flex; align-items: center; justify-content: space-between; gap: 7px; padding-right: 8px; cursor: pointer; }
 .wsp-model-trigger::after { content: none; }
 .wsp-model-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wsp-model-chevron { width: 15px; height: 15px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.wsp-model-chevron { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .wsp-variant { min-width: 75px; max-width: 112px; height: 29px; padding: 4px 19px 4px 7px; border: 1px solid var(--border); border-radius: 6px; background: #f8fafc; color: var(--text-dim); font-size: 12.5px; }
 .wsp-variant[hidden] { display: none; }
 .wsp-model-picker, .wsp-command-menu { width: min(530px, 100%); box-sizing: border-box; }
@@ -357,8 +357,8 @@
 
 /* Workspace views follow the prototype's spacing and information hierarchy. */
 .wsp-brand-mark { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 11px; background: linear-gradient(145deg, #4a82f4, #2c5dc4); color: #fff; box-shadow: 0 5px 12px rgba(54, 111, 232, .22); }
-.wsp-brand-mark svg { width: 22px; height: 22px; }
-.wsp-avatar svg { width: 21px; height: 21px; color: var(--accent); }
+.wsp-brand-mark svg { width: 21px; height: 21px; }
+.wsp-avatar svg { width: 20px; height: 20px; color: var(--accent); }
 .wsp-side-label { align-items: center; padding: 0 1px; }
 .wsp-side-label-actions { display: inline-flex; align-items: center; gap: 8px; letter-spacing: 0; }
 .wsp-project:nth-child(3n+2) .wsp-project-mark { background: #e8f6f0; color: #29875e; }
@@ -370,7 +370,7 @@
 .wsp-project-name { flex: 0 1 auto; }
 .wsp-project-count { flex: none; min-width: 19px; height: 18px; display: inline-grid; place-items: center; padding: 0 5px; border-radius: 99px; background: #e7ecf5; color: #63748f; font: 700 12px var(--sans); }
 .wsp-row-action { flex: none; width: 25px; height: 25px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--text-faint); font-size: 19px; line-height: 1; cursor: pointer; }
-.wsp-row-action svg { width: 19px; height: 19px; fill: none; }
+.wsp-row-action svg { width: 18px; height: 18px; fill: none; }
 .wsp-row-action:hover, .wsp-row-action[aria-expanded="true"] { background: #eaf1ff; color: var(--accent); }
 .wsp-row-menu-wrap { position: relative; flex: none; display: inline-flex; }
 .wsp-project-row .wsp-action-menu, .wsp-thread-row .wsp-action-menu { top: calc(100% + 3px); right: 0; }
@@ -544,7 +544,7 @@
 .wsp-model-trigger:hover, .wsp-agent:hover, .wsp-variant:hover { background-color: #f2f6ff; }
 .wsp-variant { max-width: 110px; padding: 0 5px; }
 .wsp-send { width: 34px; height: 34px; border-radius: 9px; }
-.wsp-send svg { width: 21px; height: 21px; }
+.wsp-send svg { width: 20px; height: 20px; }
 @media (max-width: 700px) {
   .wsp-message.user .wsp-message-inner { max-width: 90%; }
   .wsp-agent { max-width: 96px; }
@@ -566,13 +566,13 @@
 .wsp-status.busy { background: transparent; color: var(--accent); }
 .wsp-status.attention { border: 0; background: transparent; color: #a66817; }
 .wsp-status.error { border: 0; background: transparent; color: var(--red); }
-.wsp-status-icon { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.wsp-status-icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
 .wsp-abort { width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border: 0; background: transparent; color: var(--red); cursor: pointer; }
 .wsp-abort[hidden] { display: none; }
-.wsp-abort svg { width: 21px; height: 21px; }
+.wsp-abort svg { width: 20px; height: 20px; }
 .wsp-abort:hover { background: #fff0ef; }
 .wsp-compaction { display: flex; align-items: center; gap: 8px; width: fit-content; margin: 16px 0 22px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 9px; background: #fbfcfe; color: var(--text-dim); font-size: 13px; }
-.wsp-compaction .wsp-status-icon { width: 18px; height: 18px; }
+.wsp-compaction .wsp-status-icon { width: 17px; height: 17px; }
 .wsp-compaction.busy { color: var(--accent); }
 .wsp-compaction.ready { color: var(--green); }
 .wsp-compaction.error { color: var(--red); }
@@ -580,7 +580,7 @@
 .wsp-agent-trigger { height: 31px; min-width: 0; max-width: 150px; padding: 0 5px; display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 6px; background: transparent; color: var(--text-dim); font-size: 13px; white-space: nowrap; cursor: pointer; }
 .wsp-agent-trigger:hover, .wsp-agent-trigger[aria-expanded="true"] { background: #f2f6ff; }
 .wsp-agent-trigger span { overflow: hidden; text-overflow: ellipsis; }
-.wsp-agent-trigger svg { width: 15px; height: 15px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.wsp-agent-trigger svg { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .wsp-model-picker, .wsp-agent-picker { position: fixed; z-index: 50; bottom: auto; right: auto; box-sizing: border-box; border: 1px solid var(--border); border-radius: 11px; background: #fff; box-shadow: 0 18px 48px rgba(30,45,70,.18); }
 .wsp-model-picker { width: min(420px, calc(100vw - 24px)); max-height: min(510px, 65vh); overflow: hidden; }
 .wsp-agent-picker { width: min(170px, calc(100vw - 24px)); padding: 5px; }
@@ -600,7 +600,7 @@
 .wsp-status.busy { border-color: #ccdcfb; background: #f2f6ff; color: var(--accent); }
 .wsp-status.attention { border-color: #f0dfbc; background: #fff9ed; color: #a66817; }
 .wsp-status.error { border-color: #efcecc; background: #fff5f4; color: var(--red); }
-.wsp-status-icon { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.wsp-status-icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .wsp-status-mark { stroke-width: 2.2; }
 .wsp-status-spinning { transform-box: view-box; transform-origin: center; animation: wsp-spin 1.1s linear infinite; will-change: transform; backface-visibility: hidden; }
 .wsp-status-spinner circle { stroke-width: 2.3; }
@@ -625,8 +625,8 @@
 .wsp-change-summary { display: inline-flex; align-items: center; gap: 10px; max-width: 100%; margin-top: 16px; padding: 9px 12px; border: 1px solid #e5e9ef; border-radius: 9px; background: #fafbfd; color: var(--text-dim); font-size: 13.5px; cursor: pointer; transition: border-color .15s, background .15s; }
 .wsp-change-summary:hover, .wsp-change-summary[aria-expanded="true"] { border-color: #cad6e9; background: #f3f6fb; }
 .wsp-change-summary:focus-visible, .wsp-change-file:focus-visible, .wsp-change-close:focus-visible, .wsp-change-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.wsp-change-summary > svg, .wsp-change-file > svg { width: 19px; height: 21px; flex: none; fill: none; stroke: #8a98ae; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; }
-.wsp-change-summary > .wsp-change-chevron { width: 16px; height: 16px; margin-left: 2px; transition: transform .15s; }
+.wsp-change-summary > svg, .wsp-change-file > svg { width: 18px; height: 20px; flex: none; fill: none; stroke: #8a98ae; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; }
+.wsp-change-summary > .wsp-change-chevron { width: 15px; height: 15px; margin-left: 2px; transition: transform .15s; }
 .wsp-change-summary[aria-expanded="true"] > .wsp-change-chevron { transform: rotate(180deg); }
 .wsp-change-divider { width: 1px; height: 12px; background: #e0e5ed; }
 .wsp-change-stats { display: inline-flex; align-items: center; gap: 9px; flex: none; font: 13px/1.4 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -717,9 +717,9 @@
 .wsp-skill-mention, .wsp-file-mention { display: inline-flex; align-items: center; gap: 4px; color: #245abb; font-weight: 500; vertical-align: baseline; white-space: nowrap; }
 .wsp-input .wsp-skill-mention, .wsp-input .wsp-file-mention { user-select: all; border-radius: 3px; }
 .wsp-input .wsp-skill-mention:hover, .wsp-input .wsp-file-mention:hover { background: #edf4ff; }
-.wsp-skill-icon { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.7; flex-shrink: 0; }
-.wsp-skill-mention .wsp-skill-icon { width: 18px; height: 18px; align-self: center; }
-.wsp-file-icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.4; flex-shrink: 0; }
+.wsp-skill-icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; flex-shrink: 0; }
+.wsp-skill-mention .wsp-skill-icon { width: 17px; height: 17px; align-self: center; }
+.wsp-file-icon { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.4; flex-shrink: 0; }
 .wsp-file-mention { max-width: 100%; }
 .wsp-file-mention > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .wsp-skill-message { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -761,14 +761,14 @@
 
 .wsp-thread-running { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 14px; width: 14px; height: 14px; color: var(--blue, #356be8); }
 .wsp-thread-running[hidden] { display: none; }
-.wsp-thread-running .wsp-status-icon { width: 16px; height: 16px; }
+.wsp-thread-running .wsp-status-icon { width: 15px; height: 15px; }
 
 /* Session todo preview, kept separate from the full Tasks tab. */
 .wsp-main { position: relative; }
 .wsp-todo-trigger[hidden], .wsp-todo-panel[hidden] { display: none; }
 .wsp-todo-trigger { flex: none; display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--text-dim); font-size: 13px; font-weight: 650; cursor: pointer; }
 .wsp-todo-trigger:hover, .wsp-todo-trigger.active { border-color: #cbdcfb; background: #f3f7ff; color: var(--accent); }
-.wsp-todo-trigger svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.wsp-todo-trigger svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .wsp-todo-trigger small { padding: 2px 5px; border-radius: 5px; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-variant-numeric: tabular-nums; }
 .wsp-todo-panel { box-sizing: border-box; position: absolute; z-index: 24; top: 132px; right: 18px; width: min(320px, calc(100% - 36px)); max-height: min(560px, calc(100% - 154px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid #e1e8f2; border-radius: 15px; background: #fff; box-shadow: 0 13px 36px rgba(36, 55, 85, .14), 0 2px 8px rgba(36, 55, 85, .05); }
 .wsp-todo-panel-head { display: flex; align-items: center; gap: 10px; padding: 15px 15px 10px; }
@@ -811,7 +811,7 @@
 /* Give the larger type and Lucide icons room while preserving the panel layout. */
 .wsp-lucide { stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
 .wsp-message-action { width: 32px; height: 32px; }
-.wsp-message-action .wsp-icon { width: 20px; height: 20px; }
+.wsp-message-action .wsp-icon { width: 19px; height: 19px; }
 .wsp-project-head { min-height: 41px; }
 .wsp-project-count { min-width: 21px; height: 20px; }
 .wsp-row-action { width: 29px; height: 29px; }
@@ -819,7 +819,7 @@
 .wsp-thread-row .wsp-thread { padding-right: 36px; }
 .wsp-tree-row { min-height: 31px; gap: 6px; }
 .wsp-tree-toggle { display: inline-grid; place-items: center; width: 15px; }
-.wsp-tree-toggle .wsp-icon { width: 15px; height: 15px; }
+.wsp-tree-toggle .wsp-icon { width: 14px; height: 14px; }
 .wsp-tree-browser { width: 26px; height: 26px; }
 .wsp-new { height: 42px; }
 .wsp-search-wrap { height: 40px; }
@@ -829,13 +829,13 @@
 .wsp-tree-head button, .wsp-picker-head button,
 .wsp-todo-panel-close { display: inline-flex; align-items: center; justify-content: center; padding: 0; }
 .wsp-tree-head button .wsp-icon, .wsp-picker-head button .wsp-icon,
-.wsp-side-close .wsp-icon, .wsp-todo-panel-close .wsp-icon { width: 18px; height: 18px; }
-.wsp-todo-panel-link > .wsp-icon { display: inline-block; float: right; width: 17px; height: 17px; }
-.wsp-tool-symbol .wsp-icon { width: 16px; height: 16px; }
+.wsp-side-close .wsp-icon, .wsp-todo-panel-close .wsp-icon { width: 17px; height: 17px; }
+.wsp-todo-panel-link > .wsp-icon { display: inline-block; float: right; width: 16px; height: 16px; }
+.wsp-tool-symbol .wsp-icon { width: 15px; height: 15px; }
 
 .wsp-new { display: flex; align-items: center; justify-content: center; gap: 7px; }
-.wsp-new .wsp-icon { width: 18px; height: 18px; }
-.wsp-todo-panel-icon .wsp-icon { width: 20px; height: 20px; }
-.wsp-attachment button .wsp-icon { width: 14px; height: 14px; }
+.wsp-new .wsp-icon { width: 17px; height: 17px; }
+.wsp-todo-panel-icon .wsp-icon { width: 19px; height: 19px; }
+.wsp-attachment button .wsp-icon { width: 13px; height: 13px; }
 .wsp-change-close { display: inline-grid; place-items: center; }
-.wsp-change-close .wsp-icon, .wsp-queue-remove .wsp-icon { width: 18px; height: 18px; }
+.wsp-change-close .wsp-icon, .wsp-queue-remove .wsp-icon { width: 17px; height: 17px; }
