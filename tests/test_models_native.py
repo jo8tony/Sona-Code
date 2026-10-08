@@ -16,6 +16,7 @@ import pytest
 
 from sona_code.admin.models import compile_providers, native_provider_id
 from sona_code.config import AppConfig, UpstreamConfig, UpstreamModelConfig
+from sona_code.workspace.history import read_history, session_catalog
 
 BINARIES = [p for p in os.environ.get("OPENCODE_TEST_BINARIES", "").split(os.pathsep) if p]
 
@@ -88,6 +89,9 @@ def test_native_provider_protocol_keys_and_variants(binary, proxied, provider_ke
     for name in ("CONFIG", "CACHE", "DATA", "STATE"):
         env[f"XDG_{name}_HOME"] = str(tmp_path / name.lower())
     env.pop("OPENCODE_CONFIG", None)
+    env.pop("OPENCODE_DB", None)
+    history_config = cfg.model_copy(deep=True)
+    history_config.terminal.inject_env = {"XDG_DATA_HOME": env["XDG_DATA_HOME"], "OPENCODE_DB": ""}
     project = tmp_path / "project"
     project.mkdir()
     log = (tmp_path / "native.log").open("w")
@@ -124,6 +128,13 @@ def test_native_provider_protocol_keys_and_variants(binary, proxied, provider_ke
                     time.sleep(.1)
                 assert assistants and not any(m["info"].get("error") for m in assistants), json.dumps(assistants)
                 assert any(p.get("type") == "text" and "done" in p.get("text", "") for m in assistants for p in m.get("parts", [])), assistants
+                # Cold browsing must reconstruct the same persisted V1 payloads,
+                # including messages still committed to the live WAL.
+                assert read_history(str(project), history_config, f"/session/{session}/message") == messages
+                assert read_history(str(project), history_config, f"/session/{session}") == client.get(f"/session/{session}").json()
+                assert read_history(str(project), history_config, f"/session/{session}/todo") == client.get(f"/session/{session}/todo").json()
+                assert read_history(str(project), history_config, f"/session/{session}/children") == client.get(f"/session/{session}/children").json()
+                assert session_catalog([str(project)], history_config)[str(project)] == client.get("/session").json()
                 matching = [r for r in captured if r[2].get("model") == model]
                 assert matching and all(r[0] == endpoint and r[1] == key for r in matching), matching
                 if variant:
@@ -137,6 +148,7 @@ def test_native_provider_protocol_keys_and_variants(binary, proxied, provider_ke
                     deleted = client.delete(f"/session/{session}/message/{message['info']['id']}")
                     assert deleted.status_code == 200, deleted.text
                 assert client.get(f"/session/{session}/message").json() == []
+                assert read_history(str(project), history_config, f"/session/{session}/message") == []
             if proxied:
                 store = proxy_app.state.runtime.store
                 for _ in range(100):

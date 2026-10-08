@@ -107,6 +107,36 @@ vm.runInContext(source.slice(source.indexOf("  async function loadSessions("), s
 ''')
 
 
+def test_project_catalog_hydrates_collapsed_counts_before_selecting_conversation():
+    run_node(r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8").replace(/\r\n/g, "\n");
+const loaded = [], state = {projects: [], sessions: new Map(), sessionDetails: new Map(), errors: new Map(),
+  collapsedProjects: new Set(), projectId: "empty"};
+const projects = [
+  {id: "empty", session_count: 0, sessions: []},
+  {id: "one", session_count: 1, sessions: [{id: "ses_one", time: {updated: 1}}]},
+];
+const context = vm.createContext({state, projectsLoading: null, checkLoading: null, draftContextReady: false,
+  api: async () => ({items: projects}), alive: () => true, workspaceOrderItems: items => items,
+  workspaceConversationKey: (p,s) => p + ":" + s,
+  refreshWorkspaceStatuses() {}, renderSidebar() {}, renderHeader() {}, renderMain() {},
+  selectProject(id) {assert.equal(state.sessions.get("empty").length, 0);
+    assert.equal(state.sessions.get("one")[0].id, "ses_one"); assert.equal(id, "empty");},
+  loadSessions(project) {loaded.push(project.id);},
+});
+vm.runInContext(source.slice(source.indexOf("  function storeSessions("), source.indexOf("  function modelDisplayName(")), context);
+vm.runInContext(source.slice(source.indexOf("  async function loadCheck("), source.indexOf("  loadProjects();\n  loadCheck();")), context);
+(async () => {
+  await context.loadProjects();
+  assert.equal(state.collapsedProjects.has("one"), true);
+  assert.equal(state.projects.find(p => p.id === "one").session_count, 1);
+  assert.equal(state.sessionDetails.get("one:ses_one").id, "ses_one");
+  assert.deepEqual(loaded, [], "Counts must not need a native startup for each collapsed project");
+})().catch(error => {console.error(error); process.exitCode = 1;});
+''')
+
+
 def test_workspace_suspends_requests_and_resumes_without_resetting_view():
     run_node(r'''
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");

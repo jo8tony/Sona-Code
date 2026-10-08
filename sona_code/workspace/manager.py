@@ -17,6 +17,7 @@ from typing import AsyncIterator, Awaitable, Callable
 import httpx
 
 from sona_code.config import AppConfig
+from sona_code.workspace.history import HistoryNotFound, read_history, session_catalog
 from sona_code.terminal.manager import (
     _build_argv,
     _build_env,
@@ -174,10 +175,24 @@ class WorkspaceManager:
 
         return dict(await asyncio.gather(*(read(path, server) for path, server in list(self._servers.items()))))
 
+    async def session_catalog(self, projects: list[str], config: AppConfig) -> dict[str, list[dict]] | None:
+        if self._config_supplier is not None:
+            config = self._config_supplier()
+        return await asyncio.to_thread(session_catalog, projects, config)
+
     async def _request(
         self, project: str, config: AppConfig, method: str, endpoint: str,
         *, body: dict | None = None, params: dict[str, str | int] | None = None,
     ) -> object:
+        if method == "GET" and not params:
+            if self._config_supplier is not None:
+                config = self._config_supplier()
+            try:
+                snapshot = await asyncio.to_thread(read_history, project, config, endpoint)
+            except HistoryNotFound as exc:
+                raise WorkspaceError("会话不存在", 404) from exc
+            if snapshot is not None:
+                return snapshot
         server = await self.ensure(project, config)
         try:
             response = await server.client.request(

@@ -106,8 +106,13 @@ def check(request: Request) -> dict:
 
 
 @router.get("/workspace/projects")
-def list_projects(request: Request) -> dict:
-    items = [_project_info(item) for item in request.app.state.runtime.terminal_projects.list()]
+async def list_projects(request: Request) -> dict:
+    runtime = request.app.state.runtime
+    items = [_project_info(item) for item in runtime.terminal_projects.list()]
+    catalog = await runtime.workspace.session_catalog([item["path"] for item in items], runtime.provider_config())
+    for item in items:
+        sessions = catalog[item["path"]] if catalog is not None else None
+        item.update(sessions=sessions, session_count=len(sessions) if sessions is not None else None)
     return {"items": items, "total": len(items)}
 
 

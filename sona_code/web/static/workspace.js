@@ -1130,7 +1130,8 @@ function renderWorkspace(view) {
         } },
         el("span", { class: "wsp-project-mark", text: (project.name || "P").slice(0, 2).toUpperCase() }),
         el("span", { class: "wsp-project-name", text: project.name }),
-        el("span", { class: "wsp-project-count", text: all ? String(all.length) : "…" }));
+        el("span", { class: "wsp-project-count", text: all ? String(all.length) :
+          Number.isInteger(project.session_count) ? String(project.session_count) : "…" }));
       const projectRow = el("div", { class: "wsp-project-row" }, heading,
         rowMenu([["重命名", () => openRenameProject(project)], ["打开目录", () => openProjectDirectory(project)],
           ["打开目录树", () => openProjectTree(project)],
@@ -2231,10 +2232,7 @@ function renderWorkspace(view) {
     try {
       const data = await api(`workspace/projects/${encodeURIComponent(project.id)}/sessions`, { silent: true });
       if (!alive()) return;
-      const items = (data.items || []).filter((item) => !item.time?.archived);
-      items.sort((a, b) => (b.time?.updated || 0) - (a.time?.updated || 0));
-      state.sessions.set(project.id, workspaceOrderItems(items, `sona-code:session-order:${project.id}`));
-      for (const item of items) state.sessionDetails.set(workspaceConversationKey(project.id, item.id), item);
+      const items = storeSessions(project, data.items || []);
       if (state.projectId === project.id) lastSessionListRefresh = Date.now();
       state.errors.delete(project.id);
       if (state.projectId === project.id && !items.some((item) => item.id === state.sessionId) &&
@@ -2248,6 +2246,7 @@ function renderWorkspace(view) {
         scrollToLatestOnLoad = true;
         workspaceSelection.sessionId = state.sessionId;
         persistWorkspaceSelection();
+        renderMain();
         refreshSelected();
       } else if (state.projectId === project.id && !state.messagesLoaded && !selectedRefresh) {
         refreshSelected();
@@ -2262,6 +2261,16 @@ function renderWorkspace(view) {
         content.replaceChildren(el("div", { class: "wsp-error", text: detail(error) }));
       }
     }
+  }
+
+  function storeSessions(project, sessions) {
+    const items = sessions.filter(item => !item.time?.archived);
+    items.sort((a, b) => (b.time?.updated || 0) - (a.time?.updated || 0));
+    state.sessions.set(project.id, workspaceOrderItems(items, `sona-code:session-order:${project.id}`));
+    project.session_count = items.length;
+    for (const item of items) state.sessionDetails.set(workspaceConversationKey(project.id, item.id), item);
+    state.errors.delete(project.id);
+    return items;
   }
 
   function modelDisplayName(providerId, modelId) {
@@ -3136,7 +3145,10 @@ function renderWorkspace(view) {
       try { state.chosenModels.set(projectId, localStorage.getItem(`sona-code:model:${projectId}`) || ""); }
       catch (_) { state.chosenModels.set(projectId, ""); }
     }
-    const remembered = workspaceSelection.projectId === projectId ? workspaceSelection.sessionId : null;
+    const saved = workspaceSelection.projectId === projectId ? workspaceSelection.sessionId : null;
+    const project = activeProject();
+    const remembered = saved && (!Array.isArray(project?.sessions) ||
+      state.sessions.get(projectId)?.some(session => session.id === saved)) ? saved : null;
     state.sessionId = remembered || (state.sessions.get(projectId) || [])[0]?.id || null;
     state.statuses = state.projectStatuses.get(projectId) || {};
     restoreDraft();
@@ -3759,13 +3771,23 @@ function renderWorkspace(view) {
       if (!alive()) return;
       const previousIds = new Set(state.projects.map(project => project.id));
       state.projects = workspaceOrderItems(projects.items || [], "sona-code:project-order");
-      for (const project of state.projects) if (!previousIds.has(project.id)) state.collapsedProjects.add(project.id);
+      for (const project of state.projects) {
+        if (!previousIds.has(project.id)) state.collapsedProjects.add(project.id);
+        if (Array.isArray(project.sessions)) storeSessions(project, project.sessions);
+      }
       refreshWorkspaceStatuses();
       const selected = state.projects.find((item) => item.id === state.projectId) || state.projects[0];
       renderSidebar();
       if (selected && (!draftContextReady || selected.id !== state.projectId)) selectProject(selected.id);
       else if (selected) loadSessions(selected);
       else { renderHeader(); renderMain(); }
+      // Older/custom stores need the native API, but still load their counts
+      // without requiring expansion. Limit cold starts to two at a time.
+      const missing = state.projects.filter(project => project.session_count === null && project.id !== selected?.id);
+      const loadCounts = async () => {
+        while (alive() && missing.length) await loadSessions(missing.shift());
+      };
+      Promise.allSettled([loadCounts(), loadCounts()]);
     } catch (error) {
       if (alive() && !state.projects.length) content.replaceChildren(el("div", { class: "wsp-error", text: "加载工作区失败：" + detail(error) }));
     }

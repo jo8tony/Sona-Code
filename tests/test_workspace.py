@@ -601,7 +601,7 @@ const loadContext = vm.createContext({state, workspaceOrderItems: items => items
   api: async () => ({items: state.sessions.get(project.id)}), alive: () => true,
   scrollToLatestOnLoad: false, lastSessionListRefresh: 0,
   saveDraft() {}, restoreDraft() {}, saveConversationView() {}, restoreConversationView() {}, cancelSelectedRefresh() {},
-  persistWorkspaceSelection() {}, refreshSelected() {refreshes++;}, renderSidebar() {}, renderHeader() {},
+  persistWorkspaceSelection() {}, refreshSelected() {refreshes++;}, renderSidebar() {}, renderHeader() {}, renderMain() {},
 });
 state.sessionDetails = new Map();
 const loadSource = source.slice(source.indexOf("  async function loadSessions(project) {"), source.indexOf("  function modelDisplayName("));
