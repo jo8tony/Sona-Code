@@ -137,6 +137,10 @@ def session_catalog(projects: list[str], config: AppConfig) -> dict[str, list[di
 
 def read_history(project: str, config: AppConfig, endpoint: str) -> object | None:
     """Return a supported snapshot, or None to use the authoritative native API."""
+    # This collection route reports process state, not a session named "status".
+    # SQLite history cannot tell whether a native task is still running.
+    if endpoint == "/session/status":
+        return None
     if endpoint == "/session":
         catalog = session_catalog([project], config)
         return catalog[project] if catalog is not None else None

@@ -7,12 +7,15 @@ import socket
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from sona_code.admin.models import compile_providers, native_provider_id
 from sona_code.config import AppConfig, UpstreamConfig, UpstreamModelConfig
+from sona_code.workspace.history import read_history
+from sona_code.workspace.manager import WorkspaceManager
 from sona_code.workspace.queue import WorkspaceQueue
 
 BINARIES = [path for path in os.environ.get("OPENCODE_TEST_BINARIES", "").split(os.pathsep) if path]
@@ -66,6 +69,9 @@ async def test_native_v1_queue_waits_for_stream_completion(binary, tmp_path):
            "OPENCODE_CONFIG_CONTENT": json.dumps(inline), "OPENCODE_SERVER_PASSWORD": "local-test-password"}
     for name in ("CONFIG", "CACHE", "DATA", "STATE"):
         env[f"XDG_{name}_HOME"] = str(tmp_path / name.lower())
+    env["OPENCODE_DB"] = str(tmp_path / "data" / "opencode" / "opencode.db")
+    cfg.terminal.inject_env = {key: value for key, value in env.items()
+                               if key.startswith("XDG_") or key == "OPENCODE_DB"}
     env.pop("OPENCODE_CONFIG", None)
     env.pop("OPENCODE_SERVER_USERNAME", None)
     project = tmp_path / "project"
@@ -107,14 +113,22 @@ async def test_native_v1_queue_waits_for_stream_completion(binary, tmp_path):
             await asyncio.wait_for(event_ready.wait(), 5)
             session_id = (await client.post("/session", json={})).json()["id"]
             base = f"/session/{session_id}"
+            manager = WorkspaceManager()
+
+            async def ensure(project, config):
+                return SimpleNamespace(client=client)
+
+            manager.ensure = ensure
+            assert read_history(str(project), cfg, base) is not None
 
             async def inspect(entry):
-                statuses = (await client.get("/session/status")).json()
-                messages = (await client.get(base + "/message")).json()
+                # Exercise the application's snapshot/live API selection too.
+                statuses = await manager.request(str(project), cfg, "GET", "/session/status")
+                messages = await manager.request(str(project), cfg, "GET", f"/session/{entry['session_id']}/message")
                 return statuses, messages
 
             async def dispatch(entry, item):
-                response = await client.post(base + "/prompt_async", json={"messageID": item["message_id"],
+                response = await client.post(f"/session/{entry['session_id']}/prompt_async", json={"messageID": item["message_id"],
                     "model": {"providerID": provider, "modelID": "queue-model"},
                     "parts": [{"type": "text", "text": item["payload"]["text"]}]})
                 response.raise_for_status()
@@ -174,6 +188,18 @@ async def test_native_v1_queue_waits_for_stream_completion(binary, tmp_path):
             first_messages = (await client.get(base + "/message")).json()
             assert all(m["info"]["sessionID"] == session_id for m in first_messages)
             assert not any("isolated-other" in p.get("text", "") for m in first_messages for p in m["parts"])
+            fork_response = await client.post(base + "/fork", json={})
+            fork_response.raise_for_status()
+            fork_id = fork_response.json()["id"]
+            await queue.add("p", str(project), fork_id, "prompt", {"text": "fork-turn"})
+            for _ in range(150):
+                if not queue.snapshot("p", fork_id)["items"]:
+                    break
+                await queue._step(f"p:{fork_id}")
+                await asyncio.sleep(.1)
+            assert queue.snapshot("p", fork_id) == {"items": [], "paused": False, "error": ""}
+            fork_messages = (await client.get(f"/session/{fork_id}/message")).json()
+            assert any(p.get("text") == "done:fork-turn" for m in fork_messages for p in m["parts"])
     finally:
         if event_task:
             event_task.cancel()

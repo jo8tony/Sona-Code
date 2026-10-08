@@ -1,5 +1,6 @@
 """Cold history browsing, native snapshots and project counts without processes."""
 
+import asyncio
 import hashlib
 import json
 import sqlite3
@@ -134,6 +135,80 @@ def test_snapshot_reads_live_wal_and_never_mutates_native_database(native_store)
     with closing(history._connect(store.path)) as connection:
         with pytest.raises(sqlite3.OperationalError, match="readonly"):
             connection.execute("DELETE FROM session")
+
+
+def test_live_status_endpoint_is_not_a_persisted_session(native_store):
+    store = native_store
+    assert history.read_history(store.projects[0], store.config, "/session/status") is None
+
+
+async def test_queue_reads_live_status_with_history_and_after_fork(native_store, tmp_path, monkeypatch):
+    store = native_store
+    store.config.model_settings.source = "native"
+    app = create_app(store.config, str(tmp_path / "config.json"))
+    runtime = app.state.runtime
+    runtime.terminal_projects.add(store.projects[0], "opencode")
+    queue = runtime.workspace_queue
+    queue._start = lambda key: None
+    queue.interval = .01
+    statuses = {"ses_one": {"type": "busy"}}
+    delivered = []
+
+    async def respond(request):
+        if request.url.path == "/session/status":
+            return httpx.Response(200, json=statuses)
+        if request.url.path == "/session/ses_one/fork":
+            store.session("ses_fork")
+            return httpx.Response(200, json={"id": "ses_fork"})
+        if request.url.path.endswith("/prompt_async"):
+            body = json.loads(request.content)
+            session_id = request.url.path.split("/")[2]
+            message_id = body["messageID"]
+            delivered.append((session_id, body["parts"][0]["text"]))
+            store.db.executemany("INSERT INTO message VALUES (?, ?, ?, ?)", [
+                (message_id, session_id, 10, json.dumps({"role": "user"})),
+                (message_id + "_reply", session_id, 11, json.dumps({
+                    "role": "assistant", "parentID": message_id, "time": {"completed": 11},
+                })),
+            ])
+            store.db.commit()
+            return httpx.Response(204)
+        pytest.fail(f"Unexpected native request: {request.method} {request.url.path}")
+
+    native_client = httpx.AsyncClient(base_url="http://native.test", transport=httpx.MockTransport(respond))
+
+    async def ensure(project, config):
+        return SimpleNamespace(client=native_client)
+
+    monkeypatch.setattr(runtime.workspace, "ensure", ensure)
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://app.test") as client:
+            prefix = "/__recorder/api/workspace"
+            project_id = (await client.get(f"{prefix}/projects")).json()["items"][0]["id"]
+            base = f"{prefix}/projects/{project_id}"
+            status = await client.get(f"{base}/status")
+            assert status.status_code == 200
+            assert status.json() == statuses
+            original = f"{base}/sessions/ses_one"
+            response = await client.post(original + "/queue", json={"payload": {"text": "next turn"}})
+            assert response.status_code == 202
+            await queue._step(f"{project_id}:ses_one")
+            assert not delivered
+            statuses.clear()  # Native V1 omits idle sessions from this live endpoint.
+            await asyncio.wait_for(queue._run(f"{project_id}:ses_one"), 2)
+            assert delivered == [("ses_one", "next turn")]
+            assert (await client.get(original + "/queue")).json() == {"items": [], "paused": False, "error": ""}
+            fork = await client.post(original + "/fork", json={})
+            assert fork.status_code == 200
+            fork_base = f"{base}/sessions/{fork.json()['id']}"
+            response = await client.post(fork_base + "/queue", json={"payload": {"text": "fork turn"}})
+            assert response.status_code == 202
+            await asyncio.wait_for(queue._run(f"{project_id}:ses_fork"), 2)
+            assert delivered == [("ses_one", "next turn"), ("ses_fork", "fork turn")]
+            assert (await client.get(fork_base + "/queue")).json() == {"items": [], "paused": False, "error": ""}
+    finally:
+        await native_client.aclose()
+        await runtime.aclose()
 
 
 def test_empty_store_is_not_created_and_legacy_or_custom_channel_is_not_guessed(tmp_path, monkeypatch):
