@@ -250,8 +250,8 @@
 .wsp-command-heading { padding: 6px 8px 7px; color: var(--text-faint); font-size: 12px; font-weight: 700; }
 .wsp-command-option { width: 100%; padding: 8px 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 0; border-radius: 7px; background: transparent; color: var(--text); text-align: left; font-size: 13px; }
 .wsp-command-option.selected, .wsp-command-option[aria-selected="true"] { background: #edf3ff; }
-.wsp-command-option strong { color: var(--accent); font: 13px var(--mono); }
-.wsp-command-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-size: 12.5px; }
+.wsp-command-option strong { flex-shrink: 0; max-width: calc(100% - 12px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent); font: 13px var(--mono); }
+.wsp-command-option span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-size: 12.5px; }
 .wsp-attachment-list { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px 4px; border-bottom: 1px solid #f1f3f7; }
 .wsp-attachment-list[hidden], .wsp-stats[hidden] { display: none; }
 .wsp-attachment { position: relative; width: 94px; display: grid; gap: 4px; padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: #fbfcfe; }
@@ -613,7 +613,7 @@
 @media (max-width: 1000px) { .wsp-composer-hint { display: none; } }
 @media (max-width: 700px) { .wsp-variant-trigger { max-width: 76px; } }
 @keyframes wsp-spin { to { transform: rotate(360deg); } }
-.wsp-command-menu .wsp-file-option strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 13px var(--mono); }
+.wsp-command-menu .wsp-file-option strong { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 13px var(--mono); }
 .wsp-command-menu .wsp-file-option span { flex: none; color: var(--text-faint); font-size: 12px; }
 .wsp-command-menu .wsp-file-state { padding: 12px 10px; color: var(--text-faint); font-size: 13px; }
 /* Task progress remains visible even on Windows with animations disabled. */
