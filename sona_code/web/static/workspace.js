@@ -2396,14 +2396,17 @@ function renderWorkspace(view) {
       const title = workspaceRelativeFile(diff.file || diff.path || "文件", activeProject()?.path);
       const status = diff.status || (diff.before === "" && diff.after ? "added" : diff.before && diff.after === "" ? "deleted" : "modified");
       const label = diff.derived ? "已写入" : status === "added" ? "新增" : status === "deleted" ? "删除" : "修改";
-      const card = el("section", { class: `wsp-diff-file${selection?.file === title ? " selected" : ""}`,
-        "data-change-file": title, tabindex: "-1", "aria-label": title },
-        el("div", { class: "wsp-diff-head" },
+      const card = el("details", { class: `wsp-diff-file${selection?.file === title ? " selected" : ""}`,
+        "data-change-file": title,
+        "data-change-key": JSON.stringify([state.projectId, state.sessionId, selection?.messageId, title]),
+        tabindex: "-1", "aria-label": title },
+        el("summary", { class: "wsp-diff-head" },
+          workspaceIcon("chevron", "wsp-diff-chevron"),
           el("span", { class: "wsp-file-badge", text: label }),
           el("span", { class: "wsp-diff-path", title, text: title }),
           el("button", { class: "wsp-change-locate", type: "button", title: "在目录树中定位",
             "aria-label": "在目录树中定位 " + title,
-            onclick: () => void tree.locate(activeProject(), title) }, workspaceIcon("locate")),
+            onclick: event => { event.preventDefault(); void tree.locate(activeProject(), title); } }, workspaceIcon("locate")),
           changeStats([diff])));
       const rows = diffRows(diff);
       if (rows.length) {
@@ -2590,14 +2593,15 @@ function renderWorkspace(view) {
       if (changesView?.parentNode !== content || changesSignature !== signature) {
         const positions = new Map(Array.from(content.querySelectorAll(".wsp-diff-file")).map(card => {
           const body = card.querySelector(".wsp-diff-body");
-          return [card.dataset.changeFile, { top: body?.scrollTop || 0, left: body?.scrollLeft || 0 }];
+          return [card.dataset.changeKey, { open: card.open, top: body?.scrollTop || 0, left: body?.scrollLeft || 0 }];
         }));
         const children = [];
         renderChanges({ append: (...nodes) => children.push(...nodes) });
         workspaceSyncChildren(content, children);
         for (const card of content.querySelectorAll(".wsp-diff-file")) {
-          const position = positions.get(card.dataset.changeFile);
+          const position = positions.get(card.dataset.changeKey);
           const body = card.querySelector(".wsp-diff-body");
+          if (position) card.open = position.open;
           if (position && body) { body.scrollTop = position.top; body.scrollLeft = position.left; }
         }
         changesView = content.firstChild;

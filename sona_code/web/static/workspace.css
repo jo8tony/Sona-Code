@@ -456,7 +456,12 @@
 .wsp-diff-metric.add strong { color: var(--green); }
 .wsp-diff-metric.remove strong { color: var(--red); }
 .wsp-diff-file { margin: 0 0 13px; border-radius: 10px; }
-.wsp-diff-head { align-items: center; justify-content: flex-start; gap: 8px; padding: 10px 13px; background: #fafbfd; font: 13px var(--mono); }
+.wsp-diff-head { align-items: center; justify-content: flex-start; gap: 8px; padding: 10px 13px; background: #fafbfd; font: 13px var(--mono); list-style: none; cursor: pointer; }
+.wsp-diff-head::-webkit-details-marker { display: none; }
+.wsp-diff-file:not([open]) > .wsp-diff-head { border-bottom: 0; }
+.wsp-diff-head:hover { background: #f3f6fb; }
+.wsp-diff-chevron { width: 14px; height: 14px; flex: none; color: var(--text-faint); }
+.wsp-diff-file[open] > .wsp-diff-head .wsp-diff-chevron { transform: rotate(90deg); }
 .wsp-file-badge { padding: 2px 5px; border-radius: 4px; background: #e9f7ee; color: var(--green); font: 700 11px var(--sans); }
 .wsp-diff-head .wsp-diff-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
 .wsp-diff-body { max-height: 520px; overflow: auto; padding: 8px 0; font: 13px/1.8 var(--mono); }
