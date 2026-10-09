@@ -319,19 +319,24 @@ function workspaceFileTextMatches(text, lookup, projectPath = "") {
 }
 
 // Reuse the native details element while new reasoning tokens arrive.
-function workspaceReasoningNode(cached, key, text, expanded, streaming) {
-  const previous = Array.from(cached?.querySelectorAll?.(".wsp-reasoning") || [])
-    .find(node => node.workspaceReasoningKey === key);
+function workspaceReasoningNode(cached, key, text, expanded, streaming, pendingKey = null, waiting = false) {
+  const candidates = Array.from(cached?.querySelectorAll?.(".wsp-reasoning") || []);
+  const previous = candidates.find(node => node.workspaceReasoningKey === key) ||
+    (pendingKey && candidates.find(node => node.workspaceReasoningKey === pendingKey));
   const node = previous || el("details", {class: "wsp-reasoning wsp-live-reasoning"},
     el("summary", {text: "思考过程"}), el("div", {class: "wsp-reasoning-content", text: ""}));
+  if (previous && previous.workspaceReasoningKey !== key && expanded.has(previous.workspaceReasoningKey)) {
+    expanded.set(key, expanded.get(previous.workspaceReasoningKey));
+    expanded.delete(previous.workspaceReasoningKey);
+  }
+  node.workspaceReasoningKey = key;
   if (!previous) {
-    node.workspaceReasoningKey = key;
     node.open = expanded.has(key) ? !!expanded.get(key) : streaming;
-    node.addEventListener("toggle", () => expanded.set(key, node.open));
+    node.addEventListener("toggle", () => expanded.set(node.workspaceReasoningKey, node.open));
   }
   if (streaming && !expanded.has(key)) node.open = true;
   const body = node.querySelector(".wsp-reasoning-content");
-  const target = text.trimEnd();
+  const target = waiting ? "等待模型返回思考内容…" : text.trimEnd();
   const write = value => {
     const top = body.scrollTop;
     const follow = body.scrollHeight - body.clientHeight - top <= 40;
@@ -343,7 +348,7 @@ function workspaceReasoningNode(cached, key, text, expanded, streaming) {
   if (body) {
     node.workspaceReasoningTarget = target;
     const displayed = body.firstChild?.data || body.textContent || "";
-    const animate = streaming && node.open && typeof requestAnimationFrame === "function";
+    const animate = !waiting && streaming && node.open && typeof requestAnimationFrame === "function";
     if (!animate || !target.startsWith(displayed)) {
       if (node.workspaceReasoningFrame) cancelAnimationFrame(node.workspaceReasoningFrame);
       node.workspaceReasoningFrame = null;
@@ -365,7 +370,7 @@ function workspaceReasoningNode(cached, key, text, expanded, streaming) {
     }
   }
   const summary = node.querySelector("summary");
-  if (summary) summary.textContent = streaming ? "思考过程 · 生成中" : "思考过程";
+  if (summary) summary.textContent = waiting ? "思考过程 · 等待输出" : streaming ? "思考过程 · 生成中" : "思考过程";
   return node;
 }
 
@@ -1849,7 +1854,11 @@ function renderWorkspace(view) {
       const signature = JSON.stringify(signatureData);
       const reasoningSignature = JSON.stringify([{...message, parts: message.parts.map(part =>
         part.type === "reasoning" ? {...part, text: ""} : part)}, ...signatureData.slice(1)]);
-      const cached = existing.get(key);
+      // The waiting row appears before native assistant metadata. Carry its
+      // reasoning panel into the first real reply, including the user's toggle.
+      const cached = existing.get(key) || (role === "assistant" && !message.awaitingReply &&
+        message.info.parentID === lastUserId ? existing.get(JSON.stringify([
+          state.projectId, state.sessionId, `waiting:${message.info.parentID}`])) : null);
       if (cached?.workspaceReasoningSignature === reasoningSignature && cached.workspaceMessageSignature !== signature) {
         for (const [index, part] of message.parts.entries()) if (part.type === "reasoning") {
           workspaceReasoningNode(cached,
@@ -1875,6 +1884,8 @@ function renderWorkspace(view) {
         el("strong", { text: "Sona" }),
         modelLabel));
       const parts = message.parts || [];
+      const pendingReasoningKey = `reasoning:${state.projectId}:${state.sessionId}:pending:${message.info.parentID}`;
+      const lastReasoningIndex = parts.findLastIndex(part => part.type === "reasoning");
       const references = role === "user" ? parts.flatMap(part => workspaceDirectoryReference(part) ?
         [workspaceDirectoryReference(part)] : part.type === "file" &&
           part.url?.startsWith("file:") && part.filename ? [part.filename] : []) : [];
@@ -1910,7 +1921,8 @@ function renderWorkspace(view) {
         else if (part.type === "reasoning") {
           const key = `reasoning:${state.projectId}:${state.sessionId}:${part.id || `${message.info?.id}:${partIndex}`}`;
           const reasoning = workspaceReasoningNode(cached, key, part.text || "", state.expandedTools,
-            running && message.info.parentID === lastUserId && part.time?.end == null && modelInfo?.time?.completed == null);
+            running && message.info.parentID === lastUserId && part.time?.end == null && modelInfo?.time?.completed == null,
+            partIndex === lastReasoningIndex ? pendingReasoningKey : null);
           body.append(reasoning);
         } else if (part.type === "file") {
           const filename = part.filename || "附件";
@@ -1930,6 +1942,12 @@ function renderWorkspace(view) {
         }
       }
       flushTools();
+      if (["正在思考…", "正在重试…"].includes(progressLabel) && !parts.some(part =>
+          part.type === "reasoning" && part.time?.end == null && modelInfo?.time?.completed == null)) {
+        // Show the expandable panel as soon as the turn starts, even before
+        // OpenCode sends reasoning-start or the model's first reasoning token.
+        body.append(workspaceReasoningNode(cached, pendingReasoningKey, "", state.expandedTools, true, null, true));
+      }
       if (progressLabel) body.append(el("div", { class: "wsp-thinking", role: "status", "aria-live": "polite" },
         statusIcon("busy"), el("span", { text: progressLabel })));
       else if (role !== "user" && !error && body.children.length === 1) {

@@ -99,6 +99,43 @@ assert.equal(historical.open, true, "A part arriving before the busy status must
 ''')
 
 
+def test_waiting_reasoning_panel_becomes_live_without_losing_toggle_or_text_node():
+    run_node(r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+vm.runInThisContext(fs.readFileSync("sona_code/web/static/workspace.js", "utf8"));
+global.el = (tag, props, ...children) => ({tag, ...props, children, textContent: props?.text || "", open: false,
+  firstChild: tag === "div" ? {data: ""} : null, scrollTop: 0, clientHeight: 80, scrollHeight: 80,
+  querySelector(selector) {return selector === "summary" ? this.children[0] : this.children[1];},
+  addEventListener(type, fn) {this.toggle = fn;}});
+const expanded = new Map(), pendingKey = "pending:u";
+const node = workspaceReasoningNode(null, pendingKey, "", expanded, true, null, true);
+const body = node.children[1], textNode = body.firstChild;
+assert.equal(node.open, true);
+assert.equal(node.children[0].textContent, "思考过程 · 等待输出");
+assert.equal(textNode.data, "等待模型返回思考内容…");
+const cached = {querySelectorAll: () => [node]};
+node.open = false; node.toggle();
+assert.equal(workspaceReasoningNode(cached, "reason:1", "正在检查项目", expanded, true, pendingKey), node);
+assert.equal(node.open, false, "The user's collapse must survive the first native reasoning part");
+assert.equal(body.firstChild, textNode); assert.equal(textNode.data, "正在检查项目");
+assert.equal(node.children[0].textContent, "思考过程 · 生成中");
+assert.equal(expanded.get("reason:1"), false); assert.equal(expanded.has(pendingKey), false);
+node.open = true; node.toggle();
+assert.equal(expanded.get("reason:1"), true, "Toggle handlers must use the adopted native key");
+workspaceReasoningNode(cached, "reason:1", "正在检查项目，继续分析", expanded, true);
+assert.equal(textNode.data, "正在检查项目，继续分析");
+workspaceReasoningNode(cached, "reason:1", "完整思考", expanded, false);
+assert.equal(node.open, true); assert.equal(textNode.data, "完整思考");
+assert.equal(node.children[0].textContent, "思考过程");
+// Providers that return their first reasoning part only at completion still
+// replace the pending panel, preserving the user's expanded state.
+const delayed = workspaceReasoningNode(null, "pending:delayed", "", expanded, true, null, true);
+assert.equal(workspaceReasoningNode({querySelectorAll: () => [delayed]}, "reason:delayed", "完成后的内容",
+  expanded, false, "pending:delayed"), delayed);
+assert.equal(delayed.children[1].firstChild.data, "完成后的内容");
+''')
+
+
 def test_new_session_opens_immediately_migrates_draft_and_respects_navigation():
     run_node(r'''
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");

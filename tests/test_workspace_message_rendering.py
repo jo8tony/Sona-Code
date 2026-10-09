@@ -108,6 +108,8 @@ for (const parts of [[], [{type: "step-start"}], [{type: "text", text: ""}],
   assert.equal(label(row), "正在思考…");
   assert.equal(progress(row)[0].role, "status");
   assert.equal(progress(row)[0].children[0].tag, "svg");
+  assert(descendants(row).some(node => node.tag === "details" &&
+    node.class?.split(" ").includes("wsp-live-reasoning")), "Thinking must show an expandable panel before reasoning-start");
 }
 // Only the current turn shows progress; completed history must stay unchanged.
 state.messages = [{...assistant, info: {...assistant.info, id: "old", parentID: "old-u"}}, prompt, assistant];
@@ -123,6 +125,7 @@ state.statuses.other = {type: "busy"};
 assert.equal(label(render().at(-1)), "正在思考…");
 assert.equal(state.messages.length, 1);
 assert(!descendants(render().at(-1)).some(node => node.tag === "actions"));
+assert(descendants(render().at(-1)).some(node => node.tag === "details"), "The first native assistant event must not gate the panel");
 state.statuses = {};
 assert.equal(render().length, 1);
 // Output and tool execution have distinct progress; idle removes the spinner.
