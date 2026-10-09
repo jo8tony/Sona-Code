@@ -49,6 +49,101 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
     subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
 
 
+@pytest.mark.parametrize("part_type", ["text", "reasoning"])
+def test_history_refresh_preserves_streamed_text_until_authoritative_completion(part_type: str):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for workspace refresh coverage")
+    script = r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
+const info = {id: "a", role: "assistant", sessionID: "s", parentID: "u", time: {created: 1}};
+const part = {id: "stream", messageID: "a", sessionID: "s", type: "PART_TYPE", text: "", time: {start: 1}};
+const tool = {id: "tool", type: "tool", state: {status: "running"}};
+const requests = [], state = {projectId: "p", sessionId: "s", messages: [{info, parts: [{...part}, tool]}],
+  tab: "chat", projectStatuses: new Map(), statuses: {}, sessionDetails: new Map()};
+const context = vm.createContext({state, AbortController, selectedRefresh: null, creatingSessions: new Set(),
+  lastSelectedRefresh: 0, queueUpdateVersion: 0, statusVersions: new Map(), messageVersion: 0,
+  messageInfoVersions: new Map(), messagePartVersions: new Map(),
+  alive: () => true, sessionPath: () => "session", detail: e => e.message,
+  api(path) {return new Promise(resolve => requests.push({path, resolve}));},
+  scheduleSelectedRender() {}, renderHeader() {}, renderSidebar() {}, observeProjectStatuses() {},
+});
+vm.runInContext(source.slice(source.indexOf("  function applyMessageEvent("), source.indexOf("  function observeSessionStatus(")), context);
+vm.runInContext(source.slice(source.indexOf("  async function refreshSelected("), source.indexOf("  function saveConversationView(")), context);
+const event = (type, properties) => context.applyMessageEvent("p", {type, properties});
+const delta = text => event("message.part.delta", {sessionID: "s", messageID: "a", partID: "stream", field: "text", delta: text});
+const displayed = () => state.messages[0].parts[0].text;
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const history = (text = "", extra = {}) => [{info, parts: [{...part, text, ...extra}]}];
+const refreshHistory = async (messages, duringRequest = () => {}) => {
+  const start = requests.length;
+  const refresh = context.refreshSelected();
+  duringRequest();
+  requests[start].resolve(JSON.parse(JSON.stringify(messages)));
+  await tick();
+  // Messages start before the auxiliary requests, so resolve the latter afterwards.
+  for (const request of requests.slice(start + 1)) request.resolve([]);
+  await refresh;
+};
+(async () => {
+  // V1 persists text-start, but deltas are event-only until text-end. A pause with
+  // no event during the request must not let that empty snapshot erase the reply.
+  delta("First line\nSecond line");
+  await refreshHistory([{info, parts: [{...part}, {...tool, state: {status: "completed"}}]}]);
+  assert.equal(displayed(), "First line\nSecond line", "History must retain deltas received before the request");
+  assert.equal(state.messages[0].parts[1].state.status, "completed", "Other fetched parts must still update");
+  delta("\nThird line");
+  await refreshHistory(history());
+  await refreshHistory(history("First line", {metadata: {fetched: true}}));
+  assert.equal(displayed(), "First line\nSecond line\nThird line", "Repeated polls must neither truncate nor duplicate tokens");
+  assert.equal(state.messages[0].parts[0].metadata.fetched, true);
+
+  // Restoring a cached conversation clears event versions; its live text must
+  // still survive the first refresh on returning to that conversation.
+  context.messageInfoVersions.clear(); context.messagePartVersions.clear(); context.messageVersion++;
+  await refreshHistory(history());
+  assert.equal(displayed(), "First line\nSecond line\nThird line");
+
+  // A missed completion event is recovered by history, including a final result
+  // that is shorter or rewritten by the native text completion hook.
+  await refreshHistory(history("Final", {time: {start: 1, end: 2}}));
+  assert.equal(displayed(), "Final");
+  event("message.part.updated", {part: {...part, text: "Next"}});
+  delta(" reply");
+  await refreshHistory([{info: {...info, time: {created: 1, completed: 3}}, parts: [{...part, text: "Done"}]}]);
+  assert.equal(displayed(), "Done", "Completed messages are authoritative even without a part end timestamp");
+
+  // A completion event racing an older HTTP snapshot must remain authoritative.
+  event("message.updated", {info});
+  event("message.part.updated", {part: {...part, text: "Partial"}});
+  await refreshHistory(history(), () => {
+    event("message.part.updated", {part: {...part, text: "Complete", time: {start: 1, end: 4}}});
+    event("message.updated", {info: {...info, time: {created: 1, completed: 4}}});
+  });
+  assert.equal(displayed(), "Complete");
+  assert.equal(state.messages[0].parts[0].time.end, 4);
+  assert.equal(state.messages[0].info.time.completed, 4);
+
+  // A fetched user edit must not be mistaken for streamed assistant text.
+  state.messages = [{info: {...info, role: "user"}, parts: [{...part, type: "text", text: "User message"}]}];
+  await refreshHistory([{info: {...info, role: "user"}, parts: [{...part, type: "text", text: "User"}]}]);
+  assert.equal(displayed(), "User");
+
+  // Missing parts/messages are authoritative deletions, even during a stream.
+  state.messages = history("Partial");
+  delta(" reply");
+  await refreshHistory([{info, parts: []}]);
+  assert.equal(state.messages[0].parts.length, 0);
+  state.messages = history("Partial");
+  delta(" reply");
+  await refreshHistory([]);
+  assert.equal(state.messages.length, 0);
+})().catch(error => {console.error(error); process.exitCode = 1;});
+'''.replace("PART_TYPE", part_type)
+    subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
+
+
 def test_workspace_refresh_does_not_block_switches_or_discard_streamed_parts():
     node = shutil.which("node")
     if not node:

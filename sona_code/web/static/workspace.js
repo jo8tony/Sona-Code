@@ -3302,28 +3302,37 @@ function renderWorkspace(view) {
     try {
       const messagesRead = read(`${base}/messages`, value => {
         const messages = Array.isArray(value) ? value : [];
-        if (messagesVersion !== messageVersion) {
-          const live = new Map(state.messages.map(message => [message.info?.id, message]));
-          const received = new Set(messages.map(message => message.info?.id));
-          for (const message of messages) {
-            if ((messageInfoVersions.get(message.info?.id) || 0) > messagesVersion && live.has(message.info?.id))
-              message.info = { ...message.info, ...live.get(message.info.id).info };
-            if ((messagePartVersions.get(message.info?.id) || 0) > messagesVersion && live.has(message.info?.id)) {
-              const parts = new Map(live.get(message.info.id).parts.map(part => [part.id, part]));
-              const receivedParts = new Set();
-              message.parts = (message.parts || []).flatMap(part => {
-                receivedParts.add(part.id);
-                if ((messagePartVersions.get(part.id) || 0) <= messagesVersion) return [part];
-                return parts.has(part.id) ? [parts.get(part.id)] : [];
-              });
-              for (const part of parts.values()) if (!receivedParts.has(part.id) &&
-                  (messagePartVersions.get(part.id) || 0) > messagesVersion) message.parts.push(part);
-            }
-          }
-          for (const message of state.messages) {
-            if (!received.has(message.info?.id) && Math.max(messageInfoVersions.get(message.info?.id) || 0,
-                messagePartVersions.get(message.info?.id) || 0) > messagesVersion) messages.push(message);
-          }
+        const live = new Map(state.messages.map(message => [message.info?.id, message]));
+        const received = new Set(messages.map(message => message.info?.id));
+        for (const message of messages) {
+          const currentMessage = live.get(message.info?.id);
+          if (!currentMessage) continue;
+          if ((messageInfoVersions.get(message.info?.id) || 0) > messagesVersion)
+            message.info = { ...message.info, ...currentMessage.info };
+          const parts = new Map((currentMessage.parts || []).map(part => [part.id, part]));
+          const receivedParts = new Set();
+          message.parts = (message.parts || []).flatMap(part => {
+            receivedParts.add(part.id);
+            const streamed = parts.get(part.id);
+            if ((messagePartVersions.get(part.id) || 0) > messagesVersion)
+              return streamed ? [streamed] : [];
+            // V1 deltas are event-only until the part ends. Even events received
+            // before this request must survive an unfinished history snapshot.
+            if (part.id && message.info?.role === "assistant" && currentMessage.info?.role === "assistant" &&
+                message.info.time?.completed == null && currentMessage.info.time?.completed == null &&
+                ["text", "reasoning"].includes(part.type) && streamed?.type === part.type &&
+                part.time?.end == null && streamed.time?.end == null &&
+                typeof part.text === "string" && typeof streamed.text === "string" &&
+                streamed.text.length > part.text.length && streamed.text.startsWith(part.text))
+              return [{...part, text: streamed.text}];
+            return [part];
+          });
+          for (const part of parts.values()) if (!receivedParts.has(part.id) &&
+              (messagePartVersions.get(part.id) || 0) > messagesVersion) message.parts.push(part);
+        }
+        for (const message of state.messages) {
+          if (!received.has(message.info?.id) && Math.max(messageInfoVersions.get(message.info?.id) || 0,
+              messagePartVersions.get(message.info?.id) || 0) > messagesVersion) messages.push(message);
         }
         state.messages = messages;
         state.messagesLoaded = true;
