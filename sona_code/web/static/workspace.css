@@ -42,6 +42,9 @@
 .wsp-thread-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 650; }
 .wsp-thread-time { display: block; margin-top: 1px; color: var(--text-faint); font-size: 12px; }
 .wsp-side-bottom { padding: 10px 15px 13px; border-top: 1px solid var(--border); color: var(--text-faint); font-size: 12.5px; }
+.wsp-side-bottom.has-account { display: flex; align-items: center; gap: 10px; }
+.wsp-account-name { flex: 1; min-width: 0; padding: 9px 0 9px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 15px; font-weight: 650; }
+.wsp-side-bottom.has-account .wsp-settings { flex-shrink: 0; margin-left: auto; }
 .wsp-settings { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; color: var(--text-dim); font-size: 15px; font-weight: 650; }
 .wsp-settings:hover { background: #edf1f7; color: var(--text); text-decoration: none; }
 .wsp-settings:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 2px; }

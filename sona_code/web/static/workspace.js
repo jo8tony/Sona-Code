@@ -523,7 +523,7 @@ function renderWorkspace(view) {
           <label class="wsp-search-wrap">${workspaceIcon("search").outerHTML}<input class="wsp-search" id="wsp-search" type="search" placeholder="搜索项目和对话" aria-label="搜索项目和对话"><kbd>⌘K</kbd></label>
         </div>
         <div class="wsp-side-list"><div class="wsp-side-label"><span>项目与对话</span><span class="wsp-side-label-actions"><span id="wsp-project-count"></span></span></div><div id="wsp-projects"></div></div>
-        <div class="wsp-side-bottom"><a class="wsp-settings" href="#/preferences" title="打开设置">${workspaceIcon("settings").outerHTML}<span>设置</span></a></div>
+        <div class="wsp-side-bottom"><span class="wsp-account-name" hidden></span><a class="wsp-settings" href="#/preferences" title="打开设置">${workspaceIcon("settings").outerHTML}<span>设置</span></a></div>
       </aside>
       <aside class="wsp-tree" id="wsp-tree" aria-label="项目目录树" hidden>
         <div class="wsp-tree-head"><span class="wsp-tree-heading-icon">${workspaceIcon("folderOpen").outerHTML}</span><strong id="wsp-tree-title">目录树</strong><div class="wsp-tree-position" role="group" aria-label="目录树位置"><button type="button" data-tree-side="left" title="目录树放在左侧" aria-label="目录树放在左侧" aria-pressed="true">${workspaceIcon("panelLeft").outerHTML}</button><button type="button" data-tree-side="right" title="目录树放在右侧" aria-label="目录树放在右侧" aria-pressed="false">${workspaceIcon("panelRight").outerHTML}</button></div><button id="wsp-tree-refresh" type="button" title="刷新目录树" aria-label="刷新目录树">${workspaceIcon("refresh").outerHTML}</button><button id="wsp-tree-close" type="button" title="关闭目录树" aria-label="关闭目录树">${workspaceIcon("close").outerHTML}</button></div>
@@ -553,6 +553,22 @@ function renderWorkspace(view) {
   try { if (localStorage.getItem("sona-code:sidebar-collapsed") === "1") root.classList.add("side-collapsed"); }
   catch (_) { /* Storage may be unavailable. */ }
   const sideList = view.querySelector("#wsp-projects");
+  const sideBottom = view.querySelector(".wsp-side-bottom");
+  const accountName = view.querySelector(".wsp-account-name");
+  let accountLoadVersion = 0;
+  async function refreshSidebarAccount() {
+    const version = ++accountLoadVersion;
+    try {
+      const source = await api("models/source", { silent: true });
+      if (!alive() || version !== accountLoadVersion) return;
+      const loggedIn = source.source === "sona" && source.connected === true;
+      const name = loggedIn ? String(source.user?.userName || source.user?.userId || "当前用户") : "";
+      accountName.textContent = name;
+      accountName.title = name;
+      accountName.hidden = !loggedIn;
+      sideBottom.classList.toggle("has-account", loggedIn);
+    } catch (_) { /* Keep the current footer when account status is unavailable. */ }
+  }
   const content = view.querySelector("#wsp-content");
   const scroll = view.querySelector("#wsp-scroll");
   const navigation = createWorkspaceNavigation(view, {
@@ -3018,7 +3034,10 @@ function renderWorkspace(view) {
       }
       toast(`刷新模型失败：${detail(error)}`, "error");
     }
-    finally { button.disabled = false; button.removeAttribute("aria-busy"); }
+    finally {
+      button.disabled = false; button.removeAttribute("aria-busy");
+      if (alive()) refreshSidebarAccount();
+    }
   }
 
   async function loadAgents(projectId) {
@@ -4302,11 +4321,13 @@ function renderWorkspace(view) {
   addCleanup(() => window.removeEventListener("pagehide", saveDraft));
   const reloadSonaModels = () => {
     workspaceModelCache.clear();
+    if (alive()) refreshSidebarAccount();
     if (alive() && state.projectId) loadModels(state.projectId);
   };
   window.addEventListener("sona-models-changed", reloadSonaModels);
   addCleanup(() => window.removeEventListener("sona-models-changed", reloadSonaModels));
   watchSonaStartupRefresh(reloadSonaModels, alive);
+  refreshSidebarAccount();
   updateModelButton();
   updateSidebarButton();
 
@@ -4376,6 +4397,7 @@ function renderWorkspace(view) {
       suspended = false;
       // Retain DOM, drafts, expanded projects and scroll positions; refresh in place.
       updateTrajectoryHeight();
+      refreshSidebarAccount();
       loadProjects(); loadCheck();
       if (state.projectId) {
         refreshSelected();
