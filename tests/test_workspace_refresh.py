@@ -241,6 +241,7 @@ const context = vm.createContext({state, AbortController, setTimeout, clearTimeo
   renderMain() {}, renderSidebar() {}, renderHeader() {},
   workspaceConversationKey: (p,s) => JSON.stringify([p,s]),
   content: {childNodes: []}, scroll: {scrollTop: 15}, scrollToLatestOnLoad: true,
+  browsingHistory: false, followLatest: true,
   workspaceSyncChildren: (node, children) => {node.childNodes = children;},
 });
 vm.runInContext(source.slice(source.indexOf("  function scheduleRefresh("), source.indexOf("  async function refreshWorkspaceStatuses(")), context);
@@ -294,13 +295,16 @@ const info = {id: "reply", role: "assistant", sessionID: "a", tokens: {output: 1
   // A bounded cache reuses actual DOM nodes and keeps equal IDs in different projects isolated.
   state.messagesLoaded = true; state.messages = [{info: {id: "saved"}}]; state.tab = "chat";
   const row = {saved: true}; context.content.childNodes = [row];
+  context.browsingHistory = true; context.followLatest = false;
   context.saveConversationView();
   state.projectId = "other"; context.restoreConversationView();
   assert.equal(state.messages.length, 0);
+  assert.equal(context.browsingHistory, false); assert.equal(context.followLatest, true);
   state.projectId = "p"; context.restoreConversationView();
   assert.equal(state.messages[0].info.id, "saved");
   assert.equal(context.content.childNodes[0], row);
   assert.equal(context.scroll.scrollTop, 15);
+  assert.equal(context.browsingHistory, true); assert.equal(context.followLatest, false);
   for (let i = 0; i < 10; i++) { state.sessionId = String(i); state.messagesLoaded = true; context.saveConversationView(); }
   assert.equal(context.conversationViews.size, 6);
   assert.equal(context.conversationViews.has(JSON.stringify(["p", "a"])), false);

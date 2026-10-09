@@ -146,6 +146,7 @@ const methods = ["saveDraft", "cancelSelectedRefresh", "hideAutocomplete", "clos
   "closeModelPicker", "closeAgentPicker", "closeVariantPicker", "updateTrajectoryHeight", "loadProjects",
   "loadCheck", "refreshSelected", "connectEvents", "loadModels", "loadAgents"];
 const context = vm.createContext({state, disposed: false, suspended: false,
+    navigation: {close() {}},
   events: {close() {calls.push("closeEvents");}}, eventProjectId: "p", queueDialog: null, deleteDialog: null,
   workspaceModelCache: new Map([["p", {data: {old: true}}]]), cleanups: [() => calls.push("dispose")],
   ...Object.fromEntries(methods.map(name => [name, () => calls.push(name)])),

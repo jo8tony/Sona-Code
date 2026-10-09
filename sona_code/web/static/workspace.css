@@ -859,7 +859,7 @@ button.wsp-file-mention:hover { background: var(--accent-soft); text-decoration:
 .wsp-todo-panel-link:hover { background: #f2f6ff; }
 .wsp-todo-panel-link span { float: right; font-size: 15px; line-height: 1; }
 @media (min-width: 1250px) {
-  .wsp.todo-panel-open .wsp-main > .wsp-scroll { box-sizing: border-box; padding-right: 338px; }
+  .wsp.todo-panel-open .wsp-main > .wsp-chat-body > .wsp-scroll { box-sizing: border-box; padding-right: 338px; }
   .wsp.todo-panel-open .wsp-main > .wsp-composer-dock { padding-right: 365px; }
 }
 @media (max-width: 700px) {
@@ -895,6 +895,51 @@ button.wsp-file-mention:hover { background: var(--accent-soft); text-decoration:
 .wsp-new { display: flex; align-items: center; justify-content: center; gap: 7px; }
 .wsp-new .wsp-icon { width: 17px; height: 17px; }
 .wsp-todo-panel-icon .wsp-icon { width: 19px; height: 19px; }
+
+/* Conversation navigation stays inside the chat panel when either sidebar moves. */
+.wsp-project-count { opacity: 0; transition: opacity .15s ease; pointer-events: none; }
+.wsp-project:hover .wsp-project-count, .wsp-project:focus-within .wsp-project-count { opacity: 1; }
+.wsp-title-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.wsp-title-row .wsp-title { flex: 0 1 auto; min-width: 0; }
+.wsp-locate-session { display: inline-grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 5px; border: 0; border-radius: 6px; background: transparent; color: var(--text-faint); cursor: pointer; }
+.wsp-locate-session:hover { background: var(--accent-soft); color: var(--accent); }
+.wsp-locate-session:disabled { opacity: .35; cursor: default; }
+.wsp-locate-session .wsp-icon { width: 17px; height: 17px; }
+.wsp-chat-body { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; }
+.wsp-prompt-rail[hidden], .wsp-prompt-tooltip[hidden], .wsp-prompt-trigger[hidden], .wsp-prompt-menu[hidden], .wsp-latest[hidden] { display: none; }
+.wsp-prompt-rail { position: absolute; z-index: 12; left: 4px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; max-height: calc(100% - 40px); width: 28px; padding: 2px 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.wsp-prompt-rail::-webkit-scrollbar { display: none; }
+.wsp-prompt-dot { display: grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; cursor: pointer; }
+.wsp-prompt-dot span { width: 6px; height: 6px; border-radius: 50%; background: #d0d8e5; transition: background .15s, transform .15s; }
+.wsp-prompt-dot:hover span { background: #8c9fbb; transform: scale(1.3); }
+.wsp-prompt-dot.active span { background: var(--accent); transform: scale(1.35); box-shadow: 0 0 0 3px var(--accent-soft); }
+.wsp-prompt-tooltip { position: absolute; z-index: 31; left: 38px; box-sizing: border-box; width: min(300px, calc(100% - 54px)); padding: 10px 12px; border-radius: 9px; background: #263449; color: #fff; box-shadow: 0 6px 20px rgba(22,39,62,.18); pointer-events: none; overflow-wrap: anywhere; }
+.wsp-prompt-tooltip strong { display: block; margin-bottom: 5px; color: #cbd7ea; font-size: 11px; font-weight: 500; }
+.wsp-prompt-tooltip span { display: block; font-size: 12.5px; line-height: 1.6; }
+.wsp-prompt-trigger { display: none; align-items: center; gap: 5px; position: absolute; z-index: 13; top: 8px; left: 10px; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: #fff; color: var(--text-dim); font-size: 12px; cursor: pointer; }
+.wsp-prompt-trigger .wsp-icon, .wsp-latest .wsp-icon { width: 15px; height: 15px; }
+.wsp-prompt-menu { position: absolute; z-index: 30; top: 43px; left: 10px; box-sizing: border-box; width: min(320px, calc(100% - 20px)); max-height: min(420px, calc(100% - 53px)); padding: 5px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: 10px; background: #fff; box-shadow: 0 10px 30px rgba(22,39,62,.15); }
+.wsp-prompt-option { display: block; width: 100%; padding: 9px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text-dim); text-align: left; cursor: pointer; }
+.wsp-prompt-option strong { display: block; margin-bottom: 4px; font-size: 11px; font-weight: 500; color: var(--text-faint); }
+.wsp-prompt-option span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; }
+.wsp-prompt-option:hover, .wsp-prompt-option.active { background: var(--accent-soft); color: var(--accent); }
+.wsp-latest { position: absolute; z-index: 14; right: 20px; bottom: 12px; display: inline-flex; align-items: center; gap: 5px; padding: 7px 12px; border: 1px solid #d5e2f8; border-radius: 20px; background: #fff; color: var(--accent); font-size: 12px; cursor: pointer; box-shadow: 0 3px 12px rgba(36,55,85,.1); }
+.wsp-latest:hover { background: var(--accent-soft); }
+.wsp-locate-session:focus-visible, .wsp-prompt-dot:focus-visible, .wsp-prompt-trigger:focus-visible, .wsp-prompt-option:focus-visible, .wsp-latest:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.wsp-thread-located { animation: wsp-locate-flash 1.2s ease-out; }
+.wsp-message-jump .wsp-message-inner { animation: wsp-locate-flash 1.2s ease-out; }
+@keyframes wsp-locate-flash { 0%, 35% { box-shadow: 0 0 0 3px #92b4f4; } 100% { box-shadow: 0 0 0 3px transparent; } }
+@media (min-width: 1250px) { .wsp.todo-panel-open .wsp-latest { right: 355px; } }
+@media (max-width: 700px) {
+  .wsp-prompt-rail, .wsp-prompt-tooltip { display: none; }
+  .wsp-prompt-trigger { display: inline-flex; }
+  .wsp-chat-body.has-prompt-navigation { box-sizing: border-box; padding-top: 36px; }
+  .wsp-latest { right: 12px; bottom: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wsp-project-count, .wsp-prompt-dot span { transition: none; }
+  .wsp-thread-located, .wsp-message-jump .wsp-message-inner { animation: none; outline: 2px solid var(--accent); }
+}
 .wsp-attachment button .wsp-icon { width: 13px; height: 13px; }
 .wsp-change-close { display: inline-grid; place-items: center; }
 .wsp-change-close .wsp-icon, .wsp-queue-remove .wsp-icon { width: 17px; height: 17px; }

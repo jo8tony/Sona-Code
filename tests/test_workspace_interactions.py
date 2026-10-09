@@ -242,6 +242,7 @@ global.state = {tab: "changes", sessionId: "s", projectId: "p", selectedChange: 
 global.composerDock = {}; global.document = {activeElement: null};
 global.view = {querySelector: () => ({})}; global.changeTriggers = new Map();
 global.trajectoryView = null; global.changePopover = null; global.followLatest = false;
+global.browsingHistory = false; global.navigation = {render() {}};
 global.changesView = null; global.changesSignature = "";
 global.renderTodoPanel = global.renderStatsLine = global.positionChangePopover = () => {};
 global.workspaceSyncChildren = (container, nodes) => {container.children = nodes; nodes.forEach(node => node.parentNode = container);};

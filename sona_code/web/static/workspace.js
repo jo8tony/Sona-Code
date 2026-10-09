@@ -417,6 +417,7 @@ function renderWorkspace(view) {
   let lastSessionListRefresh = 0;
   let activeRowMenu = null;
   let followLatest = true;
+  let browsingHistory = false;
   let scrollToLatestOnLoad = true;
   let trajectoryView = null;
   let trajectorySignature = "";
@@ -483,10 +484,17 @@ function renderWorkspace(view) {
       <div class="wsp-side-scrim" id="wsp-side-scrim"></div>
       <div class="wsp-main">
         <button class="wsp-todo-trigger" id="wsp-todo-trigger" type="button" aria-label="打开任务进度" aria-controls="wsp-todo-panel" aria-expanded="false" title="打开任务进度" hidden>${workspaceIcon("todo").outerHTML}<span>任务进度</span><small id="wsp-todo-trigger-count"></small></button>
-        <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏">${workspaceIcon("panelLeft").outerHTML}</button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title" id="wsp-title">选择项目</div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden>${workspaceIcon("stop").outerHTML}</button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span><button class="wsp-tree-trigger" id="wsp-tree-trigger" type="button" title="打开项目目录树" aria-label="打开项目目录树" aria-controls="wsp-tree" aria-expanded="false">${workspaceIcon("tree").outerHTML}</button></header>
+        <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏">${workspaceIcon("panelLeft").outerHTML}</button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title-row"><div class="wsp-title" id="wsp-title">选择项目</div><button class="wsp-locate-session" id="wsp-locate-session" type="button" title="在项目栏中定位当前会话" aria-label="在项目栏中定位当前会话" disabled>${workspaceIcon("locate").outerHTML}</button></div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden>${workspaceIcon("stop").outerHTML}</button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span><button class="wsp-tree-trigger" id="wsp-tree-trigger" type="button" title="打开项目目录树" aria-label="打开项目目录树" aria-controls="wsp-tree" aria-expanded="false">${workspaceIcon("tree").outerHTML}</button></header>
         <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动<span class="wsp-tab-count" id="wsp-change-count" aria-label="修改文件数量">0</span></button><button class="wsp-tab" type="button" data-wsp-tab="trajectory">轨迹</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button><button class="wsp-tab" type="button" data-wsp-tab="tasks">任务</button></nav>
         <aside class="wsp-todo-panel" id="wsp-todo-panel" aria-label="当前对话任务进度" hidden><div class="wsp-todo-panel-head"><span class="wsp-todo-panel-icon" aria-hidden="true">${workspaceIcon("todo").outerHTML}</span><div><strong>任务进度</strong><small>当前对话 · OpenCode</small></div><button class="wsp-todo-panel-close" id="wsp-todo-panel-close" type="button" aria-label="关闭任务进度" title="关闭任务进度">${workspaceIcon("close").outerHTML}</button></div><div class="wsp-todo-panel-summary"><span id="wsp-todo-summary"></span><strong id="wsp-todo-progress"></strong></div><div class="wsp-todo-progress-track"><span id="wsp-todo-progress-fill"></span></div><ol class="wsp-todo-panel-list" id="wsp-todo-panel-list"></ol><button class="wsp-todo-panel-link" id="wsp-todo-panel-link" type="button">查看任务页 ${workspaceIcon("open").outerHTML}</button></aside>
-        <div class="wsp-scroll" id="wsp-scroll"><div class="wsp-content" id="wsp-content"></div></div>
+        <div class="wsp-chat-body" id="wsp-chat-body">
+          <div class="wsp-scroll" id="wsp-scroll"><div class="wsp-content" id="wsp-content"></div></div>
+          <nav class="wsp-prompt-rail" id="wsp-prompt-rail" aria-label="用户提问导航" hidden></nav>
+          <div class="wsp-prompt-tooltip" id="wsp-prompt-tooltip" role="tooltip" hidden></div>
+          <button class="wsp-prompt-trigger" id="wsp-prompt-trigger" type="button" aria-label="提问目录" aria-controls="wsp-prompt-menu" aria-expanded="false" hidden>${workspaceIcon("todo").outerHTML}<span>提问目录</span></button>
+          <nav class="wsp-prompt-menu" id="wsp-prompt-menu" aria-label="用户提问目录" hidden></nav>
+          <button class="wsp-latest" id="wsp-latest" type="button" hidden>${workspaceIcon("chevronDown").outerHTML}<span>回到最新</span></button>
+        </div>
         <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" role="listbox" aria-label="命令与项目文件" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-refresh" title="刷新 Sona 订阅模型" aria-label="刷新 Sona 订阅模型" hidden>${workspaceIcon("refresh").outerHTML}</button><button type="button" id="wsp-model-close" aria-label="关闭模型选择">${workspaceIcon("close").outerHTML}</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><div class="wsp-attachment-list" id="wsp-attachment-list" aria-label="待发送附件" hidden></div><div class="wsp-input" id="wsp-input" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" aria-describedby="wsp-skill-error"></div><div id="wsp-skill-error" class="wsp-skill-error" role="status" aria-live="polite" hidden></div><div class="wsp-composer-bottom"><button class="wsp-attach" id="wsp-attach" type="button" title="选择 Sona Code 命令，也可输入 /" aria-label="选择 Sona Code 命令" aria-haspopup="listbox" aria-expanded="false">${workspaceIcon("plus").outerHTML}</button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent" hidden><option value="build">Build · 执行</option></select><button class="wsp-agent-trigger" id="wsp-agent-trigger" type="button" aria-haspopup="menu" aria-expanded="false"><span id="wsp-agent-label">Build · 执行</span>${workspaceIcon("chevronDown").outerHTML}</button><div class="wsp-agent-picker" id="wsp-agent-picker" role="menu" aria-label="选择 Agent" hidden></div><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">自动</button><select class="wsp-variant" id="wsp-variant" aria-label="选择模型强度" title="模型推理强度" hidden></select><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息">${workspaceIcon("send").outerHTML}</button></div></form><div class="wsp-stats" id="wsp-stats" aria-live="polite"></div></div>
       </div>
     </section>`;
@@ -497,6 +505,12 @@ function renderWorkspace(view) {
   const sideList = view.querySelector("#wsp-projects");
   const content = view.querySelector("#wsp-content");
   const scroll = view.querySelector("#wsp-scroll");
+  const navigation = createWorkspaceNavigation(view, {
+    onJump: () => { browsingHistory = true; followLatest = false; scrollToLatestOnLoad = false; },
+    onLatest: () => { browsingHistory = false; followLatest = true; scrollToLatestOnLoad = false; },
+    isPinned: () => browsingHistory,
+  });
+  addCleanup(() => navigation.dispose());
   const todoTrigger = view.querySelector("#wsp-todo-trigger");
   const todoPanel = view.querySelector("#wsp-todo-panel");
   const todoList = view.querySelector("#wsp-todo-panel-list");
@@ -738,7 +752,7 @@ function renderWorkspace(view) {
   });
 
   scroll.addEventListener("scroll", () => {
-    followLatest = scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop <= 80;
+    followLatest = !browsingHistory && scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop <= 80;
   }, { passive: true });
   const updateTrajectoryHeight = () => scroll.style.setProperty("--wsp-scroll-height", `${scroll.clientHeight}px`);
   updateTrajectoryHeight();
@@ -1311,6 +1325,53 @@ function renderWorkspace(view) {
     });
   }
 
+  let locatingSession = false;
+  let locatedRow = null;
+  let locateTimer = null;
+  addCleanup(() => { if (locateTimer) clearTimeout(locateTimer); });
+  async function locateCurrentSession() {
+    const project = activeProject(), session = activeSession();
+    const projectId = state.projectId, sessionId = state.sessionId;
+    if (!project || !sessionId || locatingSession) return;
+    locatingSession = true;
+    try {
+      if (!state.sessions.has(projectId)) await loadSessions(project);
+      if (!alive() || state.projectId !== projectId || state.sessionId !== sessionId) return;
+      const sessions = state.sessions.get(projectId);
+      if (!sessions) { toast("无法读取当前项目的会话列表", "error"); return; }
+      // A child conversation can be opened from a task before list polling sees it.
+      if (!sessions.some(item => item.id === sessionId) && session && !session.time?.archived)
+        sessions.push(session);
+      const index = sessions.findIndex(item => item.id === sessionId);
+      if (index < 0) { toast("未找到当前会话，请刷新项目列表", "error"); return; }
+      const query = state.search.trim().toLocaleLowerCase();
+      if (query && !project.name.toLocaleLowerCase().includes(query) &&
+          !sessionTitle(sessions[index]).toLocaleLowerCase().includes(query)) {
+        state.search = ""; view.querySelector("#wsp-search").value = "";
+      }
+      state.collapsedProjects.delete(projectId);
+      state.sessionLimits.set(projectId, Math.max(state.sessionLimits.get(projectId) || 6, index + 1));
+      if (window.matchMedia("(max-width: 700px)").matches) root.classList.add("show-side");
+      else {
+        root.classList.remove("side-collapsed");
+        try { localStorage.setItem("sona-code:sidebar-collapsed", "0"); } catch (_) {}
+      }
+      updateSidebarButton(); renderSidebar();
+      const row = sidebarRows.get(workspaceConversationKey(projectId, sessionId))?.button;
+      if (!row?.isConnected) return;
+      const container = view.querySelector(".wsp-side-list");
+      const rect = row.getBoundingClientRect(), area = container.getBoundingClientRect();
+      container.scrollTop += rect.top - area.top - (container.clientHeight - rect.height) / 2;
+      if (locateTimer) clearTimeout(locateTimer);
+      locatedRow?.classList.remove("wsp-thread-located");
+      locatedRow = row;
+      row.classList.add("wsp-thread-located");
+      locateTimer = setTimeout(() => { locatedRow?.classList.remove("wsp-thread-located"); locatedRow = null; }, 1200);
+      row.focus({preventScroll: true});
+    } finally { locatingSession = false; }
+  }
+  view.querySelector("#wsp-locate-session").addEventListener("click", () => { void locateCurrentSession(); });
+
   function renderSidebar() {
     if (sidebarDrag) return;
     closeRowMenus();
@@ -1437,6 +1498,7 @@ function renderWorkspace(view) {
     const project = activeProject();
     const session = activeSession();
     view.querySelector("#wsp-tree-trigger").disabled = !project;
+    view.querySelector("#wsp-locate-session").disabled = !project || !state.sessionId;
     view.querySelector("#wsp-breadcrumb").textContent = project ? `${project.name} / 对话记录` : "工作区";
     view.querySelector("#wsp-title").textContent = session ? sessionTitle(session) : (project ? "新建或选择对话" : "选择项目");
     const status = state.statuses?.[state.sessionId];
@@ -1895,6 +1957,7 @@ function renderWorkspace(view) {
       if (role !== "user") row.append(el("img", { class: "wsp-avatar", src: "sona-code-icon.png", alt: "", width: 30, height: 30 }));
       const body = el("div", { class: "wsp-message-inner" });
       row.workspaceMessageKey = key;
+      row.workspaceUserMessageId = role === "user" ? message.info?.id : null;
       row.workspaceMessageSignature = signature;
       row.workspaceReasoningSignature = reasoningSignature;
       if (role !== "user") body.append(el("div", { class: "wsp-message-meta" },
@@ -2426,7 +2489,8 @@ function renderWorkspace(view) {
     const previousMaximum = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
     const nearBottom = previousMaximum - previousTop <= 80;
     renderTodoPanel();
-    const stickToBottom = state.tab === "chat" && (forceBottom || nearBottom);
+    if (forceBottom) browsingHistory = false;
+    const stickToBottom = state.tab === "chat" && (forceBottom || (!browsingHistory && followLatest && nearBottom));
     const active = document.activeElement;
     const editingQuestion = active?.classList?.contains("wsp-question-custom")
       ? { id: active.dataset.requestId, index: active.dataset.questionIndex,
@@ -2480,6 +2544,7 @@ function renderWorkspace(view) {
     renderStatsLine();
     followLatest = stickToBottom;
     scroll.scrollTop = stickToBottom ? scroll.scrollHeight : previousTop;
+    navigation.render(state);
     positionChangePopover();
     if (stickToBottom) {
       const sessionId = state.sessionId;
@@ -3465,12 +3530,15 @@ function renderWorkspace(view) {
       permissions: state.permissions, questions: state.questions, queue: state.queue, queueLoaded: state.queueLoaded,
       nodes: state.tab === "chat" ? Array.from(content.childNodes) : [],
       scrollTop: state.tab === "chat" ? scroll.scrollTop : null,
+      browsingHistory, followLatest,
     });
     while (conversationViews.size > 6) conversationViews.delete(conversationViews.keys().next().value);
   }
 
   function restoreConversationView() {
     const cached = conversationViews.get(workspaceConversationKey(state.projectId, state.sessionId));
+    browsingHistory = cached?.browsingHistory || false;
+    followLatest = cached?.followLatest ?? true;
     state.messages = cached?.messages || [];
     state.messagesLoaded = !!cached;
     state.messageLoadError = "";
@@ -4220,7 +4288,7 @@ function renderWorkspace(view) {
       cancelSelectedRefresh();
       if (events) events.close();
       events = null; eventProjectId = null;
-      hideAutocomplete(); closeRowMenus(); closeChangePopover();
+      hideAutocomplete(); closeRowMenus(); closeChangePopover(); navigation.close();
       closeModelPicker(); closeAgentPicker(); closeVariantPicker();
       queueDialog?.close(); deleteDialog?.close();
     },
