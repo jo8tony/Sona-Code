@@ -556,6 +556,7 @@ const context = vm.createContext({state, sideList, el, closeRowMenus() {}, sideb
 const icons = fs.readFileSync("sona_code/web/static/workspace-tree.js", "utf8");
 vm.runInContext(icons.slice(0, icons.indexOf("function createWorkspaceTree(")), context);
 const sidebarSource = source.slice(source.indexOf("  function renderSidebar() {"), source.indexOf("  function renderHeader() {"));
+vm.runInContext(source.slice(source.indexOf("function workspaceProjectMark("), source.indexOf("function workspaceOrderItems(")), context);
 vm.runInContext(source.slice(source.indexOf("function workspaceSyncChildren("), source.indexOf("function renderWorkspace(")) + sidebarSource, context);
 const render = () => vm.runInContext("renderSidebar()", context);
 const threads = () => sideList.children[0].children.find(node => node.class === "wsp-threads");

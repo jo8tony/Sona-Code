@@ -6,6 +6,11 @@ const workspaceDrafts = new Map();
 const workspaceModelCache = new Map();
 const WORKSPACE_MODEL_TTL = 5 * 60 * 1000;
 
+function workspaceProjectMark(name) {
+  const characters = Array.from((name || "P").trim() || "P");
+  return /\p{Script=Han}/u.test(characters[0]) ? characters[0] : characters.slice(0, 2).join("").toUpperCase();
+}
+
 function workspaceOrderItems(items, key) {
   let order = [];
   try { order = JSON.parse(localStorage.getItem(key) || "[]"); } catch (_) {}
@@ -451,7 +456,12 @@ function renderWorkspace(view) {
         <div class="wsp-side-list"><div class="wsp-side-label"><span>项目与对话</span><span class="wsp-side-label-actions"><span id="wsp-project-count"></span></span></div><div id="wsp-projects"></div></div>
         <div class="wsp-side-bottom"><a class="wsp-settings" href="#/preferences" title="打开设置">${workspaceIcon("settings").outerHTML}<span>设置</span></a></div>
       </aside>
-      <aside class="wsp-tree" id="wsp-tree" aria-label="项目目录树" hidden><div class="wsp-tree-head"><strong id="wsp-tree-title">目录树</strong><button id="wsp-tree-refresh" type="button" title="刷新目录树" aria-label="刷新目录树">${workspaceIcon("refresh").outerHTML}</button><button id="wsp-tree-close" type="button" title="关闭目录树" aria-label="关闭目录树">${workspaceIcon("close").outerHTML}</button></div><label class="wsp-tree-search">${workspaceIcon("search").outerHTML}<input id="wsp-tree-search" type="search" placeholder="模糊搜索项目文件" aria-label="模糊搜索项目文件"></label><label class="wsp-tree-position">目录树位置<select id="wsp-tree-side" aria-label="目录树位置"><option value="left">对话左侧</option><option value="right">对话右侧</option></select></label><div class="wsp-tree-body" id="wsp-tree-body" role="tree"></div></aside>
+      <aside class="wsp-tree" id="wsp-tree" aria-label="项目目录树" hidden>
+        <div class="wsp-tree-head"><span class="wsp-tree-heading-icon">${workspaceIcon("folderOpen").outerHTML}</span><strong id="wsp-tree-title">目录树</strong><div class="wsp-tree-position" role="group" aria-label="目录树位置"><button type="button" data-tree-side="left" title="目录树放在左侧" aria-label="目录树放在左侧" aria-pressed="true">${workspaceIcon("panelLeft").outerHTML}</button><button type="button" data-tree-side="right" title="目录树放在右侧" aria-label="目录树放在右侧" aria-pressed="false">${workspaceIcon("panelRight").outerHTML}</button></div><button id="wsp-tree-refresh" type="button" title="刷新目录树" aria-label="刷新目录树">${workspaceIcon("refresh").outerHTML}</button><button id="wsp-tree-close" type="button" title="关闭目录树" aria-label="关闭目录树">${workspaceIcon("close").outerHTML}</button></div>
+        <label class="wsp-tree-search">${workspaceIcon("search").outerHTML}<input id="wsp-tree-search" type="search" placeholder="模糊搜索项目文件" aria-label="模糊搜索项目文件"></label>
+        <div class="wsp-tree-body" id="wsp-tree-body" role="tree"></div>
+        <div class="wsp-tree-resizer" role="separator" aria-label="调整目录树宽度" aria-orientation="vertical" aria-controls="wsp-tree" tabindex="0" title="拖拽调整目录树宽度"></div>
+      </aside>
       <div class="wsp-side-scrim" id="wsp-side-scrim"></div>
       <div class="wsp-main">
         <button class="wsp-todo-trigger" id="wsp-todo-trigger" type="button" aria-label="打开任务进度" aria-controls="wsp-todo-panel" aria-expanded="false" title="打开任务进度" hidden>${workspaceIcon("todo").outerHTML}<span>任务进度</span><small id="wsp-todo-trigger-count"></small></button>
@@ -1316,7 +1326,7 @@ function renderWorkspace(view) {
           } else state.collapsedProjects.add(project.id);
           renderSidebar();
         } },
-        el("span", { class: "wsp-project-mark", text: (project.name || "P").slice(0, 2).toUpperCase() }),
+        el("span", { class: "wsp-project-mark", text: workspaceProjectMark(project.name) }),
         el("span", { class: "wsp-project-name", text: project.name }),
         el("span", { class: "wsp-project-count", text: all ? String(all.length) :
           Number.isInteger(project.session_count) ? String(project.session_count) : "…" }));

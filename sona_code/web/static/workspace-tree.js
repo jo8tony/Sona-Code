@@ -31,6 +31,7 @@ const WORKSPACE_ICONS = {
   refresh: [["path", {"d": "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"}], ["path", {"d": "M21 3v5h-5"}]],
   close: [["path", {"d": "M18 6 6 18"}], ["path", {"d": "m6 6 12 12"}]],
   panelLeft: [["rect", {"width": "18", "height": "18", "x": "3", "y": "3", "rx": "2"}], ["path", {"d": "M9 3v18"}]],
+  panelRight: [["rect", {"width": "18", "height": "18", "x": "3", "y": "3", "rx": "2"}], ["path", {"d": "M15 3v18"}]],
   todo: [["path", {"d": "M13 5h8"}], ["path", {"d": "M13 12h8"}], ["path", {"d": "M13 19h8"}], ["path", {"d": "m3 17 2 2 4-4"}], ["rect", {"x": "3", "y": "4", "width": "6", "height": "6", "rx": "1"}]],
   queue: [["path", {"d": "M16 5H3"}], ["path", {"d": "M11 12H3"}], ["path", {"d": "M16 19H3"}], ["path", {"d": "M18 9v6"}], ["path", {"d": "M21 12h-6"}]],
   skill: [["path", {"d": "M10 22V7a1 1 0 0 0-1-1H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5a1 1 0 0 0-1-1H2"}], ["rect", {"x": "14", "y": "2", "width": "8", "height": "8", "rx": "1"}]],
@@ -51,7 +52,8 @@ function createWorkspaceTree(pane, callbacks) {
   const body = pane.querySelector("#wsp-tree-body");
   const title = pane.querySelector("#wsp-tree-title");
   const search = pane.querySelector("#wsp-tree-search");
-  const side = pane.querySelector("#wsp-tree-side");
+  const sideButtons = pane.querySelectorAll("[data-tree-side]");
+  const resizer = pane.querySelector(".wsp-tree-resizer");
   const root = pane.closest(".wsp");
   const items = new Map();
   const expanded = new Set();
@@ -63,6 +65,8 @@ function createWorkspaceTree(pane, callbacks) {
   let results = null;
   let searchError = "";
   let truncated = false;
+  let preferredWidth = null;
+  let drag = null;
   const browserFile = (path) => /\.(html?|svg|pdf|txt|xml|css|m?js|json|md|png|jpe?g|gif|webp)$/i.test(path);
 
   function closeMenu() { menu?.remove(); menu = null; }
@@ -102,6 +106,10 @@ function createWorkspaceTree(pane, callbacks) {
   }
 
   function itemRow(item, depth = 0) {
+    const kind = item.directory ? "folder" : /\.(?:[cm]?[jt]sx?|py|rs|go|java|sh|ps1|html?|css|scss|vue|svelte)$/i.test(item.path) ? "code" :
+      /\.(?:png|jpe?g|gif|webp|svg|ico)$/i.test(item.path) ? "image" :
+      /\.(?:json|ya?ml|toml|ini|xml)$/i.test(item.path) ? "config" :
+      /\.(?:md|txt|pdf|docx?)$/i.test(item.path) ? "document" : "file";
     const row = el("div", {
       class: "wsp-tree-row" + (selected === item.path ? " selected" : ""),
       role: "treeitem", "aria-level": String(depth + 1),
@@ -126,7 +134,7 @@ function createWorkspaceTree(pane, callbacks) {
       },
     },
     el("span", { class: "wsp-tree-toggle" }, item.directory ? workspaceIcon(expanded.has(item.path) ? "chevronDown" : "chevron") : null),
-    el("span", { class: "wsp-tree-kind" }, workspaceIcon(item.directory ? expanded.has(item.path) ? "folderOpen" : "folder" : "file")),
+    el("span", { class: "wsp-tree-kind wsp-tree-kind-" + kind }, workspaceIcon(item.directory ? expanded.has(item.path) ? "folderOpen" : "folder" : kind === "code" ? "fileCode" : "file")),
     el("span", { class: "wsp-tree-name", text: item.name }));
     row.style.paddingLeft = 8 + depth * 15 + "px";
     return row;
@@ -187,7 +195,7 @@ function createWorkspaceTree(pane, callbacks) {
     body.querySelector(".wsp-tree-row.selected .wsp-tree-name")?.scrollIntoView({ block: "center", inline: "nearest" });
   }
 
-  function close() { project = null; searchRequest++; locateRequest++; closeMenu(); render(); callbacks.visibility?.(false); }
+  function close() { finishResize(); project = null; searchRequest++; locateRequest++; closeMenu(); render(); callbacks.visibility?.(false); }
   pane.querySelector("#wsp-tree-close").addEventListener("click", close);
   pane.querySelector("#wsp-tree-refresh").addEventListener("click", () => {
     items.clear(); callbacks.refresh?.(project?.id);
@@ -216,17 +224,78 @@ function createWorkspaceTree(pane, callbacks) {
     if (event.key === "Enter" && results?.[0]) { event.preventDefault(); void locate(project, results[0]); }
   });
   function setSide(value) {
+    finishResize();
     const position = value === "right" ? "right" : "left";
-    side.value = position;
+    for (const button of sideButtons) button.setAttribute("aria-pressed", String(button.dataset.treeSide === position));
     root.classList.toggle("tree-right", position === "right");
     if (project) body.querySelector(".wsp-tree-row.selected .wsp-tree-name")?.scrollIntoView({block: "nearest", inline: "nearest"});
     try { localStorage.setItem("sona-code:tree-side", position); } catch (_) {}
   }
   try { setSide(localStorage.getItem("sona-code:tree-side")); } catch (_) { setSide("left"); }
-  side.addEventListener("change", () => setSide(side.value));
+  for (const button of sideButtons) button.addEventListener("click", () => setSide(button.dataset.treeSide));
+
+  function widthBounds() {
+    const minimum = parseFloat(getComputedStyle(root).getPropertyValue("--wsp-tree-min-width")) || 280;
+    const sidebarWidth = root.querySelector(".wsp-side").getBoundingClientRect().width;
+    return { minimum, maximum: Math.max(minimum, root.clientWidth - sidebarWidth - 320) };
+  }
+  function updateWidth() {
+    const { minimum, maximum } = widthBounds();
+    root.style.setProperty("--wsp-tree-max-width", maximum + "px");
+    if (preferredWidth !== null) root.style.setProperty("--wsp-tree-width", preferredWidth + "px");
+    const width = Math.max(minimum, Math.min(preferredWidth ?? minimum, maximum));
+    resizer.setAttribute("aria-valuemin", String(minimum));
+    resizer.setAttribute("aria-valuemax", String(maximum));
+    resizer.setAttribute("aria-valuenow", String(Math.round(width)));
+  }
+  function resizeTo(width) {
+    const { minimum, maximum } = widthBounds();
+    preferredWidth = Math.max(minimum, Math.min(width, maximum));
+    updateWidth();
+  }
+  function saveWidth() {
+    if (preferredWidth !== null) try { localStorage.setItem("sona-code:tree-width", String(preferredWidth)); } catch (_) {}
+  }
+  function finishResize(event) {
+    if (!drag || (event && event.pointerId !== drag.pointerId)) return;
+    const pointerId = drag.pointerId;
+    drag = null;
+    root.classList.remove("tree-resizing");
+    if (resizer.hasPointerCapture(pointerId)) resizer.releasePointerCapture(pointerId);
+    saveWidth();
+  }
+  try {
+    const saved = Number(localStorage.getItem("sona-code:tree-width"));
+    if (Number.isFinite(saved) && saved > 0) preferredWidth = saved;
+  } catch (_) {}
+  updateWidth();
+  resizer.addEventListener("pointerdown", event => {
+    if (event.button !== 0 || window.innerWidth <= 700) return;
+    event.preventDefault();
+    drag = {pointerId: event.pointerId, x: event.clientX, width: pane.getBoundingClientRect().width,
+      direction: root.classList.contains("tree-right") ? -1 : 1};
+    resizer.setPointerCapture(event.pointerId);
+    root.classList.add("tree-resizing");
+  });
+  resizer.addEventListener("pointermove", event => {
+    if (drag && event.pointerId === drag.pointerId) resizeTo(drag.width + (event.clientX - drag.x) * drag.direction);
+  });
+  for (const event of ["pointerup", "pointercancel", "lostpointercapture"]) resizer.addEventListener(event, finishResize);
+  resizer.addEventListener("keydown", event => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const { minimum, maximum } = widthBounds();
+    const direction = root.classList.contains("tree-right") ? -1 : 1;
+    resizeTo(event.key === "Home" ? minimum : event.key === "End" ? maximum :
+      pane.getBoundingClientRect().width + (event.key === "ArrowRight" ? 20 : -20) * direction);
+    saveWidth();
+  });
+  const resizeObserver = new ResizeObserver(updateWidth);
+  resizeObserver.observe(root);
+  resizeObserver.observe(root.querySelector(".wsp-side"));
   const outsideMenu = (event) => { if (menu && !menu.contains(event.target)) closeMenu(); };
   document.addEventListener("pointerdown", outsideMenu);
   return { open, close, locate,
-    dispose() { closeMenu(); document.removeEventListener("pointerdown", outsideMenu); },
+    dispose() { finishResize(); resizeObserver.disconnect(); closeMenu(); document.removeEventListener("pointerdown", outsideMenu); },
     get projectId() { return project?.id; } };
 }
