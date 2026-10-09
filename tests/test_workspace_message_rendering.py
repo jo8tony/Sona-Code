@@ -208,3 +208,124 @@ global.api = async () => [];
     subprocess.run(
         [node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True
     )
+
+
+def test_completed_turn_folds_process_and_retains_final_reply():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for workspace rendering coverage")
+    script = r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
+vm.runInThisContext(source);
+vm.runInThisContext(source.slice(source.indexOf("  function renderMessages("), source.indexOf("  function panelIntro(")));
+class Element {
+  constructor(tag, props = {}) { this.tag = tag; Object.assign(this, props); this.childNodes = []; this.listeners = {}; }
+  get children() { return this.childNodes; }
+  get isConnected() { return this === content || !!this.parent?.isConnected; }
+  append(...nodes) { for (const node of nodes) {
+    const child = typeof node === "string" ? new Element("text", {text: node}) : node;
+    child.remove(); this.childNodes.push(child); child.parent = this;
+  } }
+  remove() { if (this.parent) this.parent.childNodes.splice(this.parent.childNodes.indexOf(this), 1); this.parent = null; }
+  addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+  emit(type) { this.listeners[type]?.forEach(fn => fn()); }
+  querySelector(selector) { return descendants(this).find(node => selector.startsWith(".") ?
+    node.class?.split(" ").includes(selector.slice(1)) : node.tag === selector) || null; }
+}
+const descendants = node => [node, ...node.children.flatMap(descendants)];
+const find = (node, name) => descendants(node).find(child => child.class === name);
+global.el = (tag, props, ...children) => { const node = new Element(tag, props); node.append(...children); return node; };
+global.content = new Element("main");
+global.state = {projectId: "p", sessionId: "s", messages: [], permissions: [], questions: [], statuses: {}, sending: false,
+  expandedTools: new Map()};
+global.changeTriggers = new Map();
+global.messageDay = () => "今天";
+global.activeProject = () => ({path: "/project"});
+global.modelDisplayName = () => "Model";
+global.lastUserMessage = () => state.messages.findLast(message => message.info.role === "user");
+global.messageError = info => info?.error ? new Element("error", {text: "failed"}) : null;
+global.textPart = part => new Element("text", {text: part.text});
+global.skillForTool = () => null;
+global.compactionRunning = () => false;
+global.workspaceIcon = () => new Element("svg");
+global.statusIcon = () => new Element("svg");
+global.toolGroup = parts => el("tools", {}, ...parts.map(part => el("tool", {text: part.id})));
+global.toolPart = part => el("skill", {text: part.id});
+global.workspaceReasoningNode = (cached, key, text) => el("reasoning", {text});
+global.messageActions = message => new Element("actions", {
+  text: message.parts.filter(part => part.type === "text").map(part => part.text).join("\n"),
+});
+global.questionCard = () => el("question");
+const render = () => {
+  const rows = []; renderMessages({append: (...nodes) => rows.push(...nodes)});
+  content.childNodes.forEach(node => { node.parent = null; }); content.childNodes = [];
+  content.append(...rows); return rows.filter(row => row.tag === "article").at(-1);
+};
+const user = {info: {id: "u", role: "user", time: {created: 1000}}, parts: [{type: "text", text: "question"}]};
+const step = {info: {id: "a1", role: "assistant", parentID: "u", finish: "tool-calls", time: {created: 1100, completed: 2000}},
+  parts: [{id: "r", type: "reasoning", text: "thinking"}, {id: "plan", type: "text", text: "progress"},
+    {id: "command", type: "tool", tool: "bash", state: {status: "completed"}}]};
+const final = {info: {id: "a2", role: "assistant", parentID: "u", finish: "stop", time: {created: 2100, completed: 139000}},
+  parts: [{id: "fr", type: "reasoning", text: "final thinking"}, {id: "f1", type: "text", text: "final answer"},
+    {id: "f2", type: "text", text: "validation"}, {id: "attachment", type: "file", filename: "result.png"}]};
+state.messages = [user, step, final]; state.statuses.s = {type: "busy"};
+let row = render();
+assert(!find(row, "wsp-turn-process"), "Completion metadata alone must not fold a busy turn");
+assert(descendants(row).some(node => node.text === "progress"));
+state.statuses.s = {type: "idle"}; row = render();
+let process = find(row, "wsp-turn-process"), body = find(row, "wsp-message-inner");
+assert(process && !process.open, "Completed turn defaults to collapsed");
+assert(find(process, "wsp-turn-duration").text === "用时 2 分 18 秒", "Duration includes the whole turn");
+assert(find(process, "wsp-turn-count").text === "1 项工具操作");
+assert(descendants(process).some(node => node.text === "progress"));
+assert(descendants(process).some(node => node.text === "command"));
+assert(descendants(process).some(node => node.text === "final thinking"));
+assert(!descendants(process).some(node => node.text === "final answer"));
+assert(body.children.some(node => node.text === "final answer"));
+assert(body.children.some(node => node.text === "validation"));
+assert(body.children.some(node => node.class === "wsp-message-file"));
+assert(descendants(row).find(node => node.tag === "actions").text === "final answer\nvalidation",
+  "Copy action uses only the visible final reply");
+assert.equal(state.messages[1].parts.length, 3, "Folding must not modify native history");
+// Native details toggles survive row rebuilds and conversation switches.
+process.open = true; process.emit("toggle"); state.fileIndexVersion = 1;
+row = render(); process = find(row, "wsp-turn-process"); assert(process.open);
+process.open = false; process.emit("toggle"); state.fileIndexVersion++;
+assert(!find(render(), "wsp-turn-process").open);
+state.sessionId = "different"; assert(!find(render(), "wsp-turn-process").open);
+state.sessionId = "s"; assert(!find(render(), "wsp-turn-process").open);
+// Waiting for user input is not completion, even with stale terminal metadata.
+state.permissions = [{id: "permission", sessionID: "s"}];
+assert(!find(render(), "wsp-turn-process")); state.permissions = [];
+state.questions = [{id: "question", sessionID: "s"}];
+assert(!find(render(), "wsp-turn-process")); state.questions = [];
+state.sending = true; assert(find(render(), "wsp-turn-process"), "Submitting a new prompt must not reopen history"); state.sending = false;
+state.statuses.s = {type: "retry"}; assert(!find(render(), "wsp-turn-process"));
+// A new busy turn must not expand completed history.
+state.messages.push({...user, info: {...user.info, id: "u2"}}); state.statuses.s = {type: "busy"};
+render(); assert(content.querySelector(".wsp-turn-process"));
+state.messages = [user, step]; state.statuses.s = {type: "idle"};
+assert(!find(render(), "wsp-turn-process"), "A finished tool step is not a final reply");
+state.messages = [user, step, {...final, info: {...final.info, error: {name: "MessageAbortedError"}}}];
+row = render(); assert(!find(row, "wsp-turn-process")); assert(descendants(row).some(node => node.text === "failed"));
+// A single reply with reasoning folds; a simple text reply needs no extra bar.
+state.messages = [user, final]; row = render(); assert(find(row, "wsp-turn-process"));
+state.messages = [user, {...final, parts: final.parts.slice(1)}];
+assert(!find(render(), "wsp-turn-process"));
+// Preserve all trailing final blocks when a provider combines tools/text in one message.
+const combined = {...final, parts: [...step.parts, ...final.parts]};
+const presentation = workspaceTurnPresentation(combined, {user}, false);
+assert.deepEqual(presentation.finalIndexes, [4, 5, 6]);
+for (const finish of ["tool-calls", "unknown", undefined]) {
+  assert.equal(workspaceTurnPresentation({...combined, info: {...final.info, finish}}, {user}), null);
+}
+assert.equal(workspaceTurnPresentation({...combined, info: {...final.info, summary: true}}, {user}), null);
+assert.equal(workspaceTurnPresentation({...combined, info: {...final.info, time: {created: 2100}}}, {user}), null);
+assert.equal(workspaceTurnPresentation({...combined, parts: step.parts}, {user}), null);
+assert.equal(workspaceTurnDuration(3661000), "1 小时 1 分 1 秒");
+assert.equal(workspaceTurnDuration(0), "0 秒");
+'''
+    subprocess.run(
+        [node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True
+    )

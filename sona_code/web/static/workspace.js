@@ -180,6 +180,56 @@ function workspaceMessageTurns(messages) {
   return turns;
 }
 
+// A native assistant message can finish a tool step without finishing the turn.
+// Fold only after the final reply is complete and the session has stopped running.
+function workspaceTurnPresentation(message, turn, active = false) {
+  const info = message.modelInfo || message.info;
+  if (active || message.errorInfo || info?.error || info?.summary || info?.time?.completed == null ||
+      !info.finish || ["tool-calls", "unknown"].includes(info.finish)) return null;
+  const parts = message.parts || [];
+  let finalStart = message.lastReplyStart || 0;
+  for (let index = finalStart; index < parts.length; index++) {
+    if (parts[index].type === "tool") finalStart = index + 1;
+  }
+  const visible = part => part.type === "reasoning" || part.type === "tool" || part.type === "file" ||
+    workspaceUserTextPart(part);
+  const finalIndexes = parts.flatMap((part, index) => index >= finalStart &&
+    (workspaceUserTextPart(part) || part.type === "file") ? [index] : []);
+  const finalSet = new Set(finalIndexes);
+  // Keep incomplete/empty responses visible, including their last progress text.
+  if (!finalIndexes.length || !parts.some((part, index) => visible(part) && !finalSet.has(index))) return null;
+  const start = turn?.user?.info?.time?.created ?? message.info?.time?.created;
+  const elapsed = start == null ? NaN : Number(info.time.completed) - Number(start);
+  return { finalIndexes, elapsed: Number.isFinite(elapsed) && elapsed >= 0 ? elapsed : null,
+    toolCount: parts.filter(part => part.type === "tool").length };
+}
+
+function workspaceTurnDuration(milliseconds) {
+  const seconds = Math.floor(Math.max(0, milliseconds) / 1000);
+  if (seconds < 60) return `${seconds} 秒`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+  return `${Math.floor(seconds / 3600)} 小时 ${Math.floor(seconds / 60) % 60} 分 ${seconds % 60} 秒`;
+}
+
+function workspaceTurnProcessNode(presentation, key, expanded, onClick) {
+  const node = el("details", { class: "wsp-turn-process", open: expanded.get(key) === true });
+  const summary = el("summary", { class: "wsp-turn-summary", title: "展开或收起本轮思考、回复与工具操作" },
+    workspaceIcon("clock", "wsp-turn-clock"),
+    el("span", { class: "wsp-turn-duration", text: presentation.elapsed == null ? "执行过程" :
+      `用时 ${workspaceTurnDuration(presentation.elapsed)}` }),
+    ...(presentation.toolCount ? [el("span", { class: "wsp-turn-count", text: `${presentation.toolCount} 项工具操作` })] : []),
+    el("span", { class: "wsp-turn-hint wsp-turn-expand", text: "展开过程" }),
+    el("span", { class: "wsp-turn-hint wsp-turn-collapse", text: "收起过程" }),
+    workspaceIcon("chevron", "wsp-turn-chevron"));
+  const body = el("div", { class: "wsp-turn-process-body" });
+  node.append(summary, body);
+  node.addEventListener("toggle", () => {
+    if (node.isConnected) expanded.set(key, node.open);
+  });
+  summary.addEventListener("click", () => onClick?.(summary));
+  return { node, body };
+}
+
 // Native user summaries describe one turn, including all of its assistant steps.
 // Never substitute the cumulative session diff for a missing turn summary.
 function workspaceTurnDiffs(messages, message, projectPath = "", turn = null) {
@@ -1870,6 +1920,7 @@ function renderWorkspace(view) {
       const previous = displayMessages.at(-1);
       if (message.info?.role === "assistant" && previous?.info?.role === "assistant" &&
           message.info.parentID && previous.info.parentID === message.info.parentID) {
+        previous.lastReplyStart = previous.parts.length;
         previous.parts.push(...(message.parts || []));
         if (message.info.error) previous.errorInfo = message.info;
         previous.modelInfo = message.info;
@@ -1891,6 +1942,7 @@ function renderWorkspace(view) {
       if (message.info?.role === "assistant") lastReplies.set(message.info.parentID, index);
     });
     const lastUserId = lastUserMessage()?.info.id;
+    const activeUserId = state.messages.findLast(message => message.info?.role === "user")?.info.id;
     for (const [messageIndex, message] of displayMessages.entries()) {
       // OpenCode uses synthetic user messages to continue internal work.
       // Keep them in state for turn ownership without displaying empty bubbles.
@@ -1913,6 +1965,12 @@ function renderWorkspace(view) {
       const modelInfo = message.modelInfo || message.info;
       const modelLabel = modelInfo?.modelID ? modelDisplayName(modelInfo.providerID, modelInfo.modelID) : "";
       const laterReply = lastReplies.get(message.info?.parentID) > messageIndex;
+      const currentTurnActive = message.info?.parentID === activeUserId &&
+        (["busy", "retry"].includes(sessionStatus?.type) ||
+          state.permissions.some(item => item.sessionID === state.sessionId) ||
+          state.questions.some(item => item.sessionID === state.sessionId));
+      const presentation = role === "assistant" && !laterReply ? workspaceTurnPresentation(message,
+        turns.get(message.info?.parentID), currentTurnActive) : null;
       const diffs = role === "assistant" && !laterReply
         ? workspaceTurnDiffs(state.messages, message, activeProject()?.path, turns.get(message.info?.parentID)) : [];
       let progressLabel = "";
@@ -1925,7 +1983,7 @@ function renderWorkspace(view) {
           streamingText ? "正在回复…" : "正在思考…";
       }
       const key = JSON.stringify([state.projectId, state.sessionId, message.info?.id || messageIndex]);
-      const signatureData = [message, modelLabel, diffs, progressLabel,
+      const signatureData = [message, modelLabel, diffs, progressLabel, presentation,
         role === "user" ? [message.info?.id === lastUserId, state.sending,
           state.statuses?.[state.sessionId]?.type] : null,
         !message.parts.length ? state.statuses?.[state.sessionId]?.type : null,
@@ -1975,14 +2033,30 @@ function renderWorkspace(view) {
       }
       const error = role !== "user" ? messageError(message.errorInfo) : null;
       if (error) body.append(error);
+      const process = presentation ? workspaceTurnProcessNode(presentation,
+        `turn:${key}`, state.expandedTools, summary => {
+          // Keep the clicked bar in place and pause following while inspecting.
+          const top = summary.getBoundingClientRect().top;
+          browsingHistory = true; followLatest = false;
+          requestAnimationFrame(() => {
+            if (!summary.isConnected) return;
+            scroll.scrollTop += summary.getBoundingClientRect().top - top;
+            navigation.render(state);
+          });
+        }) : null;
+      if (process) body.append(process.node);
+      const finalParts = new Set(presentation?.finalIndexes);
+      let partTarget = process?.body || body;
       let pendingTools = [];
       const flushTools = () => {
-        if (pendingTools.length) body.append(toolGroup(pendingTools));
+        if (pendingTools.length) partTarget.append(toolGroup(pendingTools));
         pendingTools = [];
       };
       for (const [partIndex, part] of parts.entries()) {
+        const nextTarget = process && !finalParts.has(partIndex) ? process.body : body;
+        if (nextTarget !== partTarget) { flushTools(); partTarget = nextTarget; }
         if (part.type === "tool") {
-          if (skillForTool(part)) { flushTools(); body.append(toolPart(part)); }
+          if (skillForTool(part)) { flushTools(); partTarget.append(toolPart(part)); }
           else pendingTools.push(part);
           continue;
         }
@@ -1995,22 +2069,22 @@ function renderWorkspace(view) {
             const details = el("details", { class: "wsp-reasoning wsp-skill-content" }, el("summary", { text: "查看已加载技能内容" }), el("pre", { text: part.text }));
             details.open = !!state.expandedTools.get(key);
             details.addEventListener("toggle", () => state.expandedTools.set(key, details.open));
-            body.append(details);
+            partTarget.append(details);
           }
-          else body.append(textPart(part, role, references));
+          else partTarget.append(textPart(part, role, references));
         }
         else if (part.type === "reasoning") {
           const key = `reasoning:${state.projectId}:${state.sessionId}:${part.id || `${message.info?.id}:${partIndex}`}`;
           const reasoning = workspaceReasoningNode(cached, key, part.text || "", state.expandedTools,
             running && message.info.parentID === lastUserId && part.time?.end == null && modelInfo?.time?.completed == null,
             partIndex === lastReasoningIndex ? pendingReasoningKey : null);
-          body.append(reasoning);
+          partTarget.append(reasoning);
         } else if (part.type === "file") {
           const filename = part.filename || "附件";
           if (references.includes(filename)) {
             const pattern = fileReferencePattern([filename]);
             if (!parts.some(item => item.type === "text" && !item.synthetic && pattern.test(item.text || ""))) {
-              body.append(el("div", { class: "wsp-text" }, fileMention(filename, true)));
+              partTarget.append(el("div", { class: "wsp-text" }, fileMention(filename, true)));
             }
             continue;
           }
@@ -2019,7 +2093,7 @@ function renderWorkspace(view) {
           if (/^data:image\/(?:png|jpeg|gif|webp);base64,/.test(part.url || "")) {
             file.append(el("img", { src: part.url, alt: filename, loading: "lazy" }));
           }
-          body.append(file);
+          partTarget.append(file);
         }
       }
       flushTools();
@@ -2039,7 +2113,8 @@ function renderWorkspace(view) {
       }
       if (diffs.length) body.append(changeSummary(message.info.parentID, diffs));
       const column = el("div", { class: "wsp-message-column" }, body);
-      if (!message.awaitingReply) column.append(messageActions(message));
+      if (!message.awaitingReply) column.append(messageActions(presentation ?
+        {...message, parts: presentation.finalIndexes.map(index => parts[index])} : message));
       row.append(column);
       target.append(row);
     }

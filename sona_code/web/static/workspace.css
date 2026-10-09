@@ -692,6 +692,28 @@
 .wsp-message-action:focus-visible { outline: 2px solid var(--accent, #507bea); outline-offset: 2px; }
 .wsp-message-action:disabled { opacity: .4; cursor: default; }
 .wsp-message-time { font-size: 13px; font-variant-numeric: tabular-nums; }
+.wsp-turn-process { min-width: 0; margin: 3px 0 15px; color: var(--text-dim); }
+.wsp-turn-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; min-height: 38px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; list-style: none; cursor: pointer; font-size: 12.5px; line-height: 1.5; }
+.wsp-turn-summary::-webkit-details-marker { display: none; }
+.wsp-turn-summary:hover { border-color: #c9d8f1; background: #f2f6ff; }
+.wsp-turn-clock, .wsp-turn-chevron { flex: none; width: 15px; height: 15px; color: #8a98ae; }
+.wsp-turn-duration { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.wsp-turn-count { padding-left: 9px; border-left: 1px solid #dce3ed; color: var(--text-faint); }
+.wsp-turn-hint { margin-left: auto; color: var(--accent); font-size: 12px; }
+.wsp-turn-chevron { transition: transform .15s ease; }
+.wsp-turn-collapse, .wsp-turn-process[open] > .wsp-turn-summary .wsp-turn-expand { display: none; }
+.wsp-turn-process[open] > .wsp-turn-summary .wsp-turn-collapse { display: inline; }
+.wsp-turn-process[open] > .wsp-turn-summary .wsp-turn-chevron { transform: rotate(90deg); }
+.wsp-turn-process-body { min-width: 0; margin: 12px 0 0 7px; padding: 0 0 2px 14px; border-left: 2px solid #e6edf7; }
+.wsp-turn-process-body > .wsp-text { margin: 12px 0; }
+@media (max-width: 600px) {
+  .wsp-turn-summary { gap: 7px; padding-inline: 8px; }
+  .wsp-turn-count { padding-left: 7px; font-size: 12px; }
+  .wsp-turn-hint { display: none !important; }
+  .wsp-turn-chevron { margin-left: auto; }
+  .wsp-turn-process-body { margin-left: 4px; padding-left: 10px; }
+}
+@media (prefers-reduced-motion: reduce) { .wsp-turn-chevron { transition: none; } }
 .wsp-clipboard-field { position: fixed; left: -9999px; top: 0; }
 @media (hover: none), (pointer: coarse) {
   .wsp-message-actions { opacity: 1; }
