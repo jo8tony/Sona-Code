@@ -549,7 +549,7 @@ function renderWorkspace(view) {
           <nav class="wsp-prompt-menu" id="wsp-prompt-menu" aria-label="用户提问目录" hidden></nav>
           <button class="wsp-latest" id="wsp-latest" type="button" hidden>${workspaceIcon("chevronDown").outerHTML}<span>回到最新</span></button>
         </div>
-        <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" role="listbox" aria-label="命令与项目文件" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-model-refresh" title="刷新 Sona 订阅模型" aria-label="刷新 Sona 订阅模型" hidden>${workspaceIcon("refresh").outerHTML}</button><button type="button" id="wsp-model-close" aria-label="关闭模型选择">${workspaceIcon("close").outerHTML}</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><div class="wsp-attachment-list" id="wsp-attachment-list" aria-label="待发送附件" hidden></div><div class="wsp-input" id="wsp-input" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" aria-describedby="wsp-skill-error"></div><div id="wsp-skill-error" class="wsp-skill-error" role="status" aria-live="polite" hidden></div><div class="wsp-composer-bottom"><button class="wsp-attach" id="wsp-attach" type="button" title="选择 Sona Code 命令，也可输入 /" aria-label="选择 Sona Code 命令" aria-haspopup="listbox" aria-expanded="false">${workspaceIcon("plus").outerHTML}</button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent" hidden><option value="build">Build · 执行</option></select><button class="wsp-agent-trigger" id="wsp-agent-trigger" type="button" aria-haspopup="menu" aria-expanded="false"><span id="wsp-agent-label">Build · 执行</span>${workspaceIcon("chevronDown").outerHTML}</button><div class="wsp-agent-picker" id="wsp-agent-picker" role="menu" aria-label="选择 Agent" hidden></div><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">自动</button><select class="wsp-variant" id="wsp-variant" aria-label="选择模型强度" title="模型推理强度" hidden></select><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息">${workspaceIcon("send").outerHTML}</button></div></form><div class="wsp-stats" id="wsp-stats" aria-live="polite"></div></div>
+        <div class="wsp-composer-dock"><form class="wsp-composer" id="wsp-form"><div class="wsp-command-menu" id="wsp-command-menu" role="listbox" aria-label="命令与项目文件" hidden></div><div class="wsp-model-picker" id="wsp-model-picker" role="dialog" aria-label="选择模型" hidden><div class="wsp-picker-head"><strong>选择模型</strong><button type="button" id="wsp-sona-logout" class="wsp-sona-logout" hidden>退出 Sona</button><button type="button" id="wsp-model-refresh" title="刷新 Sona 订阅模型" aria-label="刷新 Sona 订阅模型" hidden>${workspaceIcon("refresh").outerHTML}</button><button type="button" id="wsp-model-close" aria-label="关闭模型选择">${workspaceIcon("close").outerHTML}</button></div><input id="wsp-model-search" type="search" placeholder="搜索 Provider 或模型" aria-label="搜索 Provider 或模型"><div class="wsp-model-list" id="wsp-model-list"></div></div><div class="wsp-attachment-list" id="wsp-attachment-list" aria-label="待发送附件" hidden></div><div class="wsp-input" id="wsp-input" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="向 Sona Code 描述你的需求…" aria-label="输入消息" aria-describedby="wsp-skill-error"></div><div id="wsp-skill-error" class="wsp-skill-error" role="status" aria-live="polite" hidden></div><div class="wsp-composer-bottom"><button class="wsp-attach" id="wsp-attach" type="button" title="选择 Sona Code 命令，也可输入 /" aria-label="选择 Sona Code 命令" aria-haspopup="listbox" aria-expanded="false">${workspaceIcon("plus").outerHTML}</button><select class="wsp-agent" id="wsp-agent" aria-label="选择 Agent" hidden><option value="build">Build · 执行</option></select><button class="wsp-agent-trigger" id="wsp-agent-trigger" type="button" aria-haspopup="menu" aria-expanded="false"><span id="wsp-agent-label">Build · 执行</span>${workspaceIcon("chevronDown").outerHTML}</button><div class="wsp-agent-picker" id="wsp-agent-picker" role="menu" aria-label="选择 Agent" hidden></div><span class="wsp-composer-hint">Enter 发送 · Shift+Enter 换行</span><span class="wsp-composer-spacer"></span><button class="wsp-model-trigger" id="wsp-model-trigger" type="button" aria-haspopup="dialog" aria-expanded="false">自动</button><select class="wsp-variant" id="wsp-variant" aria-label="选择模型强度" title="模型推理强度" hidden></select><button class="wsp-send" id="wsp-send" type="submit" title="发送消息" aria-label="发送消息">${workspaceIcon("send").outerHTML}</button></div></form><div class="wsp-stats" id="wsp-stats" aria-live="polite"></div></div>
       </div>
     </section>`;
 
@@ -2903,7 +2903,9 @@ function renderWorkspace(view) {
 
   function renderModelPicker() {
     const refresh = view.querySelector("#wsp-model-refresh");
-    refresh.hidden = state.modelSource !== "sona" || state.sonaConnected === false;
+    const loggedIn = state.modelSource === "sona" && state.sonaConnected === true;
+    refresh.hidden = !loggedIn;
+    view.querySelector("#wsp-sona-logout").hidden = !loggedIn;
     modelList.replaceChildren();
     if (state.modelSource === "sona" && state.sonaConnected === false) {
       modelList.append(el("p", { class: "wsp-picker-empty", text: state.modelLoadError || "请登录 Sona 网站以获取已订阅模型。" }),
@@ -3009,7 +3011,7 @@ function renderWorkspace(view) {
             if (projectId) localStorage.removeItem(`sona-code:model:${projectId}`);
             else localStorage.removeItem("sona-code:last-model");
           } catch (_) {}
-          toast("原模型已不可用，请重新选择模型", "error");
+          if (state.modelSource !== "sona" || state.sonaConnected) toast("原模型已不可用，请重新选择模型", "error");
         }
       }
       updateModelButton();
@@ -3050,6 +3052,33 @@ function renderWorkspace(view) {
     finally {
       button.disabled = false; button.removeAttribute("aria-busy");
       if (alive()) refreshSidebarAccount();
+    }
+  }
+
+  async function logoutSona() {
+    const button = view.querySelector("#wsp-sona-logout");
+    if (button.disabled) return;
+    button.disabled = true;
+    button.textContent = "正在退出…";
+    button.setAttribute("aria-busy", "true");
+    try {
+      await api("models/sona/logout", { method: "POST", silent: true });
+      workspaceModelCache.clear();
+      if (alive() && state.modelSource === "sona") {
+        // Invalidate in-flight reads before showing the login entry so a late
+        // catalog response cannot restore the account that just logged out.
+        modelLoadVersion++;
+        state.sonaConnected = false;
+        state.providers = []; state.defaultModel = null;
+        state.connectedProviders = new Set(); state.modelLoadError = "";
+        updateModelButton(); renderStatsLine(); renderModelPicker();
+      }
+      window.dispatchEvent(new Event("sona-models-changed"));
+      toast("已退出 Sona，可以重新登录");
+    } catch (error) {
+      toast(`退出 Sona 失败：${detail(error)}`, "error");
+    } finally {
+      button.disabled = false; button.textContent = "退出 Sona"; button.removeAttribute("aria-busy");
     }
   }
 
@@ -4096,6 +4125,7 @@ function renderWorkspace(view) {
   window.addEventListener("resize", updateSidebarButton);
   addCleanup(() => window.removeEventListener("resize", updateSidebarButton));
   view.querySelector("#wsp-model-refresh").addEventListener("click", refreshSonaModels);
+  view.querySelector("#wsp-sona-logout").addEventListener("click", logoutSona);
   modelButton.addEventListener("click", () => modelPicker.hidden ? openModelPicker() : closeModelPicker());
   agentTrigger.addEventListener("click", () => agentPicker.hidden ? openAgentPicker() : closeAgentPicker());
   variantTrigger.addEventListener("click", () => variantPicker.hidden ? openVariantPicker() : closeVariantPicker());

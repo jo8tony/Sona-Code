@@ -3,6 +3,73 @@
 from tests.test_workspace_interactions import run_node
 
 
+def test_chat_logout_relogin_and_late_catalog_response():
+    run_node(r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+vm.runInThisContext(fs.readFileSync("sona_code/web/static/models.js", "utf8"));
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
+vm.runInThisContext(source);
+const oldProvider = {id: "old-provider", source: "sona", models: {old: {name: "Old model", source: "sona"}}};
+const newProvider = {id: "new-provider", source: "sona", models: {fresh: {name: "New model", source: "sona"}}};
+const catalogue = connected => ({source: "sona", sona_environment: "prod", sona_connected: connected,
+  providers: connected ? [newProvider] : [], default_model: null});
+global.state = {projectId: null, modelSource: "sona", sonaEnvironment: "prod", sonaConnected: true,
+  providers: [oldProvider], connectedProviders: new Set(), chosenModels: new Map([[null, "old-provider\u0000old"]]),
+  chosenVariants: new Map(), modelLoadError: ""};
+const node = props => ({...props, textContent: props?.text || "", children: [], dataset: {
+  sonaLoginLabel: props?.["data-sona-login-label"]}, append(...children) {this.children.push(...children);},
+  replaceChildren(...children) {this.children = children;}, setAttribute(k, v) {this[k] = v;}, removeAttribute(k) {delete this[k];}});
+global.el = (tag, props, ...children) => {const result = node(props); result.append(...children); return result;};
+global.modelList = node({}); global.modelSearch = {value: ""}; global.modelPicker = {hidden: false}; global.modelButton = {};
+const logout = node({text: "退出 Sona"}), refresh = node({});
+global.view = {querySelector: id => id === "#wsp-sona-logout" ? logout : refresh};
+const descendants = item => [item, ...(item.children || []).flatMap(descendants)];
+global.document = {querySelectorAll: () => descendants(modelList).filter(n => n.dataset?.sonaLoginLabel)};
+global.modelLoadVersion = 0; const notices = [];
+global.toast = text => notices.push(text); global.detail = error => error.detail || error.message;
+global.localStorage = {removeItem() {}};
+global.alive = () => true; global.positionPicker = global.updateModelButton = global.renderStatsLine = () => {};
+global.window = {__TAURI__: {core: {invoke: async () => {}}}, dispatchEvent: () => {void loadModels(null);}};
+let busy = true, connected = true, delayRead = false, releaseOld;
+global.api = async (path, options) => {
+  if (path === "models/sona/logout") {
+    if (busy) throw Object.assign(new Error("任务运行中"), {status: 409});
+    connected = false; return {connected: false};
+  }
+  if (path === "workspace/models") {
+    if (delayRead) return new Promise(resolve => {releaseOld = () => resolve({...catalogue(true), providers: [oldProvider]});});
+    return catalogue(connected);
+  }
+  if (path.endsWith("/start")) return {state: "new-login", url: "https://site.test"};
+  if (path === "models/source") return {source: "sona", environment: "prod", connected};
+  connected = true; return {status: "completed"};
+};
+vm.runInThisContext(source.slice(source.indexOf("  function renderModelPicker("), source.indexOf("  function openModelPicker(")));
+vm.runInThisContext(source.slice(source.indexOf("  async function loadModels("), source.indexOf("  async function refreshSonaModels(")));
+vm.runInThisContext(source.slice(source.indexOf("  async function logoutSona("), source.indexOf("  async function loadAgents(")));
+(async () => {
+  renderModelPicker(); assert.equal(logout.hidden, false);
+  await logoutSona(); assert.equal(state.sonaConnected, true); assert.equal(logout.disabled, false);
+  assert(notices.some(text => text.includes("退出 Sona 失败")));
+  busy = false; delayRead = true;
+  const stale = loadModels(null); await new Promise(setImmediate); delayRead = false;
+  await logoutSona(); await new Promise(setImmediate);
+  assert.equal(logout.hidden, true); assert.equal(refresh.hidden, true);
+  assert.equal(state.sonaConnected, false); assert.deepEqual(state.providers, []);
+  assert.equal(state.chosenModels.get(null), "");
+  releaseOld(); await stale;
+  assert.equal(state.sonaConnected, false, "A late read must not restore the old account");
+  assert.deepEqual(state.providers, []);
+  const login = descendants(modelList).find(n => n.dataset?.sonaLoginLabel === "登录 Sona");
+  assert(login, "Chat must offer login immediately after logout");
+  await login.onclick(); await new Promise(setImmediate);
+  assert.equal(state.sonaConnected, true); assert.equal(logout.hidden, false);
+  assert.deepEqual(state.providers.map(p => p.id), ["new-provider"]);
+  assert(!notices.some(text => text.includes("原模型已不可用")));
+})().catch(error => {console.error(error); process.exitCode = 1;});
+''')
+
+
 def test_cancel_unresponsive_native_opener_and_retry_from_new_button():
     run_node(r'''
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");

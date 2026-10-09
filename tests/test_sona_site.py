@@ -292,6 +292,33 @@ def test_sona_login_and_models_are_available_without_a_project(tmp_path):
         assert "scene-secret" not in response.text
 
 
+def test_logout_removes_saved_account_and_relogin_loads_new_models(tmp_path):
+    cfg = default_config()
+    cfg.recording.dir = str(tmp_path / "records")
+    path = str(tmp_path / "config.json")
+    app = create_app(cfg, path)
+
+    async def catalog(origin, token, environment):
+        return saved_catalog(token=token, name=token + "-model")
+
+    app.state.runtime.sona_site.load_catalog = catalog
+    with TestClient(app) as client:
+        prefix = "/__recorder/api/models/sona"
+        state = client.post(prefix + "/login/start").json()["state"]
+        assert client.post(prefix + "/callback", data={"state": state, "token": "first"}).status_code == 200
+        response = client.post(prefix + "/logout")
+        assert response.json()["connected"] is False
+        assert response.json()["providers"] == []
+        assert SonaSiteManager(path).session(cfg.sona_site) is None
+        assert client.get("/__recorder/api/workspace/models").json()["providers"] == []
+        state = client.post(prefix + "/login/start").json()["state"]
+        assert client.post(prefix + "/callback", data={"state": state, "token": "second"}).status_code == 200
+        models = client.get("/__recorder/api/workspace/models").json()
+        assert models["sona_connected"] is True
+        assert list(models["providers"][0]["models"]) == ["second-model"]
+        assert SonaSiteManager(path).session(cfg.sona_site).token == "second"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["cancel", "restart", "replay"])
 async def test_inflight_login_cannot_complete_after_cancel_or_retry(tmp_path, action):
