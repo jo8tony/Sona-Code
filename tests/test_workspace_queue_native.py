@@ -217,7 +217,8 @@ async def test_native_v1_queue_waits_for_stream_completion(binary, history_sourc
             new_id = (await manager.request(str(project), cfg, "POST", "/session", body={}))["id"]
             if history_source == "stale":
                 assert read_history(str(project), cfg, f"/session/{new_id}") is None
-            await queue.add("p", str(project), new_id, "prompt", {"text": "new-turn"})
+            admitted = await queue.add("p", str(project), new_id, "prompt", {"text": "new-turn"}, dispatch_if_idle=True)
+            assert admitted["items"][0]["status"] == "sending"
             for _ in range(150):
                 if not queue.snapshot("p", new_id)["items"]:
                     break

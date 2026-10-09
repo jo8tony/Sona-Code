@@ -999,7 +999,7 @@ function findToolResult(turns, fromTurnNo, toolCallId) {
 
 /* ============================================================ Markdown 渲染（轻量子集） */
 /* DOM 构建（不使用 innerHTML），文本一律经 createTextNode，天然免疫 XSS。
-   支持：fenced 代码块、标题、无序/有序列表、引用、水平线、
+   支持：fenced 代码块、表格、标题、无序/有序列表、引用、水平线、
    行内代码、粗体、斜体、删除线、链接（仅 http/https/mailto）。 */
 
 // 行内元素：`code` **bold** *italic* ~~del~~ [text](url)
@@ -1034,9 +1034,32 @@ function trjInlineMd(text) {
   return frag;
 }
 
+function trjTableCells(line) {
+  const cells = [];
+  let cell = "", codeTicks = 0;
+  const value = line.trim();
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index];
+    if (char === "\\" && value[index + 1] === "|") { cell += "|"; index++; continue; }
+    if (char === "`") {
+      let count = 1;
+      while (value[index + count] === "`") count++;
+      if (!codeTicks) codeTicks = count;
+      else if (codeTicks === count) codeTicks = 0;
+      cell += "`".repeat(count); index += count - 1; continue;
+    }
+    if (char === "|" && !codeTicks) { cells.push(cell.trim()); cell = ""; }
+    else cell += char;
+  }
+  cells.push(cell.trim());
+  if (value.startsWith("|")) cells.shift();
+  if (value.endsWith("|") && !value.endsWith("\\|")) cells.pop();
+  return cells;
+}
+
 function trjMarkdown(text) {
   const root = el("div", { class: "trj-md" });
-  const lines = String(text == null ? "" : text).split("\n");
+  const lines = String(text == null ? "" : text).replace(/\r\n?/g, "\n").split("\n");
   let para = null;
   const flushPara = () => {
     if (para) {
@@ -1088,6 +1111,27 @@ function trjMarkdown(text) {
     }
     // 空行
     if (!line.trim()) { flushPara(); i++; continue; }
+    // GFM tables. Build safe DOM cells, including inline formatting and alignment.
+    const header = line.includes("|") ? trjTableCells(line) : [];
+    const separators = i + 1 < lines.length ? trjTableCells(lines[i + 1]) : [];
+    if (header.length && header.length === separators.length &&
+        separators.every(cell => /^:?-{3,}:?$/.test(cell))) {
+      flushPara();
+      const alignments = separators.map(cell => cell.startsWith(":") && cell.endsWith(":") ? "center" :
+        cell.endsWith(":") ? "right" : "left");
+      const row = (cells, tag) => el("tr", null, ...header.map((_, column) =>
+        el(tag, {style: `text-align: ${alignments[column]}`, ...(tag === "th" ? {scope: "col"} : {})},
+          trjInlineMd(cells[column] || ""))));
+      const body = el("tbody");
+      i += 2;
+      while (i < lines.length && lines[i].trim() && lines[i].includes("|") &&
+          !/^\s*(?:```|#{1,6}\s|>\s|[-*+]\s|\d+[.)]\s)/.test(lines[i])) {
+        body.append(row(trjTableCells(lines[i]), "td")); i++;
+      }
+      root.append(el("div", {class: "trj-md-table-scroll", tabindex: "0", role: "region", "aria-label": "表格"},
+        el("table", {class: "trj-md-table"}, el("thead", null, row(header, "th")), body)));
+      continue;
+    }
     // 水平线
     if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
       flushPara();
@@ -1139,7 +1183,10 @@ function trjMarkdown(text) {
     }
     // 普通段落行
     if (!para) para = [];
-    para.push(trjInlineMd(line));
+    if (para.length) para.push(" ");
+    const hardBreak = /(?: {2,}|\\)$/.test(line);
+    para.push(trjInlineMd(hardBreak ? line.replace(/(?: {2,}|\\)$/, "") : line));
+    if (hardBreak) para.push(el("br"));
     i++;
   }
   flushPara();

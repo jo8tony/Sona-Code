@@ -14,6 +14,14 @@ from sona_code.config import default_config
 from sona_code.workspace.manager import OpenCodeServer, WorkspaceError, WorkspaceManager
 
 
+@pytest.fixture(autouse=True)
+def isolated_skill_home(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    monkeypatch.setenv("OPENCODE_TEST_HOME", str(tmp_path / "home"))
+    for flag in ("OPENCODE_DISABLE_EXTERNAL_SKILLS", "OPENCODE_DISABLE_CLAUDE_CODE", "OPENCODE_DISABLE_CLAUDE_CODE_SKILLS"):
+        monkeypatch.delenv(flag, raising=False)
+
+
 def make_skill(root: Path, name: str = "code-review") -> Path:
     source = root / name
     source.mkdir(parents=True)
@@ -24,6 +32,85 @@ def make_skill(root: Path, name: str = "code-review") -> Path:
     (source / "references").mkdir()
     (source / "references/checklist.md").write_text("checklist", encoding="utf-8")
     return source
+
+
+def test_other_agent_skills_are_read_in_place_without_duplicate_injection(tmp_path):
+    claude = make_skill(Path.home() / ".claude/skills", "claude-review")
+    agents = make_skill(Path.home() / ".agents/skills/team", "agent-review")
+    store = SkillStore(tmp_path / "app", external_root=tmp_path / "original")
+    items = store.list()["items"]
+    assert {item["origin"] for item in items} == {"Claude Code", "Agents"}
+    assert all(not item["deletable"] and item["native_discovery"] for item in items)
+    assert store.external_paths() == []
+    assert list(store.enabled_dir.iterdir()) == []
+    before = (claude / "SKILL.md").read_bytes()
+    item = next(item for item in items if item["name"] == "claude-review")
+    store.set_enabled(item["id"], False)
+    assert store.permission("claude-review") == "deny"
+    assert (claude / "SKILL.md").read_bytes() == before
+    with pytest.raises(ValueError, match="只能删除"):
+        store.delete(item["id"])
+    assert agents.is_dir()
+    store.add(str(claude))
+    duplicate = [item for item in store.list()["items"] if item["name"] == "claude-review"]
+    assert next(item for item in duplicate if item["source"] == "external")["conflict"]
+    assert not next(item for item in duplicate if item["source"] == "app").get("conflict")
+
+
+@pytest.mark.parametrize("flag,expected", [
+    ("OPENCODE_DISABLE_EXTERNAL_SKILLS", set()),
+    ("OPENCODE_DISABLE_CLAUDE_CODE", {"agent-review"}),
+    ("OPENCODE_DISABLE_CLAUDE_CODE_SKILLS", {"agent-review"}),
+])
+def test_native_external_discovery_flags_are_respected(tmp_path, monkeypatch, flag, expected):
+    make_skill(Path.home() / ".claude/skills", "claude-review")
+    make_skill(Path.home() / ".agents/skills", "agent-review")
+    monkeypatch.setenv(flag, "1")
+    store = SkillStore(tmp_path / "app", external_root=tmp_path / "original")
+    assert {item["name"] for item in store.list()["items"]} == expected
+
+
+def test_external_metadata_matches_native_optional_description(tmp_path):
+    skill = make_skill(Path.home() / ".agents/skills", "native-review")
+    (skill / "SKILL.md").write_text("---\nname: native_review\n---\nReview")
+    item = SkillStore(tmp_path / "app", external_root=tmp_path / "original").list()["items"][0]
+    assert item["name"] == "native_review" and item["description"] == ""
+    assert not item.get("error")
+
+
+def test_native_external_precedence_uses_actual_loaded_location(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("SONACODE_ORIGINAL_XDG_CONFIG_HOME", str(tmp_path / "original"))
+    make_skill(Path.home() / ".claude/skills")
+    project = tmp_path / "project"
+    selected = make_skill(project / ".agents/skills")
+    app = create_app(default_config(), str(tmp_path / "proxy.json"))
+    app.state.runtime.config.model_settings.source = "native"
+    app.state.runtime.config.model_settings.show_native_models = True
+    invoked = []
+
+    async def request(project, config, method, endpoint, *, body=None, **kwargs):
+        if endpoint == "/command":
+            return [{"name": "code-review", "source": "skill"}]
+        if endpoint == "/skill":
+            return [{"name": "code-review", "location": str(selected / "SKILL.md"), "description": "Project skill"}]
+        if endpoint == "/agent":
+            return []
+        invoked.append(body)
+        return {"ok": True}
+
+    app.state.runtime.workspace.request = request
+    with TestClient(app) as client:
+        prefix = "/__recorder/api/workspace/projects"
+        project_id = client.post(prefix, json={"path": str(project)}).json()["id"]
+        popup = client.get(f"{prefix}/{project_id}/skills").json()
+        assert popup["items"][0]["path"] == str(selected)
+        assert not popup["unavailable"]
+        command = f"{prefix}/{project_id}/sessions/ses_1/command"
+        assert client.post(command, json={"command": "code-review"}).status_code == 200
+        app.state.runtime.skills._permission("code-review", False)
+        assert client.get(f"{prefix}/{project_id}/skills").json()["items"] == []
+        assert client.post(command, json={"command": "code-review"}).status_code == 409
 
 
 def test_skill_copy_enable_disable_delete_and_restart(tmp_path):

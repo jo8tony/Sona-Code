@@ -482,6 +482,12 @@ details.raw-chunks summary:hover { text-decoration: underline; }
 .trj-md a { color: var(--accent); }
 .trj-md .trj-md-hr { border: none; border-top: 1px solid var(--border-soft); margin: 12px 0; }
 .trj-md del { color: var(--text-faint); }
+.trj-md-table-scroll { max-width: 100%; overflow-x: auto; margin: 10px 0; border: 1px solid var(--border-soft); border-radius: 8px; white-space: normal; }
+.trj-md-table { width: 100%; border-collapse: collapse; font-size: inherit; }
+.trj-md-table th, .trj-md-table td { padding: 8px 12px; border-bottom: 1px solid var(--border-soft); vertical-align: top; min-width: 80px; }
+.trj-md-table th { background: #f3f6fc; color: var(--text); font-weight: 600; }
+.trj-md-table tbody tr:nth-child(even) { background: #f8faff; }
+.trj-md-table tbody tr:last-child td { border-bottom: 0; }
 
 /* Token 用量柱状图（会话级） */
 .trj-usage-chart {

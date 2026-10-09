@@ -36,7 +36,7 @@ def _safe_name(name: str) -> str:
     return name
 
 
-def read_skill(path: Path) -> dict:
+def read_skill(path: Path, *, strict: bool = True) -> dict:
     content = (path / "SKILL.md").read_text(encoding="utf-8-sig")
     match = re.match(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", content, re.S)
     if not match:
@@ -47,9 +47,9 @@ def read_skill(path: Path) -> dict:
         raise ValueError("SKILL.md 的 YAML frontmatter 格式错误") from exc
     if not isinstance(metadata, dict) or not isinstance(metadata.get("name"), str):
         raise ValueError("SKILL.md 缺少 name 字段")
-    name = _safe_name(metadata["name"])
-    description = metadata.get("description")
-    if not isinstance(description, str) or not 1 <= len(description.strip()) <= 1024:
+    name = _safe_name(metadata["name"]) if strict else metadata["name"]
+    description = metadata.get("description", "")
+    if not isinstance(description, str) or (strict and not 1 <= len(description.strip()) <= 1024):
         raise ValueError("SKILL.md 的 description 须为 1–1024 个字符")
     return {"name": name, "description": description.strip()}
 
@@ -127,10 +127,17 @@ class SkillStore:
         with self._lock:
             self._prepare()
             items = []
-            roots = [(self.enabled_dir, "app"), (self.root / "skill", "app")]
+            roots = [(self.enabled_dir, "app", "本应用", False), (self.root / "skill", "app", "本应用", False)]
             if self.external_root != self.root:
-                roots.extend((self.external_root / folder, "external") for folder in ("skills", "skill"))
-            for directory, source in roots:
+                roots.extend((self.external_root / folder, "external", "OpenCode", False) for folder in ("skills", "skill"))
+            flag = lambda key: os.environ.get(key, "").lower() in {"1", "true"}
+            home = Path(os.environ.get("OPENCODE_TEST_HOME") or Path.home()).expanduser()
+            if not flag("OPENCODE_DISABLE_EXTERNAL_SKILLS"):
+                if not (flag("OPENCODE_DISABLE_CLAUDE_CODE") or flag("OPENCODE_DISABLE_CLAUDE_CODE_SKILLS")):
+                    roots.append((home / ".claude/skills", "external", "Claude Code", True))
+                roots.append((home / ".agents/skills", "external", "Agents", True))
+            seen_paths = set()
+            for directory, source, origin, native_discovery in roots:
                 if not directory.is_dir() or directory.is_symlink():
                     continue
                 for folder, dirs, files in os.walk(directory, followlinks=False):
@@ -138,11 +145,16 @@ class SkillStore:
                     path = Path(folder)
                     if "SKILL.md" not in files or (path / "SKILL.md").is_symlink():
                         continue
+                    canonical = os.path.normcase(str(path.resolve()))
+                    if canonical in seen_paths:
+                        continue
+                    seen_paths.add(canonical)
                     managed = source == "app" and path.parent == self.enabled_dir
                     item = {"id": path.name if managed else "ext_" + hashlib.sha256(str(path).encode()).hexdigest()[:24],
-                            "path": str(path), "source": source, "deletable": managed}
+                            "path": str(path), "source": source, "origin": origin,
+                            "native_discovery": native_discovery, "deletable": managed}
                     try:
-                        item.update(read_skill(path))
+                        item.update(read_skill(path, strict=source == "app"))
                     except (OSError, ValueError) as exc:
                         item.update(name=path.name, description="", error=str(exc))
                     item["permission"] = self.permission(item["name"])
@@ -160,7 +172,8 @@ class SkillStore:
 
     def external_paths(self) -> list[str]:
         return [item["path"] for item in self.list()["items"]
-                if item["source"] == "external" and not item.get("error") and not item.get("conflict")]
+                if item["source"] == "external" and not item.get("native_discovery")
+                and not item.get("error") and not item.get("conflict")]
 
     def _find(self, skill_id: str) -> dict:
         if not skill_id.startswith("ext_"):
@@ -219,7 +232,7 @@ class SkillStore:
             if item.get("conflict"):
                 raise ValueError("同名技能的权限由优先来源控制")
             if enabled:
-                read_skill(Path(item["path"]))
+                read_skill(Path(item["path"]), strict=item["source"] == "app")
             self._permission(item["name"], enabled)
             return {"ok": True, "id": skill_id, "enabled": enabled}
 

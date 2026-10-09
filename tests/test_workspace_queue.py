@@ -49,6 +49,84 @@ async def test_queue_waits_for_idle_and_each_completed_reply(queue, status):
     assert [item["payload"]["text"] for item in delivered] == ["first", "second"]
 
 
+async def test_idle_admission_dispatches_before_response_and_retires_completed_turn(queue):
+    messages, delivered = [], []
+
+    async def inspect(entry):
+        return {}, messages
+
+    async def dispatch(entry, item):
+        delivered.append(copy.deepcopy(item))
+        messages.append({"info": {"id": item["message_id"], "role": "user"}})
+
+    queue.inspect, queue.dispatch = inspect, dispatch
+    first = await queue.add("p", "/project", "s", "prompt", {"text": "first"}, dispatch_if_idle=True)
+    assert first["items"][0]["status"] == "sending"
+    assert len(delivered) == 1
+    messages.append({"info": {"role": "assistant", "parentID": delivered[0]["message_id"],
+                              "time": {"completed": 1}}})
+    second = await queue.add("p", "/project", "s", "prompt", {"text": "second"}, dispatch_if_idle=True)
+    assert len(second["items"]) == 1
+    assert second["items"][0]["status"] == "sending"
+    assert [item["payload"]["text"] for item in delivered] == ["first", "second"]
+
+
+async def test_immediate_admission_and_worker_never_dispatch_twice(queue):
+    entered, release = asyncio.Event(), asyncio.Event()
+    delivered = []
+
+    async def inspect(entry):
+        entered.set()
+        await release.wait()
+        return {}, []
+
+    async def dispatch(entry, item):
+        delivered.append(item["id"])
+
+    queue.inspect, queue.dispatch = inspect, dispatch
+    admission = asyncio.create_task(queue.add("p", "/project", "s", "prompt", {"text": "first"}, dispatch_if_idle=True))
+    await entered.wait()
+    worker = asyncio.create_task(queue._step("p:s"))
+    release.set()
+    await asyncio.gather(admission, worker)
+    assert len(delivered) == 1
+
+
+async def test_idle_command_admission_does_not_wait_for_native_answer_and_stop_cancels_delivery(queue):
+    started, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def inspect(entry):
+        return {}, []
+
+    async def dispatch(entry, item):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    queue.inspect, queue.dispatch = inspect, dispatch
+    result = await asyncio.wait_for(queue.add("p", "/project", "s", "command", {"command": "review"}, dispatch_if_idle=True), 1)
+    assert started.is_set()
+    assert result["items"][0]["status"] == "sending"
+    await queue.stop("p", "s")
+    assert cancelled.is_set()
+    assert not queue._deliveries
+
+
+@pytest.mark.parametrize("status", ["busy", "retry"])
+async def test_immediate_admission_keeps_busy_messages_pending(queue, status):
+    async def inspect(entry):
+        return {"s": {"type": status}}, []
+
+    async def dispatch(entry, item):
+        pytest.fail("Busy sessions must keep the message queued")
+
+    queue.inspect, queue.dispatch = inspect, dispatch
+    result = await queue.add("p", "/project", "s", "prompt", {"text": "wait"}, dispatch_if_idle=True)
+    assert result["items"][0]["status"] == "pending"
+
+
 async def test_edit_remove_pause_and_restore_preserve_session_scope(queue):
     first = (await queue.add("p", "/project", "s1", "prompt", {"text": "draft", "references": [{"path": "src/a.py"}]}))["items"][0]
     await queue.add("p", "/project", "s2", "command", {"command": "review", "arguments": "other"})

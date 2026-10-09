@@ -749,6 +749,9 @@ async def _prepare_command(
         if managed:
             managed["enabled"] = await asyncio.to_thread(request.app.state.runtime.skills.permission, body.command) != "deny"
     if managed:
+        if managed.get("native_discovery"):
+            catalog = catalog or await _native_skill_catalog(request, path)
+            managed = _native_external_skill(managed, catalog)
         if not managed["enabled"] or managed.get("error"):
             raise HTTPException(status_code=409, detail="该技能已停用或格式无效，请重新选择技能")
         available = await _native_managed_skill_names(request, path, [managed], catalog)
@@ -824,7 +827,9 @@ async def enqueue_message(project_id: str, session_id: str, body: QueuedMessageB
     # Confirm against the server that will receive the task, not a cold snapshot.
     path = _project_path(request, project_id)
     await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}", params={"directory": path})
-    return await _queue_result(request.app.state.runtime.workspace_queue.add(project_id, path, session_id, body.kind, payload))
+    return await _queue_result(request.app.state.runtime.workspace_queue.add(
+        project_id, path, session_id, body.kind, payload, dispatch_if_idle=True,
+    ))
 
 
 @router.patch("/workspace/projects/{project_id}/sessions/{session_id}/queue")
@@ -909,6 +914,16 @@ def _native_skill_items(catalog: tuple[list, list]) -> list[dict]:
             and not item["location"].startswith("<") and item["name"] not in WORKSPACE_COMMANDS]
 
 
+def _native_external_skill(item: dict, catalog: tuple[list, list]) -> dict:
+    """Native discovery owns precedence between global and project external skills."""
+    if not item.get("native_discovery"):
+        return item
+    native = next((skill for skill in _native_skill_items(catalog) if skill["name"] == item["name"]), None)
+    if native is None:
+        return item
+    return {**item, "path": native["path"], "description": native["description"]}
+
+
 async def _native_managed_skill_names(
     request: Request, path: str, installed: list[dict], catalog: tuple[list, list] | None = None,
 ) -> set[str]:
@@ -934,6 +949,7 @@ async def project_skills(project_id: str, request: Request, agent: str | None = 
     enabled = [item for item in installed["items"]
                if item["enabled"] and not item.get("error") and not item.get("conflict")]
     catalog = await _native_skill_catalog(request, path)
+    enabled = [_native_external_skill(item, catalog) for item in enabled]
     names = await _native_managed_skill_names(request, path, enabled, catalog)
     installed_names = {item["name"] for item in installed["items"]}
     extra = [item for item in _native_skill_items(catalog) if item["name"] not in installed_names]

@@ -122,7 +122,7 @@
 .wsp-reasoning summary { cursor: pointer; white-space: normal; }
 .wsp-skill-content pre { margin: 12px 0 0; max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 .wsp-reasoning-content { max-height: 280px; overflow-y: auto; scrollbar-gutter: stable; overflow-anchor: none; white-space: pre-wrap; overflow-wrap: anywhere; }
-.wsp-live-reasoning[open] .wsp-reasoning-content { height: clamp(140px, 28vh, 280px); margin-top: 10px; }
+.wsp-live-reasoning[open] .wsp-reasoning-content { margin-top: 10px; }
 .wsp-permission { padding: 12px 14px; border-color: #f0dbb5; background: #fffbf3; }
 .wsp-permission strong { font-size: 13.5px; }
 .wsp-permission p { margin: 5px 0 10px; color: #78694e; font-size: 13px; overflow-wrap: anywhere; }

@@ -28,6 +28,8 @@ class WorkspaceQueue:
         self._queues: dict[str, dict] = {}
         self._lock = asyncio.Lock()
         self._workers: dict[str, asyncio.Task] = {}
+        self._step_locks: dict[str, asyncio.Lock] = {}
+        self._deliveries: dict[str, asyncio.Task] = {}
         self.dispatch: Callable[[dict, dict], Awaitable[object]] | None = None
         self.inspect: Callable[[dict], Awaitable[tuple[dict, list]]] | None = None
         self.interval = .8
@@ -66,7 +68,10 @@ class WorkspaceQueue:
         if key not in self._workers or self._workers[key].done():
             self._workers[key] = asyncio.create_task(self._run(key))
 
-    async def add(self, project_id: str, project: str, session_id: str, kind: str, payload: dict) -> dict:
+    async def add(
+        self, project_id: str, project: str, session_id: str, kind: str, payload: dict,
+        *, dispatch_if_idle: bool = False,
+    ) -> dict:
         key = self._key(project_id, session_id)
         async with self._lock:
             queue = self._queues.setdefault(key, {"project_id": project_id, "project": project,
@@ -77,6 +82,16 @@ class WorkspaceQueue:
                     "kind": kind, "payload": payload, "status": "pending"}
             queue["items"].append(item)
             await self._save()
+        if dispatch_if_idle:
+            try:
+                # Retire a completed tracked turn, then immediately admit its successor.
+                if await self._step(key, background=True):
+                    await self._step(key, background=True)
+            except Exception as exc:
+                async with self._lock:
+                    queue.update(paused=True, error=str(getattr(exc, "detail", exc))[:500])
+                    await self._save()
+        async with self._lock:
             result = self.snapshot(project_id, session_id)
             self._start(key)
             return result
@@ -122,6 +137,7 @@ class WorkspaceQueue:
             keys = [key for key, queue in self._queues.items() if queue["project_id"] == project_id
                     and (session_id is None or queue["session_id"] == session_id)]
             tasks = [self._workers.pop(key) for key in keys if key in self._workers]
+            tasks.extend(self._deliveries.pop(key) for key in keys if key in self._deliveries)
             for task in tasks:
                 task.cancel()
             for key in keys:
@@ -136,11 +152,10 @@ class WorkspaceQueue:
             queue = self._queues.get(key)
             if queue:
                 queue["paused"] = True
-            task = self._workers.pop(key, None)
-            if task:
+            tasks = [task for task in (self._workers.pop(key, None), self._deliveries.pop(key, None)) if task]
+            for task in tasks:
                 task.cancel()
-        if task:
-            await asyncio.gather(task, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
         async with self._lock:
             queue = self._queues.get(key)
             if queue:
@@ -154,13 +169,14 @@ class WorkspaceQueue:
         async with self._lock:
             for queue in self._queues.values():
                 queue["paused"] = True
-            tasks = list(self._workers.values())
+            tasks = [*self._workers.values(), *self._deliveries.values()]
             for task in tasks:
                 task.cancel()
             if self._queues:
                 await self._save()
         await asyncio.gather(*tasks, return_exceptions=True)
         self._workers.clear()
+        self._deliveries.clear()
 
     async def _run(self, key: str) -> None:
         try:
@@ -179,8 +195,17 @@ class WorkspaceQueue:
                     self._queues[key].update(paused=True, error=str(getattr(exc, "detail", exc))[:500])
                     await self._save()
 
-    async def _step(self, key: str) -> None:
-        queue = self._queues[key]
+    async def _step(self, key: str, *, background: bool = False) -> bool:
+        async with self._step_locks.setdefault(key, asyncio.Lock()):
+            return bool(await self._step_locked(key, background=background))
+
+    async def _step_locked(self, key: str, *, background: bool) -> bool | None:
+        queue = self._queues.get(key)
+        if not queue or queue["paused"] or not queue["items"]:
+            return
+        delivery = self._deliveries.get(key)
+        if delivery and not delivery.done():
+            return
         assert self.inspect is not None and self.dispatch is not None
         statuses, messages = await self.inspect(queue)
         if not isinstance(statuses, dict) or not isinstance(messages, list):
@@ -205,7 +230,7 @@ class WorkspaceQueue:
                     if not queue["items"] and not queue["paused"]:
                         self._queues.pop(key)
                     await self._save()
-                    return
+                    return True
                 if time.time() - item.get("sent_at", 0) > 30:
                     queue.update(paused=True, error="发送结果尚未确认，请检查对话后继续队列")
                     await self._save()
@@ -215,6 +240,16 @@ class WorkspaceQueue:
             # previous task's tool continuations, rather than at queue admission.
             item.update(status="sending", sent_at=time.time(), message_id=native_message_id())
             await self._save()
+        if background:
+            # V1 /command may wait for the entire answer. Admission must only
+            # start delivery, so the composer becomes usable immediately.
+            self._deliveries[key] = asyncio.create_task(self._deliver(key, queue, item))
+            await asyncio.sleep(0)
+        else:
+            await self._deliver(key, queue, item)
+
+    async def _deliver(self, key: str, queue: dict, item: dict) -> None:
+        assert self.dispatch is not None
         try:
             await self.dispatch(queue, item)
         except Exception as exc:
@@ -224,3 +259,6 @@ class WorkspaceQueue:
                 if getattr(exc, "status_code", None) in {400, 404, 409, 413, 422}:
                     item["status"] = "pending"
                 await self._save()
+        finally:
+            if self._deliveries.get(key) is asyncio.current_task():
+                self._deliveries.pop(key, None)

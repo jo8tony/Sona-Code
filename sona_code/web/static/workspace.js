@@ -321,17 +321,43 @@ function workspaceReasoningNode(cached, key, text, expanded, streaming) {
     el("summary", {text: "思考过程"}), el("div", {class: "wsp-reasoning-content", text: ""}));
   if (!previous) {
     node.workspaceReasoningKey = key;
-    node.open = !!expanded.get(key);
+    node.open = expanded.has(key) ? !!expanded.get(key) : streaming;
     node.addEventListener("toggle", () => expanded.set(key, node.open));
   }
+  if (streaming && !expanded.has(key)) node.open = true;
   const body = node.querySelector(".wsp-reasoning-content");
-  if (body && body.textContent !== text) {
+  const target = text.trimEnd();
+  const write = value => {
     const top = body.scrollTop;
     const follow = body.scrollHeight - body.clientHeight - top <= 40;
     // Keep the same text node, avoiding repeated details/layout resets.
-    if (body.firstChild) body.firstChild.data = text;
-    else body.textContent = text;
+    if (body.firstChild) body.firstChild.data = value;
+    else body.textContent = value;
     body.scrollTop = follow ? body.scrollHeight : top;
+  };
+  if (body) {
+    node.workspaceReasoningTarget = target;
+    const displayed = body.firstChild?.data || body.textContent || "";
+    const animate = streaming && node.open && typeof requestAnimationFrame === "function";
+    if (!animate || !target.startsWith(displayed)) {
+      if (node.workspaceReasoningFrame) cancelAnimationFrame(node.workspaceReasoningFrame);
+      node.workspaceReasoningFrame = null;
+      if (displayed !== target) write(target);
+    } else if (displayed !== target && !node.workspaceReasoningFrame) {
+      // Batch characters per frame and catch up quickly after large SSE chunks.
+      // Only the existing text node changes; the conversation is not rebuilt.
+      const tick = () => {
+        node.workspaceReasoningFrame = null;
+        if (!node.isConnected) return;
+        const current = body.firstChild?.data || body.textContent || "";
+        const latest = node.workspaceReasoningTarget;
+        let end = Math.min(latest.length, current.length + Math.max(16, Math.ceil((latest.length - current.length) / 4)));
+        if (end < latest.length && /[\uD800-\uDBFF]/.test(latest[end - 1])) end++;
+        write(latest.slice(0, end));
+        if (end < latest.length) node.workspaceReasoningFrame = requestAnimationFrame(tick);
+      };
+      node.workspaceReasoningFrame = requestAnimationFrame(tick);
+    }
   }
   const summary = node.querySelector("summary");
   if (summary) summary.textContent = streaming ? "思考过程 · 生成中" : "思考过程";

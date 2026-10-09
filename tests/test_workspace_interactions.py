@@ -60,6 +60,45 @@ node.open = false; node.toggle(); assert.equal(expanded.get("reason"), false);
 ''')
 
 
+def test_reasoning_typewriter_batches_frames_catches_up_and_respects_collapse():
+    run_node(r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+vm.runInThisContext(fs.readFileSync("sona_code/web/static/workspace.js", "utf8"));
+let next = 0; const frames = new Map();
+global.requestAnimationFrame = callback => {frames.set(++next, callback); return next;};
+global.cancelAnimationFrame = id => frames.delete(id);
+const frame = () => {const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(callback => callback());};
+global.el = (tag, props, ...children) => ({tag, ...props, children, textContent: props?.text || "", open: false,
+  isConnected: true, firstChild: tag === "div" ? {data: ""} : null, scrollTop: 0, clientHeight: 80, scrollHeight: 80,
+  querySelector(selector) {return selector === "summary" ? this.children[0] : this.children[1];},
+  addEventListener(type, fn) {this.toggle = fn;}});
+const expanded = new Map(), text = "思考中文😀内容".repeat(200);
+const node = workspaceReasoningNode(null, "live", text, expanded, true);
+assert.equal(node.open, true, "Streaming reasoning should be visible by default");
+const body = node.children[1], textNode = body.firstChild, cached = {querySelectorAll: () => [node]};
+assert.equal(frames.size, 1); frame();
+assert(textNode.data.length > 1 && textNode.data.length < text.length);
+assert(!/[\uD800-\uDBFF]$/.test(textNode.data), "Frames cannot split an emoji");
+workspaceReasoningNode(cached, "live", text + "新增内容", expanded, true);
+assert.equal(frames.size, 1, "SSE updates must share a single pending frame");
+for (let i = 0; i < 40 && frames.size; i++) frame();
+assert.equal(textNode.data, text + "新增内容");
+assert.equal(body.firstChild, textNode);
+body.scrollTop = 10; body.clientHeight = 80; body.scrollHeight = 400;
+workspaceReasoningNode(cached, "live", text + "新增内容继续", expanded, true); frame();
+assert.equal(body.scrollTop, 10, "Reading older reasoning must not force scrolling");
+node.open = false; node.toggle();
+workspaceReasoningNode(cached, "live", text + "全部内容\n\n   ", expanded, true);
+assert.equal(node.open, false); assert.equal(textNode.data, text + "全部内容"); assert.equal(frames.size, 0);
+workspaceReasoningNode(cached, "live", "最终内容", expanded, false);
+assert.equal(textNode.data, "最终内容"); assert.equal(node.children[0].textContent, "思考过程");
+const historical = workspaceReasoningNode(null, "history", "过去的思考", expanded, false);
+assert.equal(historical.open, false);
+workspaceReasoningNode({querySelectorAll: () => [historical]}, "history", "刚开始生成", expanded, true);
+assert.equal(historical.open, true, "A part arriving before the busy status must open when streaming starts");
+''')
+
+
 def test_new_session_opens_immediately_migrates_draft_and_respects_navigation():
     run_node(r'''
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");

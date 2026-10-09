@@ -177,7 +177,7 @@ function renderSkills(view) {
   function draw() {
     const query = search.value.trim().toLocaleLowerCase();
     const matches = items.filter((item) => `${item.name} ${item.description}`.toLocaleLowerCase().includes(query));
-    count.textContent = `${items.length} 个技能 · ${items.filter((item) => item.enabled && !item.error).length} 个已启用`;
+    count.textContent = `${items.length} 个技能 · ${items.filter((item) => item.enabled && !item.error && !item.conflict).length} 个已启用`;
     add.disabled = busy;
     list.replaceChildren();
     if (loading) { list.append(el("div", { class: "loading", text: "正在读取技能…" })); return; }
@@ -201,7 +201,7 @@ function renderSkills(view) {
         el("div", { class: "skill-card-copy" },
           el("div", { class: "skill-card-title" }, el("h2", { text: item.name }),
             el("span", { class: `skill-state${item.enabled && !item.error ? " enabled" : ""}`, text: item.error ? "格式错误" : item.conflict ? "同名冲突" : item.enabled ? (item.permission === "ask" ? "需确认" : "已启用") : "已停用" })),
-          el("small", { class: "dim", text: item.source === "app" ? "本应用" : "本机 OpenCode · 原目录读取" }), el("p", { text: item.error || item.conflict || item.description }), el("code", { class: "skill-storage-path", text: item.path })),
+          el("small", { class: "dim", text: item.source === "app" ? "本应用" : `本机 ${item.origin || "OpenCode"} · 原目录读取` }), el("p", { text: item.error || item.conflict || item.description }), el("code", { class: "skill-storage-path", text: item.path })),
         el("div", { class: "skill-card-actions" }, toggle, item.deletable ? remove : null)));
     }
   }
