@@ -154,6 +154,19 @@ function workspaceDirectoryReference(part) {
   return part.text?.match(/^\n引用项目目录 @(.+)。请按需查看此目录下的文件。$/)?.[1] || "";
 }
 
+function workspaceUserTextPart(part) {
+  return part?.type === "text" && !part.synthetic && typeof part.text === "string" &&
+    !!part.text.trim() && !workspaceDirectoryReference(part);
+}
+
+function workspacePreserveUserText(part, previous) {
+  // Empty snapshots are incomplete; explicit part/message removals still delete.
+  if (part?.type === "text" && !part.synthetic &&
+      (typeof part.text !== "string" || !part.text.trim()) && workspaceUserTextPart(previous))
+    return { ...part, text: previous.text };
+  return part;
+}
+
 function workspaceMessageTurns(messages) {
   const turns = new Map();
   for (const message of messages) {
@@ -1817,6 +1830,10 @@ function renderWorkspace(view) {
     });
     const lastUserId = lastUserMessage()?.info.id;
     for (const [messageIndex, message] of displayMessages.entries()) {
+      // OpenCode uses synthetic user messages to continue internal work.
+      // Keep them in state for turn ownership without displaying empty bubbles.
+      if (message.info?.role === "user" && !message.skillUse && message.parts.length &&
+          message.parts.every(part => part.type === "text" && part.synthetic)) continue;
       const day = messageDay(message);
       if (day !== previousDay) {
         target.append(el("div", { class: "wsp-date-divider", text: day }));
@@ -1908,7 +1925,8 @@ function renderWorkspace(view) {
         }
         if (!['text', 'reasoning', 'file'].includes(part.type)) continue;
         flushTools();
-        if (part.type === "text" && !part.synthetic && !workspaceDirectoryReference(part) && (role === "user" || part.text)) {
+        if (part.type === "text" && !part.synthetic && !workspaceDirectoryReference(part) &&
+            (role === "user" ? part.text?.trim() : part.text)) {
           if (message.skillUse) {
             const key = `skill:${state.projectId}:${state.sessionId}:${part.id || `${message.info?.id}:${partIndex}`}`;
             const details = el("details", { class: "wsp-reasoning wsp-skill-content" }, el("summary", { text: "查看已加载技能内容" }), el("pre", { text: part.text }));
@@ -1942,6 +1960,9 @@ function renderWorkspace(view) {
         }
       }
       flushTools();
+      if (role === "user" && !body.children.length) {
+        body.append(el("div", { class: "wsp-no-response", text: "消息内容暂不可用" }));
+      }
       if (["正在思考…", "正在重试…"].includes(progressLabel) && !parts.some(part =>
           part.type === "reasoning" && part.time?.end == null && modelInfo?.time?.completed == null)) {
         // Show the expandable panel as soon as the turn starts, even before
@@ -3114,7 +3135,8 @@ function renderWorkspace(view) {
       if (part) {
         // V1 updates include authoritative full text; never append their optional delta twice.
         if (index < 0) message.parts.push(part);
-        else message.parts[index] = part;
+        else message.parts[index] = message.info?.role === "user"
+          ? workspacePreserveUserText(part, message.parts[index]) : part;
       } else if (update.type === "message.part.removed") {
         if (index >= 0) message.parts.splice(index, 1);
       } else {
@@ -3334,6 +3356,8 @@ function renderWorkspace(view) {
             const streamed = parts.get(part.id);
             if ((messagePartVersions.get(part.id) || 0) > messagesVersion)
               return streamed ? [streamed] : [];
+            if (message.info?.role === "user" && currentMessage.info?.role === "user")
+              return [workspacePreserveUserText(part, streamed)];
             // V1 deltas are event-only until the part ends. Even events received
             // before this request must survive an unfinished history snapshot.
             if (part.id && message.info?.role === "assistant" && currentMessage.info?.role === "assistant" &&
@@ -3347,6 +3371,15 @@ function renderWorkspace(view) {
           });
           for (const part of parts.values()) if (!receivedParts.has(part.id) &&
               (messagePartVersions.get(part.id) || 0) > messagesVersion) message.parts.push(part);
+          // A metadata-only snapshot must not erase a known user prompt, including
+          // after returning to a cached conversation with cleared event versions.
+          // Nonempty edits and whole-message deletion remain authoritative.
+          if (message.info?.role === "user" && currentMessage.info?.role === "user" &&
+              !message.parts.some(workspaceUserTextPart) &&
+              !message.parts.some(part => part.type === "compaction")) {
+            for (const part of parts.values()) if (!receivedParts.has(part.id) && workspaceUserTextPart(part))
+              message.parts.push(part);
+          }
         }
         for (const message of state.messages) {
           if (!received.has(message.info?.id) && Math.max(messageInfoVersions.get(message.info?.id) || 0,

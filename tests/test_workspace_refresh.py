@@ -25,6 +25,7 @@ const context = vm.createContext({state, AbortController, selectedRefresh: null,
   api(path) {return new Promise(resolve => requests.push({path, resolve}));},
   scheduleSelectedRender() {renders++;}, renderHeader() {}, renderSidebar() {}, observeProjectStatuses() {},
 });
+vm.runInContext(source, context);
 vm.runInContext(source.slice(source.indexOf("  function applyMessageEvent("), source.indexOf("  function observeSessionStatus(")), context);
 vm.runInContext(source.slice(source.indexOf("  async function refreshSelected("), source.indexOf("  function saveConversationView(")), context);
 const event = (type, properties) => context.applyMessageEvent("p", {type, properties});
@@ -69,6 +70,7 @@ const context = vm.createContext({state, AbortController, selectedRefresh: null,
   api(path) {return new Promise(resolve => requests.push({path, resolve}));},
   scheduleSelectedRender() {}, renderHeader() {}, renderSidebar() {}, observeProjectStatuses() {},
 });
+vm.runInContext(source, context);
 vm.runInContext(source.slice(source.indexOf("  function applyMessageEvent("), source.indexOf("  function observeSessionStatus(")), context);
 vm.runInContext(source.slice(source.indexOf("  async function refreshSelected("), source.indexOf("  function saveConversationView(")), context);
 const event = (type, properties) => context.applyMessageEvent("p", {type, properties});
@@ -141,6 +143,82 @@ const refreshHistory = async (messages, duringRequest = () => {}) => {
   assert.equal(state.messages.length, 0);
 })().catch(error => {console.error(error); process.exitCode = 1;});
 '''.replace("PART_TYPE", part_type)
+    subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
+
+
+def test_user_prompt_survives_empty_history_and_events_without_blocking_edits_or_deletion():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for workspace refresh coverage")
+    script = r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
+const info = {id: "u", role: "user", sessionID: "s", time: {created: 1}};
+const part = {id: "prompt", messageID: "u", sessionID: "s", type: "text", text: "用户原文"};
+const file = {id: "file", type: "file", filename: "example.py", url: "file:///example.py"};
+const requests = [], state = {projectId: "p", sessionId: "s", messages: [{info, parts: [{...part}, file]}],
+  tab: "chat", projectStatuses: new Map(), statuses: {}, sessionDetails: new Map()};
+const context = vm.createContext({state, AbortController, selectedRefresh: null, creatingSessions: new Set(),
+  lastSelectedRefresh: 0, queueUpdateVersion: 0, statusVersions: new Map(), messageVersion: 0,
+  messageInfoVersions: new Map(), messagePartVersions: new Map(),
+  alive: () => true, sessionPath: () => "session", detail: e => e.message,
+  api(path) {return new Promise(resolve => requests.push({path, resolve}));},
+  scheduleSelectedRender() {}, renderHeader() {}, renderSidebar() {}, observeProjectStatuses() {},
+});
+vm.runInContext(source, context);
+vm.runInContext(source.slice(source.indexOf("  function applyMessageEvent("), source.indexOf("  function observeSessionStatus(")), context);
+vm.runInContext(source.slice(source.indexOf("  async function refreshSelected("), source.indexOf("  function saveConversationView(")), context);
+const event = (type, properties) => context.applyMessageEvent("p", {type, properties});
+const displayed = () => state.messages[0].parts.find(item => item.id === "prompt")?.text;
+const history = parts => [{info, parts}];
+const refreshHistory = async (messages, duringRequest = () => {}) => {
+  const start = requests.length;
+  const refresh = context.refreshSelected();
+  duringRequest();
+  requests[start].resolve(JSON.parse(JSON.stringify(messages)));
+  await new Promise(resolve => setImmediate(resolve));
+  for (const request of requests.slice(start + 1)) request.resolve([]);
+  await refresh;
+};
+(async () => {
+  // The full prompt arrives BEFORE the request, so version-based race protection
+  // alone cannot keep it when a later snapshot omits its content.
+  event("message.part.updated", {part});
+  for (const parts of [undefined, [], [{...part, text: ""}], [{...part, text: "  \n"}], [file]]) {
+    await refreshHistory(history(parts));
+    assert.equal(displayed(), "用户原文");
+    assert.equal(state.messages[0].parts.filter(item => item.id === "prompt").length, 1);
+  }
+  assert.equal(state.messages[0].parts.find(item => item.id === "file").filename, "example.py");
+  context.messageInfoVersions.clear(); context.messagePartVersions.clear(); context.messageVersion++;
+  await refreshHistory(history([]));
+  assert.equal(displayed(), "用户原文", "Cached conversations must retain user text after event versions reset");
+
+  event("message.part.updated", {part: {...part, text: "", metadata: {fetched: true}}});
+  assert.equal(displayed(), "用户原文", "An empty full-text event must not erase the prompt");
+  assert.equal(state.messages[0].parts[0].metadata.fetched, true);
+  event("message.part.updated", {part: {...part, text: "修改后的原文"}});
+  assert.equal(displayed(), "修改后的原文");
+  await refreshHistory(history([{...part, text: "短"}]));
+  assert.equal(displayed(), "短", "Nonempty user edits must remain authoritative");
+  await refreshHistory(history([]), () => event("message.part.updated", {part: {...part, text: "更新"}}));
+  assert.equal(displayed(), "更新", "An event during the request must also survive empty history");
+  // A replacement part with new text must not duplicate the old prompt.
+  await refreshHistory(history([{...part, id: "replacement", text: "替换"}]));
+  assert.equal(state.messages[0].parts.length, 1);
+  assert.equal(displayed(), undefined);
+
+  state.messages = history([{...part}]);
+  await refreshHistory(history([{...part}]), () =>
+    event("message.part.removed", {sessionID: "s", messageID: "u", partID: "prompt"}));
+  assert.equal(state.messages[0].parts.length, 0, "Explicit removal must defeat an older in-flight snapshot");
+  await refreshHistory(history([]));
+  assert.equal(state.messages[0].parts.length, 0, "Refresh must not resurrect explicitly removed text");
+  state.messages = history([{...part}]);
+  await refreshHistory([]);
+  assert.equal(state.messages.length, 0, "Withdrawal and whole-message deletion must still work");
+})().catch(error => {console.error(error); process.exitCode = 1;});
+'''
     subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
 
 

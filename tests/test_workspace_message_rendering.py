@@ -99,6 +99,33 @@ const assistant = {info: {id: "a", role: "assistant", parentID: "u"}, parts: []}
 const descendants = node => [node, ...node.children.flatMap(descendants)];
 const progress = row => descendants(row).filter(node => node.class === "wsp-thinking");
 const label = row => progress(row)[0]?.children.at(-1)?.text;
+// Metadata-only and damaged history rows must explain missing content.
+for (const parts of [[], [{type: "text", text: ""}], [{type: "text", text: "  \n"}]]) {
+  state.messages = [{...prompt, parts}];
+  const row = render()[0];
+  assert(descendants(row).some(node => node.text === "消息内容暂不可用"));
+}
+state.messages = [prompt];
+assert(descendants(render()[0]).some(node => node.text === "question"), "Late content must replace the missing-content hint");
+const synthetic = {type: "text", synthetic: true, text: "Continue with the task"};
+state.messages = [{...prompt, parts: [synthetic]}];
+assert.equal(render().length, 0, "Native internal messages must not create empty user bubbles");
+assert.equal(content.children.length, 0, "A hidden internal message must not leave an orphan date divider");
+state.messages = [{...prompt, parts: [synthetic, ...prompt.parts]}];
+assert(descendants(render()[0]).some(node => node.text === "question"));
+state.messages = [{...prompt, parts: [synthetic, {type: "file", filename: "image.png", mime: "image/png"}]}];
+assert(descendants(render()[0]).some(node => node.class === "wsp-message-file"), "Attachment-only prompts must stay visible");
+global.skillMention = skill => new Element("skill", {text: skill.name});
+state.messages = [{...prompt, parts: [synthetic], skillUse: {name: "review", arguments: "检查代码"}}];
+assert(descendants(render()[0]).some(node => node.text === "review"), "Manual skill history must stay visible");
+// Internal user rows still own their assistant replies and waiting state.
+state.messages = [{...prompt, parts: [synthetic]}, {...assistant, parts: [{type: "text", text: "continued"}]}];
+assert.equal(render().length, 1);
+assert(descendants(render()[0]).some(node => node.text === "continued"));
+assert.equal(state.messages.length, 2);
+state.messages = [{...prompt, parts: [synthetic]}];
+state.statuses = {other: {type: "busy"}};
+assert.equal(label(render()[0]), "正在思考…");
 state.statuses = {other: {type: "busy"}};
 for (const parts of [[], [{type: "step-start"}], [{type: "text", text: ""}],
                      [{type: "reasoning", text: ""}, {type: "step-start"}],
