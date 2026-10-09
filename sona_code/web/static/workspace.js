@@ -246,6 +246,10 @@ function workspaceTurnDiffs(messages, message, projectPath = "", turn = null) {
     native.forEach(add);
     return [...files.values()];
   }
+  if (Array.isArray(user?.info?.sonaDiffs)) {
+    user.info.sonaDiffs.forEach(add);
+    return [...files.values()];
+  }
   const replies = turn ? turn.replies : messages.filter(item => item.info?.role === "assistant" && item.info.parentID === userId);
   for (const reply of replies) {
     for (const part of reply.parts || []) {
@@ -253,7 +257,7 @@ function workspaceTurnDiffs(messages, message, projectPath = "", turn = null) {
           !["write", "edit", "apply_patch", "multiedit"].includes(part.tool)) continue;
       const { input = {}, metadata = {} } = part.state;
       const changes = Array.isArray(metadata.files) ? metadata.files.map(file => ({
-        ...file, file: file.relativePath || file.filePath, patch: file.diff,
+        ...file, file: file.relativePath || file.filePath || file.file, patch: file.diff || file.patch,
       })) : metadata.filediff ? [metadata.filediff] : [{
         file: input.filePath || input.path || metadata.filepath, patch: metadata.diff, derived: true, input,
         countsPartial: input.replaceAll === true,
@@ -502,7 +506,7 @@ function renderWorkspace(view) {
     projects: [], sessions: new Map(), sessionDetails: new Map(), errors: new Map(), projectStatuses: new Map(),
     projectId: workspaceSelection.projectId, sessionId: workspaceSelection.sessionId,
     messages: [], messagesLoaded: false, messageLoadError: "", permissions: [], questions: [], questionDrafts: new Map(), questionPages: new Map(),
-    questionErrors: new Map(), diffs: [], selectedChange: null, todos: [], todoVersion: 0, children: [], statuses: {},
+    questionErrors: new Map(), diffs: [], diffsLoaded: false, selectedChange: null, todos: [], todoVersion: 0, children: [], statuses: {},
     recordingData: null, recordingError: "", check: null, tab: workspaceSelection.tab || "chat", search: "", chosenModels: new Map(), defaultModel: null,
     get sending() { return sendingConversations.has(workspaceConversationKey(this.projectId, this.sessionId)); },
     get pendingAction() { return pendingActions.get(workspaceConversationKey(this.projectId, this.sessionId)) || ""; },
@@ -2162,7 +2166,7 @@ function renderWorkspace(view) {
   }
 
   function diffRows(diff) {
-    if (diff.derived) {
+    if (diff.derived && !diff.patch) {
       const input = diff.input || {};
       if (typeof input.oldString === "string" && typeof input.newString === "string") {
         return [...input.oldString.split("\n").map((text, index) => ({ type: "removed", number: index + 1, text: `-${text}` })),
@@ -2221,15 +2225,17 @@ function renderWorkspace(view) {
     const unknownWrites = diffs.filter(diff => !diffLineCounts(diff) && Number.isFinite(diff.writtenLines));
     if (unknownWrites.length && totals.additions === "—") {
       return el("span", { class: "wsp-change-stats" },
-        el("span", { class: "add", text: `写入 ${unknownWrites.reduce((sum, diff) => sum + diff.writtenLines, 0)} 行`,
+        el("span", { text: `写入 ${unknownWrites.reduce((sum, diff) => sum + diff.writtenLines, 0)} 行`,
           title: "成功写入的内容行数，可能包含对同一文件的多次覆盖" }),
-        el("small", { class: "wsp-change-count-kind", text: "增删待确认", title: "OpenCode 未返回原文件内容或增删行数" }));
+        el("small", { class: "wsp-change-count-kind", text: "增删不可用", title: "缺少修改前的完整内容或原生差异，写入行数不是新增行数" }));
     }
     return el("span", { class: "wsp-change-stats" },
       el("span", { class: "add", text: totals.additions, title: "新增行" }),
       el("span", { class: "remove", text: totals.deletions, title: "删除行" }),
       diffs.some(diff => diff.cumulative) ? el("small", { class: "wsp-change-count-kind", text: "累计编辑",
-        title: "成功编辑操作的增删行数累计，可能包含对同一行的多次修改" }) : null);
+        title: "成功编辑操作的增删行数累计，可能包含对同一行的多次修改" }) :
+        diffs.some(diff => diff.comparison === "read-write") ? el("small", { class: "wsp-change-count-kind", text: "读写对比",
+          title: "基于本轮完整读取的内容与后续写入内容对比" }) : null);
   }
 
   function changeFileIcon() {
@@ -2340,7 +2346,7 @@ function renderWorkspace(view) {
     try {
       const result = await api(`${sessionPath(projectId, sessionId)}/diff?message_id=${encodeURIComponent(messageId)}`, { silent: true });
       if (!alive() || state.selectedChange !== selection || state.projectId !== projectId || state.sessionId !== sessionId) return;
-      if (Array.isArray(result) && result.length) selection.diffs = result.map(diff => ({ ...diff,
+      if (Array.isArray(result)) selection.diffs = result.map(diff => ({ ...diff,
         file: workspaceRelativeFile(diff.file || diff.path, activeProject()?.path) }));
     } catch (error) {
       if (state.selectedChange === selection) selection.error = detail(error);
@@ -2361,6 +2367,7 @@ function renderWorkspace(view) {
   }
 
   function changedFiles() {
+    if (state.diffsLoaded) return state.diffs;
     const writtenFiles = new Map();
     if (state.sessionId && !state.diffs.length) {
       for (const turn of workspaceMessageTurns(state.messages).values()) {
@@ -2400,18 +2407,27 @@ function renderWorkspace(view) {
     const knownCounts = counts.filter(Boolean);
     const additions = knownCounts.reduce((sum, count) => sum + count.additions, 0);
     const deletions = knownCounts.reduce((sum, count) => sum + count.deletions, 0);
-    const countLabel = (value, sign) => !knownCounts.length ? "—" :
+    const cumulative = diffs.some(diff => diff.cumulative);
+    const countLabel = (value, sign) => !knownCounts.length ? "不可用" :
       `${knownCounts.length < diffs.length || diffs.some(diff => diff.countsPartial) ? "≥" : ""}${sign}${value}`;
     const overview = el("div", { class: "wsp-diff-overview" });
-    for (const [value, label, className] of [[diffs.length, "修改文件", ""], [countLabel(additions, "+"), "新增行", "add"], [countLabel(deletions, "−"), "删除行", "remove"]]) {
+    for (const [value, label, className] of [[diffs.length, "改动文件", ""],
+      [countLabel(additions, "+"), cumulative ? "累计新增行" : "新增行", knownCounts.length ? "add" : ""],
+      [countLabel(deletions, "−"), cumulative ? "累计删除行" : "删除行", knownCounts.length ? "remove" : ""]]) {
       overview.append(el("div", { class: `wsp-diff-metric ${className}` },
         el("strong", { text: String(value) }), el("span", { text: label })));
     }
     target.append(overview);
+    if (knownCounts.length < diffs.length || diffs.some(diff => diff.countsPartial))
+      target.append(el("p", { class: "wsp-diff-unavailable", text: "部分文件缺少修改前的完整内容或原生差异，增删行数不可用；已知部分以 ≥ 显示。写入行数包含未改动的内容。" }));
+    if (cumulative)
+      target.append(el("p", { class: "wsp-diff-unavailable", text: "部分编辑无法合并为最终差异，此处显示累计编辑行数，同一行可能被重复统计。" }));
+    if (diffs.some(diff => diff.comparison === "read-write"))
+      target.append(el("p", { class: "wsp-diff-preview-label", text: "部分差异基于本轮完整读取的内容与后续写入内容对比。" }));
     for (const diff of diffs) {
       const title = workspaceRelativeFile(diff.file || diff.path || "文件", activeProject()?.path);
       const status = diff.status || (diff.before === "" && diff.after ? "added" : diff.before && diff.after === "" ? "deleted" : "modified");
-      const label = diff.derived ? "已写入" : status === "added" ? "新增" : status === "deleted" ? "删除" : "修改";
+      const label = diff.derived && !diff.patch ? "已写入" : status === "added" ? "新增" : status === "deleted" ? "删除" : "修改";
       const card = el("details", { class: `wsp-diff-file${selection?.file === title ? " selected" : ""}`,
         "data-change-file": title,
         "data-change-key": JSON.stringify([state.projectId, state.sessionId, selection?.messageId, title]),
@@ -2426,7 +2442,7 @@ function renderWorkspace(view) {
           changeStats([diff])));
       const rows = diffRows(diff);
       if (rows.length) {
-        if (diff.derived) card.append(el("p", { class: "wsp-diff-preview-label", text: "写入内容预览 · Sona Code 未返回完整逐行差异" }));
+        if (diff.derived && !diff.patch) card.append(el("p", { class: "wsp-diff-preview-label", text: "写入内容预览 · Sona Code 未返回完整逐行差异" }));
         const body = el("div", { class: "wsp-diff-body" });
         for (const row of rows) body.append(el("div", { class: `wsp-diff-line ${row.type}` },
           el("span", { class: "wsp-line-number", text: String(row.number) }), el("span", { text: row.text })));
@@ -3306,6 +3322,13 @@ function renderWorkspace(view) {
         if (index < 0 || props.field !== "text" || typeof props.delta !== "string") return;
         message.parts[index].text = (message.parts[index].text || "") + props.delta;
       }
+      if (message.info?.role === "assistant" && (part?.type === "tool" || update.type === "message.part.removed")) {
+        const user = state.messages.find(item => item.info?.id === message.info.parentID);
+        if (user?.info) delete user.info.sonaDiffs;
+        state.diffsLoaded = false;
+        state.diffs = [];
+        state.diffVersion = (state.diffVersion || 0) + 1;
+      }
       messageVersion++;
       messagePartVersions.set(messageId, messageVersion);
       messagePartVersions.set(partId, messageVersion);
@@ -3549,6 +3572,19 @@ function renderWorkspace(view) {
               messagePartVersions.get(message.info?.id) || 0) > messagesVersion) messages.push(message);
         }
         state.messages = messages;
+        for (const message of messages) if (message.info?.role === "assistant" &&
+            (messagePartVersions.get(message.info.id) || 0) > messagesVersion) {
+          const user = messages.find(item => item.info?.id === message.info.parentID);
+          if (user?.info) delete user.info.sonaDiffs;
+        }
+        const selection = state.selectedChange;
+        if (selection) {
+          const user = messages.find(item => item.info?.id === selection.messageId && item.info.role === "user");
+          const native = user?.info?.summary?.diffs;
+          const diffs = Array.isArray(native) && native.length ? native : user?.info?.sonaDiffs;
+          if (Array.isArray(diffs)) selection.diffs = diffs.map(diff => ({ ...diff,
+            file: workspaceRelativeFile(diff.file || diff.path, activeProject()?.path) }));
+        }
         state.messagesLoaded = true;
         state.messageLoadError = "";
       }, error => { state.messageLoadError = detail(error); state.messagesLoaded = true; });
@@ -3561,6 +3597,7 @@ function renderWorkspace(view) {
       // A slow queue or diff must never delay displaying message history.
       await messagesRead;
       if (!current()) return;
+      const diffVersion = state.diffVersion || 0;
       await Promise.allSettled([
         queueRead,
         read(`workspace/projects/${encodeURIComponent(projectId)}/status`, value => {
@@ -3587,9 +3624,11 @@ function renderWorkspace(view) {
           return changed;
         }),
         read(`${base}/diff`, value => {
+          if (diffVersion !== (state.diffVersion || 0)) return false;
           const diffs = Array.isArray(value) ? value : [];
-          const changed = JSON.stringify(state.diffs) !== JSON.stringify(diffs);
+          const changed = !state.diffsLoaded || JSON.stringify(state.diffs) !== JSON.stringify(diffs);
           state.diffs = diffs;
+          state.diffsLoaded = true;
           return changed;
         }),
         read(`${base}/todo`, value => {
@@ -3624,7 +3663,7 @@ function renderWorkspace(view) {
     const key = workspaceConversationKey(state.projectId, state.sessionId);
     conversationViews.delete(key);
     conversationViews.set(key, {
-      messages: state.messages, diffs: state.diffs, todos: state.todos, children: state.children,
+      messages: state.messages, diffs: state.diffs, diffsLoaded: state.diffsLoaded, todos: state.todos, children: state.children,
       permissions: state.permissions, questions: state.questions, queue: state.queue, queueLoaded: state.queueLoaded,
       nodes: state.tab === "chat" ? Array.from(content.childNodes) : [],
       scrollTop: state.tab === "chat" ? scroll.scrollTop : null,
@@ -3642,6 +3681,7 @@ function renderWorkspace(view) {
     state.messageLoadError = "";
     state.permissions = cached?.permissions || []; state.questions = cached?.questions || [];
     state.diffs = cached?.diffs || []; state.todos = cached?.todos || []; state.children = cached?.children || [];
+    state.diffsLoaded = cached?.diffsLoaded || false;
     state.queue = cached?.queue || { items: [], paused: false, error: "" }; state.queueLoaded = cached?.queueLoaded || false;
     state.questionDrafts.clear(); state.questionPages.clear(); state.questionErrors.clear();
     state.actionError = "";

@@ -26,6 +26,7 @@ from sona_code.admin.skills import WORKSPACE_COMMANDS
 from sona_code.terminal.manager import resolve_opencode
 from sona_code.admin.models import application_catalog, public_native_catalog, native_provider_id
 from sona_code.workspace.manager import WorkspaceError
+from sona_code.workspace.changes import annotate_changes, history_changes
 from sona_code.recording.parse import session_key_from_header
 
 router = APIRouter()
@@ -558,6 +559,7 @@ async def search_project_files(
 async def list_messages(project_id: str, session_id: str, request: Request):
     path = _project_path(request, project_id)
     messages = await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}/message")
+    messages = await asyncio.to_thread(annotate_changes, messages, path)
     return await asyncio.to_thread(request.app.state.runtime.skills.annotate_messages, path, session_id, messages)
 
 
@@ -997,7 +999,14 @@ async def session_diff(
 ):
     path = _project_path(request, project_id)
     params = {"messageID": _safe_id(message_id)} if message_id is not None else None
-    return await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}/diff", params=params)
+    session = _safe_id(session_id)
+    native = await _opencode(request, path, "GET", f"/session/{session}/diff", params=params)
+    if isinstance(native, list) and native:
+        return native
+    # Bundled V1 returns [] without messageID. Build a session view from each
+    # user message's native summary and completed tools instead of losing it.
+    messages = await _opencode(request, path, "GET", f"/session/{session}/message")
+    return await asyncio.to_thread(history_changes, messages, path, message_id)
 
 
 @router.get("/workspace/projects/{project_id}/permissions")

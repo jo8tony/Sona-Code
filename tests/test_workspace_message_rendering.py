@@ -185,7 +185,8 @@ assert.equal(progress(render().at(-1)).length, 0);
 state.messages[1] = assistant;
 global.compactionRunning = () => true;
 assert.equal(progress(render().at(-1)).length, 0);
-// A non-Git native server may return an empty diff even after successful writes.
+// The application diff endpoint now recovers non-Git tool writes itself.
+// An empty successful response therefore means there is no remaining change.
 vm.runInThisContext(source.slice(source.indexOf("  async function openMessageChange("),
   source.indexOf("  function focusSelectedChange(")));
 global.closeChangePopover = () => {};
@@ -197,7 +198,7 @@ const toolDiff = {file: "game.html", before: "", after: "new", additions: 1, del
 global.api = async () => [];
 (async () => {
   await openMessageChange("u", [toolDiff], "game.html");
-  assert.deepEqual(state.selectedChange.diffs, [toolDiff]);
+  assert.deepEqual(state.selectedChange.diffs, []);
   assert.equal(state.selectedChange.loading, false);
   const nativeDiff = {...toolDiff, additions: 2};
   global.api = async () => [nativeDiff];

@@ -17,8 +17,120 @@ import pytest
 from sona_code.admin.models import compile_providers, native_provider_id
 from sona_code.config import AppConfig, UpstreamConfig, UpstreamModelConfig
 from sona_code.workspace.history import read_history, session_catalog
+from sona_code.workspace.changes import annotate_changes, history_changes
 
 BINARIES = [p for p in os.environ.get("OPENCODE_TEST_BINARIES", "").split(os.pathsep) if p]
+
+
+@pytest.mark.parametrize("binary", BINARIES or [None])
+@pytest.mark.parametrize("git_project", [False, True])
+def test_native_read_write_file_changes(binary, git_project, tmp_path):
+    """Exercise real V1 tool metadata against a deterministic local model."""
+    if binary is None:
+        pytest.skip("set OPENCODE_TEST_BINARIES to run isolated native V1 compatibility checks")
+    project = tmp_path / "project"
+    project.mkdir()
+    if git_project:
+        subprocess.run(["git", "init", "--quiet", str(project)], check=True)
+    file = project / "README.md"
+    before = [f"line {i}" for i in range(360)]
+    after = list(before)
+    after[50:52] = ["replacement one", "replacement two"]
+    file.write_text("\n".join(before) + "\n", encoding="utf-8", newline="\n")
+    content = "\n".join(after) + "\n"
+
+    class Upstream(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            results = [m for m in body.get("messages", []) if m.get("role") == "tool"]
+            delta, finish = {"role": "assistant", "content": "done"}, "stop"
+            if body.get("tools") and len(results) < 2:
+                name = "read" if not results else "write"
+                arguments = {"filePath": str(file)}
+                if name == "write":
+                    arguments["content"] = content
+                delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": "call_" + name,
+                         "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}]}
+                finish = "tool_calls"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            for choice in [{"index": 0, "delta": delta, "finish_reason": None},
+                           {"index": 0, "delta": {}, "finish_reason": finish}]:
+                chunk = {"id": "chat_mock", "object": "chat.completion.chunk", "created": 1,
+                         "model": body["model"], "choices": [choice]}
+                self.wfile.write(("data: " + json.dumps(chunk) + "\n\n").encode())
+            self.wfile.write(b"data: [DONE]\n\n")
+
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    cfg = AppConfig(upstreams=[UpstreamConfig(name="test", base_url=f"http://127.0.0.1:{upstream.server_port}/v1",
+        route_through_proxy=False, api_key="local-test-key", models=[
+            UpstreamModelConfig(id="chat-one", context_length=32000, output_length=2000)])], default_upstream="test")
+    provider = native_provider_id("test")
+    inline = {"provider": compile_providers(cfg), "enabled_providers": [provider],
+              "model": provider + "/chat-one", "small_model": provider + "/chat-one", "permission": {"*": "allow"}}
+    env = {**os.environ, "OPENCODE_DISABLE_AUTOUPDATE": "1", "OPENCODE_DISABLE_MODELS_FETCH": "1",
+           "OPENCODE_CONFIG_CONTENT": json.dumps(inline), "OPENCODE_SERVER_PASSWORD": "local-test-password"}
+    for name in ("CONFIG", "CACHE", "DATA", "STATE"):
+        env[f"XDG_{name}_HOME"] = str(tmp_path / name.lower())
+    env.pop("OPENCODE_CONFIG", None)
+    env.pop("OPENCODE_DB", None)
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    log = (tmp_path / "native.log").open("w")
+    process = subprocess.Popen([binary, "serve", "--hostname", "127.0.0.1", "--port", str(port)],
+        env=env, cwd=project, stdout=log, stderr=log,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0)
+    try:
+        with httpx.Client(base_url=f"http://127.0.0.1:{port}", auth=("opencode", "local-test-password"),
+                          timeout=20, trust_env=False) as client:
+            for _ in range(100):
+                assert process.poll() is None, (tmp_path / "native.log").read_text()[-1000:]
+                try:
+                    if client.get("/global/health").status_code == 200:
+                        break
+                except httpx.RequestError:
+                    pass
+                time.sleep(.1)
+            assert "/session/{sessionID}/diff" in client.get("/doc").json()["paths"]
+            session = client.post("/session", json={"title": "File changes contract"}).json()["id"]
+            response = client.post(f"/session/{session}/prompt_async", json={
+                "model": {"providerID": provider, "modelID": "chat-one"},
+                "parts": [{"type": "text", "text": "Read README.md, update it, then say done."}]})
+            assert response.status_code < 300, response.text
+            for _ in range(200):
+                history = client.get(f"/session/{session}/message").json()
+                replies = [m for m in history if m["info"]["role"] == "assistant"]
+                if any(m["info"].get("error") or m["info"].get("finish") == "stop" for m in replies):
+                    break
+                time.sleep(.1)
+            assert replies and not any(m["info"].get("error") for m in replies), replies
+            completed = [p for m in replies for p in m.get("parts", []) if p.get("type") == "tool" and p["state"]["status"] == "completed"]
+            assert {p["tool"] for p in completed} == {"read", "write"}, completed
+            assert file.read_text(encoding="utf-8") == content
+            read_part = next(p for p in completed if p["tool"] == "read")
+            assert read_part["state"]["metadata"]["display"]["truncated"] is False
+            diff = history_changes(history, str(project))[0]
+            assert (diff["additions"], diff["deletions"]) == (2, 2)
+            enriched = annotate_changes(history, str(project))
+            assert enriched[0]["info"]["sonaDiffs"][0]["deletions"] == 2
+            if not git_project:
+                assert diff["comparison"] == "read-write"
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        log.close()
+        upstream.shutdown()
+        upstream.server_close()
 
 
 @pytest.mark.parametrize("binary", BINARIES or [None])

@@ -272,7 +272,7 @@ const button = {disabled: false, setAttribute() {}, removeAttribute() {}};
 const context = vm.createContext({state, modelLoadVersion: 0, alive: () => true,
   Date: class extends Date {static now() {return now;}},
   view: {querySelector: () => button}, modelPicker: {hidden: true},
-  updateModelButton() {}, renderStatsLine() {}, renderModelPicker() {},
+  updateModelButton() {}, renderStatsLine() {}, renderModelPicker() {}, refreshSidebarAccount() {},
   detail: e => e.message, toast: msg => notices.push(msg), localStorage: {getItem() {}, removeItem() {}},
   api(path, options) {return new Promise((resolve, reject) => requests.push({path, options, resolve, reject}));},
 });
