@@ -2,38 +2,106 @@
 
 let sonaLoginPending = null;
 
+function sonaLoginStep(promise, signal, timeout, message) {
+  return new Promise((resolve, reject) => {
+    const finish = (callback, value) => {
+      clearTimeout(timer); signal.removeEventListener("abort", abort); callback(value);
+    };
+    const abort = () => finish(reject, signal.reason);
+    const timer = setTimeout(() => finish(reject, new Error(message)), timeout);
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+    Promise.resolve(promise).then(value => finish(resolve, value), error => finish(reject, error));
+  });
+}
+
+function updateSonaLoginButton(button) {
+  const pending = !!sonaLoginPending;
+  button.textContent = pending ? "取消登录" : button.dataset.sonaLoginLabel;
+  if (pending) button.setAttribute("aria-busy", "true");
+  else button.removeAttribute("aria-busy");
+}
+
+function updateSonaLoginButtons() {
+  document.querySelectorAll("[data-sona-login-label]").forEach(updateSonaLoginButton);
+}
+
+function cancelSonaLogin() {
+  if (!sonaLoginPending) return;
+  const error = new Error("已取消登录");
+  error.name = "AbortError";
+  sonaLoginPending.controller.abort(error);
+}
+
+function sonaLoginButton(environment, className, label, onSuccess, onError) {
+  const button = el("button", { type: "button", class: className, "data-sona-login-label": label,
+    onclick: async () => {
+      if (sonaLoginPending) { cancelSonaLogin(); return; }
+      try { onError(null); await startSonaLogin(environment); await onSuccess(); }
+      catch (error) { if (error.name !== "AbortError") onError(error); }
+    } });
+  updateSonaLoginButton(button);
+  return button;
+}
+
 function startSonaLogin(environment) {
-  if (sonaLoginPending) return sonaLoginPending;
+  if (sonaLoginPending) return sonaLoginPending.promise;
   const native = window.__TAURI__?.core?.invoke;
   // Open synchronously from the click so browser popup blocking does not
   // prevent login, and the callback can close a script-created tab.
   const tab = native ? null : window.open("about:blank", "_blank");
   if (tab) tab.opener = null;
-  sonaLoginPending = (async () => {
-    const result = await api("models/sona/login/start", { method: "POST", silent: true });
+  const attempt = { controller: new AbortController(), state: null, promise: null };
+  const signal = attempt.controller.signal;
+  const expires = setTimeout(() => attempt.controller.abort(new Error("登录等待已超时，请重试")), 5 * 60 * 1000);
+  sonaLoginPending = attempt;
+  updateSonaLoginButtons();
+  const cancelRemote = () => attempt.state
+    ? api(`models/sona/login/${encodeURIComponent(attempt.state)}`, { method: "DELETE", silent: true }).catch(() => {}) : null;
+  const request = (path, options = {}) => sonaLoginStep(api(path, { ...options, signal, silent: true }), signal,
+    15000, "登录请求超时，请检查网络后重试");
+  attempt.promise = (async () => {
+    const starting = api("models/sona/login/start", { method: "POST", signal, silent: true }).then(result => {
+      attempt.state = result.state;
+      if (signal.aborted) { void cancelRemote(); throw signal.reason; }
+      return result;
+    });
+    const result = await sonaLoginStep(starting, signal, 15000, "登录请求超时，请重试");
     if (!result.connected) {
-      if (native) await window.__TAURI__.core.invoke("open_website_login", { url: result.url });
+      if (native) {
+        // Poll the callback while opening the browser, which may itself take
+        // time to acknowledge. Cancellation never waits for native IPC.
+        void sonaLoginStep(window.__TAURI__.core.invoke("open_website_login", { url: result.url }), signal,
+          15000, "打开浏览器超时，请重试").catch(error => attempt.controller.abort(error));
+      }
       else if (tab) tab.location.replace(result.url);
       else throw new Error("浏览器阻止了登录窗口，请允许弹出窗口后重试");
-      const expires = Date.now() + 5 * 60 * 1000;
-      while (Date.now() < expires) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        const latest = await api("models/source", { silent: true });
-        if (latest.source !== "sona" || latest.environment !== environment) throw new Error("模型来源或网站环境已变化，请重新登录");
-        if (latest.connected) break;
+      while (true) {
+        const status = await request(`models/sona/login/${encodeURIComponent(attempt.state)}`);
+        if (status.status === "error") throw new Error(status.detail || "网站登录失败，请重试");
+        if (status.status === "completed") break;
+        if (tab?.closed) throw new Error("登录窗口已关闭，请重试");
+        await sonaLoginStep(new Promise(resolve => setTimeout(resolve, 1000)), signal, 2000, "登录等待超时，请重试");
       }
     }
-    const latest = await api("models/source", { silent: true });
-    if (!latest.connected || latest.environment !== environment) throw new Error("登录未完成，请重试");
-    if (tab) tab.close();
+    const latest = await request("models/source");
+    if (latest.source !== "sona" || !latest.connected || latest.environment !== environment) throw new Error("模型来源或网站环境已变化，请重新登录");
     if (typeof workspaceModelCache !== "undefined") workspaceModelCache.clear();
     window.dispatchEvent(new Event("sona-models-changed"));
     return latest;
   })().catch(error => {
+    const cause = error instanceof Error ? error : new Error(String(error || "网站登录失败，请重试"));
+    attempt.controller.abort(cause);
+    void cancelRemote();
+    throw cause;
+  }).finally(() => {
+    clearTimeout(expires);
+    attempt.controller.abort();
     if (tab) tab.close();
-    throw error;
-  }).finally(() => { sonaLoginPending = null; });
-  return sonaLoginPending;
+    if (sonaLoginPending === attempt) sonaLoginPending = null;
+    updateSonaLoginButtons();
+  });
+  return attempt.promise;
 }
 
 async function watchSonaStartupRefresh(onComplete, active) {
@@ -56,6 +124,7 @@ async function saveModelSource(source, updates, view) {
       uat_url: updates.uat_url === undefined ? source.uat_url : updates.uat_url,
       prod_url: updates.prod_url === undefined ? source.prod_url : updates.prod_url,
     }, silent: true });
+    cancelSonaLogin();
     await renderModels(view);
   } catch (error) {
     toast(error.detail || error.message, "error");
@@ -118,17 +187,9 @@ async function renderSonaModels(view, source, tabs) {
       el("button", { type: "button", class: "btn", text: "刷新模型", onclick: event => action("models/sona/refresh", event.currentTarget) }),
       el("button", { type: "button", class: "btn", text: "退出登录", onclick: event => action("models/sona/logout", event.currentTarget) })));
   } else {
-    account.append(el("button", { type: "button", class: "btn btn-primary", text: "在浏览器中登录", onclick: async event => {
-      error.hidden = true;
-      const button = event.currentTarget;
-      if (button.disabled) return;
-      button.disabled = true; button.textContent = "等待浏览器登录…";
-      try {
-        await startSonaLogin(source.environment);
-        if (view.isConnected && location.hash === "#/models") await renderModels(view);
-      } catch (cause) { error.hidden = false; error.textContent = cause.detail || cause.message; }
-      finally { button.disabled = false; button.textContent = "在浏览器中登录"; }
-    } }));
+    account.append(sonaLoginButton(source.environment, "btn btn-primary", "在浏览器中登录", async () => {
+      if (view.isConnected && location.hash === "#/models") await renderModels(view);
+    }, cause => { error.hidden = !cause; error.textContent = cause ? cause.detail || cause.message : ""; }));
   }
   const catalog = el("section", { class: "card" }, el("h2", { text: "已订阅模型" }));
   if (source.updated_at) catalog.append(el("p", { class: "f-hint", text: `最近刷新：${new Date(source.updated_at * 1000).toLocaleString()}` }));

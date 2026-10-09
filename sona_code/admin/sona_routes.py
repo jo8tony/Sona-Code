@@ -82,10 +82,25 @@ async def start_login(request: Request) -> dict:
     callback = (f"http://127.0.0.1:{cfg.server.port}{cfg.server.admin_prefix}"
                 "/api/models/sona/callback")
     try:
-        url = runtime.sona_site.start_login(cfg.sona_site, callback)
+        state, url = runtime.sona_site.start_login(cfg.sona_site, callback)
     except SonaSiteError as exc:
         raise HTTPException(exc.status, exc.detail) from None
-    return {"url": url}
+    return {"url": url, "state": state}
+
+
+@router.get("/models/sona/login/{state}")
+def login_status(state: str, request: Request) -> dict:
+    runtime = request.app.state.runtime
+    try:
+        return runtime.sona_site.login_status(state, runtime.config.sona_site)
+    except SonaSiteError as exc:
+        raise HTTPException(exc.status, exc.detail) from None
+
+
+@router.delete("/models/sona/login/{state}")
+async def cancel_login(state: str, request: Request) -> dict:
+    request.app.state.runtime.sona_site.cancel_login(state)
+    return {"ok": True}
 
 
 def _callback_page(message: str, success: bool, origin: str = "") -> HTMLResponse:
@@ -119,20 +134,26 @@ async def login_callback(request: Request) -> HTMLResponse:
     if len(states) != 1 or len(tokens) != 1 or not states[0] or not tokens[0]:
         return _callback_page("缺少登录数据", False)
     runtime = request.app.state.runtime
+    claimed = False
     try:
         environment, origin = runtime.sona_site.consume_login(states[0], runtime.config.sona_site)
+        claimed = True
         session = await runtime.sona_site.load_catalog(origin, tokens[0], environment)
 
         async def apply() -> dict:
+            runtime.sona_site.require_login(states[0], runtime.config.sona_site)
             if (runtime.config.sona_site.environment != environment
                     or runtime.config.sona_site.active_url() != origin):
                 raise SonaSiteError("网站环境已变化，请重新登录", 409)
             runtime.sona_site.set_session(environment, origin, session)
+            runtime.sona_site.finish_login(states[0])
             return {"ok": True}
 
         async with runtime.config_lock:
             await runtime.workspace.update_configuration(apply, "网站模型")
     except (SonaSiteError, WorkspaceError) as exc:
+        if claimed:
+            runtime.sona_site.finish_login(states[0], exc.detail)
         return _callback_page(exc.detail, False)
     return _callback_page("已连接 Sona Code，可以返回桌面 App。", True, origin)
 

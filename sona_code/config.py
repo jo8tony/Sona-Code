@@ -196,12 +196,14 @@ class ModelSettings(BaseModel):
 class SonaSiteConfig(BaseModel):
     environment: Literal["uat", "prod"] = "prod"
     uat_url: str = "https://sona.paasuat.cmbchina.cn"
-    prod_url: str = "https://sona.passoa.cmbchina.cn"
+    prod_url: str = "https://sona.paasoa.cmbchina.cn"
 
     @field_validator("uat_url", "prod_url")
     @classmethod
     def _frontend_origin(cls, value: str) -> str:
         value = value.strip().rstrip("/")
+        if value == "https://sona.passoa.cmbchina.cn":
+            value = "https://sona.paasoa.cmbchina.cn"
         if not value:
             return ""
         parsed = urlsplit(value)

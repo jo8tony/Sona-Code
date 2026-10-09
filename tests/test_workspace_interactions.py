@@ -14,6 +14,46 @@ def run_node(script):
     subprocess.run([node, "-e", script], cwd=Path(__file__).resolve().parents[1], check=True)
 
 
+def test_projectless_model_and_draft_transfer_to_first_project_and_survive_reload():
+    run_node(r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
+vm.runInThisContext(source);
+const stored = new Map();
+global.localStorage = global.sessionStorage = {getItem: key => stored.get(key) ?? null,
+  setItem: (key, value) => stored.set(key, value), removeItem: key => stored.delete(key)};
+global.state = {projectId: null, sessionId: null, attachments: [], projects: [{id: "first", sessions: []}],
+  sessions: new Map([["first", []]]), projectStatuses: new Map(), collapsedProjects: new Set(),
+  chosenModels: new Map(), chosenVariants: new Map()};
+let editor = {text: "Message written before creating a project", references: []};
+global.composer = {snapshot: () => structuredClone(editor), restore: draft => {editor = draft || {text: ""};},
+  get fileReferences() {return [];}};
+global.draftTimer = null; global.draftContextReady = true;
+global.tree = {}; global.root = {classList: {remove() {}}}; global.input = {focus() {}};
+global.pendingImages = new Map(); global.creationDraftDestinations = new Map(); global.conversationViews = new Map();
+for (const name of ["updateSkillInput", "renderAttachments", "saveConversationView", "cancelSelectedRefresh",
+  "hideAutocomplete", "closeChangePopover", "restoreConversationView", "updateSidebarButton", "renderSidebar",
+  "renderHeader", "renderMain", "refreshSelected", "connectEvents", "loadModels", "loadAgents", "loadSessions",
+  "updateModelButton", "renderStatsLine", "closeModelPicker"]) global[name] = () => {};
+global.activeProject = () => state.projects[0]; global.loadProjectFiles = async () => {};
+vm.runInThisContext(source.slice(source.indexOf("  function saveDraft()"), source.indexOf("  const attachmentList =")));
+vm.runInThisContext(source.slice(source.indexOf("  function chooseModel("), source.indexOf("  function renderModelPicker(")));
+vm.runInThisContext(source.slice(source.indexOf("  function migrateCreationDraft("), source.indexOf("  async function createSession(")));
+vm.runInThisContext(source.slice(source.indexOf("  function selectProject("), source.indexOf("  function selectSession(")));
+const choice = "demo\u0000second-model";
+chooseModel(choice); state.chosenVariants.set(null, "high");
+assert.equal(state.chosenModels.get(null), choice); assert.equal(stored.get("sona-code:last-model"), choice);
+selectProject("first");
+assert.equal(state.chosenModels.get("first"), choice); assert.equal(state.chosenVariants.get("first"), "high");
+assert.equal(stored.get("sona-code:model:first"), choice);
+assert.equal(editor.text, "Message written before creating a project");
+assert.equal(workspaceReadDraft(workspaceConversationKey(null, null)), undefined);
+assert.equal(workspaceReadDraft(workspaceConversationKey("first", null)).text, editor.text);
+state.chosenModels.clear(); selectProject("first");
+assert.equal(state.chosenModels.get("first"), choice, "Reload must retain a non-default model chosen before project creation");
+''')
+
+
 def test_fuzzy_file_search_and_verified_unambiguous_message_links():
     run_node(r'''
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");

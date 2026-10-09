@@ -15,6 +15,7 @@ from sona_code.config import (
     load_config,
     resolved_records_dir,
     save_config,
+    SonaSiteConfig,
 )
 
 
@@ -35,6 +36,7 @@ def test_default_config_values(tmp_path):
     assert cfg.recording.redact_headers == ["authorization", "x-api-key", "api-key", "cookie"]
     assert cfg.recording.max_capture_mb == 20
     assert cfg.terminal.command_mode == "auto"
+    assert cfg.sona_site.prod_url == "https://sona.paasoa.cmbchina.cn"
     assert resolved_records_dir(cfg) != cfg.recording.dir  # 已展开 ~
 
 
@@ -49,6 +51,18 @@ def test_load_creates_default_file(tmp_path):
     assert load_config(str(p)) == cfg
     # 目录中不残留临时文件
     assert list(tmp_path.iterdir()) == [p]
+
+
+def test_sona_old_default_origin_migrates_and_custom_origin_is_preserved(tmp_path):
+    path = tmp_path / "config.json"
+    cfg = default_config()
+    cfg.sona_site.prod_url = "https://sona.passoa.cmbchina.cn/"
+    cfg.sona_site.uat_url = "https://uat.example.test"
+    save_config(cfg, str(path))
+    restored = load_config(str(path))
+    assert restored.sona_site.prod_url == "https://sona.paasoa.cmbchina.cn"
+    assert restored.sona_site.uat_url == "https://uat.example.test"
+    assert SonaSiteConfig(prod_url="https://custom.example.test/").prod_url == "https://custom.example.test"
 
 
 # ------------------------------------------------------- save/load roundtrip

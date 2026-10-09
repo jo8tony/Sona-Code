@@ -1,6 +1,7 @@
 """Website login handoff and scene catalog use existing XT APIs."""
 
 from urllib.parse import parse_qs, urlsplit
+import asyncio
 import os
 import time
 
@@ -19,7 +20,8 @@ from sona_code.config import UpstreamConfig, UpstreamModelConfig
 
 
 @pytest.mark.asyncio
-async def test_catalog_uses_frontend_origin_and_scene_keys(monkeypatch):
+@pytest.mark.parametrize("roles", [["USER"], ["USER", "RESOURCE_ADMIN"], ["USER", "SUPER_ADMIN"]])
+async def test_catalog_uses_frontend_origin_and_scene_keys(monkeypatch, roles):
     calls = []
 
     def respond(request):
@@ -27,8 +29,10 @@ async def test_catalog_uses_frontend_origin_and_scene_keys(monkeypatch):
         assert request.url.host == "sona.example.test"
         assert request.headers["Authorization"] == "site-token"
         assert request.headers["X-B3-BusinessId"] == "LZ2103SONA"
+        assert request.headers["X-Active-Role"] == "USER"
+        assert "X-Space-Id" not in request.headers
         bodies = {
-            "/api/v1/auth/current-user": {"id": 7, "userName": "用户", "token": "extra-secret"},
+            "/api/v1/auth/current-user": {"id": 7, "userName": "用户", "token": "extra-secret", "roles": roles},
             "/api/v1/scenes": [{"id": 12, "name": "场景 A", "status": 1},
                                 {"id": 13, "name": "停用场景", "status": 0}],
             "/api/v1/scenes/12/integration-info": {
@@ -78,7 +82,7 @@ def test_login_callback_is_one_time_and_source_status_hides_secrets(tmp_path):
         prefix = "/__recorder/api/models"
         source = client.get(prefix + "/source").json()
         assert source["source"] == "sona"
-        assert source["prod_url"] == "https://sona.passoa.cmbchina.cn"
+        assert source["prod_url"] == "https://sona.paasoa.cmbchina.cn"
         start = client.post(prefix + "/sona/login/start").json()["url"]
         params = parse_qs(urlsplit(start).fragment.partition("?")[2])
         state = params["state"][0]
@@ -175,7 +179,7 @@ def test_refresh_fetches_new_subscriptions_and_updates_native_config(tmp_path, m
 
 def saved_catalog(token="saved-token", name="cached"):
     return SiteSession(token, {"id": 7}, [UpstreamConfig(
-        name="sona-prod-12", base_url="https://sona.passoa.cmbchina.cn/api/v1",
+        name="sona-prod-12", base_url="https://sona.paasoa.cmbchina.cn/api/v1",
         api_key="scene-secret", source="sona", models=[UpstreamModelConfig(id=name)],
     )], time.time())
 
@@ -256,3 +260,90 @@ async def test_expired_platform_business_code_requests_login(monkeypatch, code):
     with pytest.raises(SonaSiteError) as error:
         await SonaSiteManager().load_catalog("https://sona.example.test", "expired", "prod")
     assert error.value.status == 401
+
+
+def test_sona_login_and_models_are_available_without_a_project(tmp_path):
+    cfg = default_config()
+    cfg.recording.dir = str(tmp_path / "records")
+    app = create_app(cfg, str(tmp_path / "config.json"))
+
+    async def catalog(*args):
+        return saved_catalog()
+
+    async def no_native(*args, **kwargs):
+        raise AssertionError("Website login must not need a project server")
+
+    app.state.runtime.sona_site.load_catalog = catalog
+    app.state.runtime.workspace.request = no_native
+    with TestClient(app) as client:
+        prefix = "/__recorder/api"
+        assert client.get(prefix + "/workspace/projects").json()["items"] == []
+        assert client.get(prefix + "/workspace/models").json()["sona_connected"] is False
+        login = client.post(prefix + "/models/sona/login/start").json()
+        state = login["state"]
+        assert state == parse_qs(urlsplit(login["url"]).fragment.partition("?")[2])["state"][0]
+        status = prefix + "/models/sona/login/" + state
+        assert client.get(status).json()["status"] == "pending"
+        assert client.post(prefix + "/models/sona/callback", data={"state": state, "token": "test"}).status_code == 200
+        assert client.get(status).json()["status"] == "completed"
+        response = client.get(prefix + "/workspace/models")
+        assert response.json()["sona_connected"] is True
+        assert list(response.json()["providers"][0]["models"]) == ["cached"]
+        assert "scene-secret" not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["cancel", "restart", "replay"])
+async def test_inflight_login_cannot_complete_after_cancel_or_retry(tmp_path, action):
+    cfg = default_config()
+    cfg.recording.dir = str(tmp_path / "records")
+    app = create_app(cfg, str(tmp_path / "config.json"))
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def catalog(*args):
+        entered.set()
+        await release.wait()
+        return saved_catalog()
+
+    app.state.runtime.sona_site.load_catalog = catalog
+    prefix = "/__recorder/api/models/sona"
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://localhost") as client:
+        state = (await client.post(prefix + "/login/start")).json()["state"]
+        payload = {"state": state, "token": "test"}
+        callback = asyncio.create_task(client.post(prefix + "/callback", data=payload))
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            assert (await client.get(prefix + "/login/" + state)).json()["status"] == "processing"
+            if action == "cancel":
+                assert (await client.delete(prefix + "/login/" + state)).status_code == 200
+            elif action == "restart":
+                assert (await client.post(prefix + "/login/start")).json()["state"] != state
+            else:
+                assert (await client.post(prefix + "/callback", data=payload)).status_code == 400
+                assert (await client.get(prefix + "/login/" + state)).json()["status"] == "processing"
+            release.set()
+            result = await asyncio.wait_for(callback, 2)
+            assert result.status_code == (200 if action == "replay" else 400)
+            assert (app.state.runtime.sona_site.session(cfg.sona_site) is not None) is (action == "replay")
+        finally:
+            release.set()
+            if not callback.done():
+                callback.cancel()
+            await app.state.runtime.aclose()
+
+
+def test_login_callback_failure_is_reported_to_app_and_can_be_retried(tmp_path):
+    app = create_app(default_config(), str(tmp_path / "config.json"))
+
+    async def unavailable(*args):
+        raise SonaSiteError("无权访问该空间", 502)
+
+    app.state.runtime.sona_site.load_catalog = unavailable
+    with TestClient(app) as client:
+        prefix = "/__recorder/api/models/sona"
+        state = client.post(prefix + "/login/start").json()["state"]
+        assert client.post(prefix + "/callback", data={"state": state, "token": "test"}).status_code == 400
+        assert client.get(prefix + "/login/" + state).json() == {"status": "error", "detail": "无权访问该空间"}
+        retry = client.post(prefix + "/login/start").json()["state"]
+        assert retry != state
+        assert client.get(prefix + "/login/" + retry).json()["status"] == "pending"

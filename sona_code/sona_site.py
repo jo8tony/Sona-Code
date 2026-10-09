@@ -32,6 +32,8 @@ class PendingLogin:
     environment: str
     origin: str
     expires_at: float
+    status: str = "pending"
+    detail: str = ""
 
 
 @dataclass
@@ -82,24 +84,45 @@ class SonaSiteManager:
         except OSError as exc:
             raise SonaSiteError("保存网站登录凭据失败，请检查配置目录权限", 503) from exc
 
-    def start_login(self, site: SonaSiteConfig, callback_url: str) -> str:
+    def start_login(self, site: SonaSiteConfig, callback_url: str) -> tuple[str, str]:
         origin = site.active_url()
         if not origin:
             raise SonaSiteError("请先设置当前环境的网站前端地址", 409)
         now = time.monotonic()
-        self._pending = {key: value for key, value in self._pending.items()
-                         if value.expires_at > now}
+        # Only the newest handoff may complete, including callbacks already
+        # fetching the catalog when the user cancels and starts again.
+        self._pending.clear()
         state = secrets.token_urlsafe(32)
         self._pending[state] = PendingLogin(site.environment, origin, now + LOGIN_TTL_SECONDS)
-        return (f"{origin}/#/desktop-connect?state={quote(state)}"
-                f"&callback={quote(callback_url, safe='')}")
+        return state, (f"{origin}/#/desktop-connect?state={quote(state)}"
+                       f"&callback={quote(callback_url, safe='')}")
 
-    def consume_login(self, state: str, site: SonaSiteConfig) -> tuple[str, str]:
-        pending = self._pending.pop(state, None)
+    def login_status(self, state: str, site: SonaSiteConfig) -> dict:
+        pending = self._pending.get(state)
         if pending is None or pending.expires_at <= time.monotonic():
             raise SonaSiteError("登录请求已失效，请返回 App 重新登录", 400)
         if pending.environment != site.environment or pending.origin != site.active_url():
             raise SonaSiteError("网站环境已变化，请返回 App 重新登录", 409)
+        return {"status": pending.status, "detail": pending.detail}
+
+    def cancel_login(self, state: str) -> None:
+        self._pending.pop(state, None)
+
+    def require_login(self, state: str, site: SonaSiteConfig) -> None:
+        if self.login_status(state, site)["status"] != "processing":
+            raise SonaSiteError("登录请求已失效，请返回 App 重新登录", 400)
+
+    def finish_login(self, state: str, detail: str = "") -> None:
+        pending = self._pending.get(state)
+        if pending and pending.status == "processing":
+            pending.status = "error" if detail else "completed"
+            pending.detail = detail
+
+    def consume_login(self, state: str, site: SonaSiteConfig) -> tuple[str, str]:
+        if self.login_status(state, site)["status"] != "pending":
+            raise SonaSiteError("登录请求已失效，请返回 App 重新登录", 400)
+        pending = self._pending[state]
+        pending.status = "processing"
         return pending.environment, pending.origin
 
     def session(self, site: SonaSiteConfig) -> SiteSession | None:
@@ -138,7 +161,11 @@ class SonaSiteManager:
         }
 
     async def load_catalog(self, origin: str, token: str, environment: str) -> SiteSession:
+        # Scene subscriptions belong to the user, independently of managed
+        # spaces. Without an explicit role the website chooses the highest
+        # role, making RESOURCE_ADMIN requests require an unrelated space.
         headers = {"Authorization": token, "X-B3-BusinessId": BUSINESS_ID,
+                   "X-Active-Role": "USER",
                    "Cache-Control": "no-cache, no-store", "Pragma": "no-cache"}
         try:
             async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:

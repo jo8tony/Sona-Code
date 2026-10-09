@@ -446,6 +446,16 @@ async def project_status(project_id: str, request: Request):
 @router.get("/workspace/projects/{project_id}/models")
 async def project_models(project_id: str, request: Request):
     path = _project_path(request, project_id)
+    return await _models(request, path)
+
+
+@router.get("/workspace/models")
+async def workspace_models(request: Request) -> dict:
+    """Expose application models before a project or native server exists."""
+    return await _models(request)
+
+
+async def _models(request: Request, path: str | None = None) -> dict:
     cfg = request.app.state.runtime.provider_config()
     source = cfg.model_settings.source
     providers = [item for item in application_catalog(cfg) if item["source"] == source]
@@ -453,7 +463,7 @@ async def project_models(project_id: str, request: Request):
     data = {}
     # Website subscriptions are already the authoritative catalog. Do not start
     # a native process (or wait for it) just to open the website model picker.
-    if source != "sona":
+    if path and source != "sona":
         try:
             data = await _opencode(request, path, "GET", "/config/providers")
         except HTTPException:
@@ -467,7 +477,7 @@ async def project_models(project_id: str, request: Request):
             context = models.get(model_id, {}).get("limit", {}).get("context")
             if isinstance(context, (int, float)) and not isinstance(context, bool) and context > 0:
                 model.setdefault("limit", {})["context"] = context
-    if source == "native":
+    if path and source == "native":
         auth = await _opencode(request, path, "GET", "/provider")
         providers.extend(public_native_catalog(data))
         connected = auth.get("connected", []) if isinstance(auth, dict) else []

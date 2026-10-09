@@ -156,6 +156,24 @@ def test_workspace_catalog_defaults_filter_and_sanitize(cfg, tmp_path):
         assert len(response.json()["providers"]) == 1
 
 
+def test_custom_models_can_be_selected_without_project_or_native_process(cfg, tmp_path):
+    cfg.model_settings.default_model = ModelChoice(provider="company", model="two")
+    app = create_app(cfg, str(tmp_path / "cfg.json"))
+
+    async def no_native(*args, **kwargs):
+        raise AssertionError("Projectless catalog must not start OpenCode")
+
+    app.state.runtime.workspace.request = no_native
+    with TestClient(app) as client:
+        assert client.get("/__recorder/api/workspace/projects").json()["items"] == []
+        response = client.get("/__recorder/api/workspace/models")
+        assert response.status_code == 200
+        assert response.json()["default_model"] == {"providerID": native_provider_id("company"), "modelID": "two"}
+        assert set(response.json()["providers"][0]["models"]) == {"model/one", "two"}
+        assert "provider-secret" not in response.text
+        assert "model-secret" not in response.text
+
+
 @pytest.mark.asyncio
 async def test_running_status_and_dispatch_block_changes():
     manager = WorkspaceManager()

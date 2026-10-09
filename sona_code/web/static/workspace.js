@@ -667,7 +667,7 @@ function renderWorkspace(view) {
   });
   function saveDraft() {
     if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
-    if (!state.projectId || !draftContextReady) return;
+    if (!draftContextReady) return;
     workspaceWriteDraft(workspaceConversationKey(state.projectId, state.sessionId), {
       ...composer.snapshot(), attachments: state.attachments.map(item => ({ ...item })),
     });
@@ -1592,7 +1592,7 @@ function renderWorkspace(view) {
     view.querySelector("#wsp-abort").hidden = !session || !busy;
     view.querySelectorAll(".wsp-tab").forEach((button) => button.classList.toggle("active", button.dataset.wspTab === state.tab));
     const send = view.querySelector("#wsp-send");
-    send.disabled = state.sending || !project || !state.check?.found || session?.creating || (!!state.sessionId && !state.queueLoaded);
+    send.disabled = state.sending || (!!project && !state.check?.found) || session?.creating || (!!state.sessionId && !state.queueLoaded);
     const queued = waitingForReply() || state.queue.items.length > 0 || state.queue.paused;
     const sendLabel = queued ? "加入队列" : "发送消息";
     send.title = sendLabel;
@@ -1607,7 +1607,7 @@ function renderWorkspace(view) {
       queued ? "继续输入，本轮结束后发送…" : "向 Sona Code 描述你的需求…";
     renderQueue();
     view.querySelector("#wsp-attach").disabled = state.sending || state.pendingImageCount > 0 || !project;
-    modelButton.disabled = !project;
+    modelButton.disabled = false;
   }
 
   function empty(title, description, action) {
@@ -1915,7 +1915,9 @@ function renderWorkspace(view) {
       .filter(row => row.workspaceMessageKey)
       .map(row => [row.workspaceMessageKey, row]));
     if (!state.sessionId) {
-      target.append(empty("开始一段新对话", "选择项目后新建对话，Sona Code 会在该项目目录中工作。",
+      target.append(empty("开始一段新对话", activeProject()
+        ? "选择项目后新建对话，Sona Code 会在该项目目录中工作。"
+        : "可以先选择模型或登录 Sona。发送消息时再创建项目，Sona Code 会在该项目目录中工作。",
         activeProject() ? ["新建对话", () => createSession()] : ["新建项目", openAddProject]));
       return;
     }
@@ -2887,14 +2889,12 @@ function renderWorkspace(view) {
   }
 
   function chooseModel(value) {
-    if (state.projectId) {
-      state.chosenModels.set(state.projectId, value);
-      state.chosenVariants.set(state.projectId, "");
-      try {
-        localStorage.setItem(`sona-code:model:${state.projectId}`, value);
-        localStorage.setItem("sona-code:last-model", value);
-      } catch (_) { /* Storage may be unavailable. */ }
-    }
+    state.chosenModels.set(state.projectId, value);
+    state.chosenVariants.set(state.projectId, "");
+    try {
+      if (state.projectId) localStorage.setItem(`sona-code:model:${state.projectId}`, value);
+      localStorage.setItem("sona-code:last-model", value);
+    } catch (_) { /* Storage may be unavailable. */ }
     updateModelButton();
     renderStatsLine();
     closeModelPicker();
@@ -2907,17 +2907,11 @@ function renderWorkspace(view) {
     modelList.replaceChildren();
     if (state.modelSource === "sona" && state.sonaConnected === false) {
       modelList.append(el("p", { class: "wsp-picker-empty", text: state.modelLoadError || "请登录 Sona 网站以获取已订阅模型。" }),
-        el("button", { type: "button", class: "wsp-model-option", text: "登录 Sona", onclick: async event => {
-          const button = event.currentTarget;
-          if (button.disabled) return;
-          button.disabled = true; button.textContent = "等待浏览器登录…";
-          try {
-            await startSonaLogin(state.sonaEnvironment);
-            if (alive() && state.projectId) await loadModels(state.projectId);
-          } catch (error) {
-            if (alive()) { state.modelLoadError = detail(error); renderModelPicker(); }
-          } finally { button.disabled = false; button.textContent = "登录 Sona"; }
-        } }));
+        sonaLoginButton(state.sonaEnvironment, "wsp-model-option", "登录 Sona", async () => {
+          if (alive()) await loadModels(state.projectId);
+        }, error => {
+          if (alive()) { state.modelLoadError = error ? detail(error) : ""; renderModelPicker(); }
+        }));
       if (!modelPicker.hidden) positionPicker(modelPicker, modelButton, "right");
       return;
     }
@@ -2957,14 +2951,14 @@ function renderWorkspace(view) {
     if (!count && query) modelList.append(el("p", { class: "wsp-picker-empty", text: "没有匹配的模型" }));
     else if (!state.providers.length) {
       modelList.append(el("p", { class: "wsp-picker-empty", text: state.modelSource === "sona"
-        ? (state.sonaConnected === null ? "正在读取模型…" : "当前环境没有可用订阅，请订阅后点击刷新。") : "暂无可用模型。" }));
+        ? (state.sonaConnected === null ? "正在读取模型…" : "当前环境没有可用订阅，请订阅后点击刷新。")
+        : state.modelSource === "native" && !state.projectId ? "选择项目后加载该项目的本地 OpenCode 模型。" : "暂无可用模型。" }));
       if (state.modelSource !== "sona") modelList.append(el("a", { href: "#/models", class: "wsp-model-option", text: "前往模型页面" }));
     }
     if (!modelPicker.hidden) positionPicker(modelPicker, modelButton, "right");
   }
 
   function openModelPicker() {
-    if (!state.projectId) return;
     loadModels(state.projectId);
     closeAgentPicker();
     closeVariantPicker();
@@ -2986,7 +2980,7 @@ function renderWorkspace(view) {
         const previous = entry?.data;
         entry = { data: previous, loadedAt: 0, pending: null };
         workspaceModelCache.set(projectId, entry);
-        entry.pending = api(`workspace/projects/${encodeURIComponent(projectId)}/models`, { silent: true })
+        entry.pending = api(projectId ? `workspace/projects/${encodeURIComponent(projectId)}/models` : "workspace/models", { silent: true })
           .then(data => { entry.data = data; entry.loadedAt = Date.now(); return data; })
           .finally(() => { entry.pending = null; });
       }
@@ -3011,7 +3005,10 @@ function renderWorkspace(view) {
         if (!state.providers.some((provider) => provider.id === providerID && provider.models?.[modelID])) {
           state.chosenModels.set(projectId, "");
           state.chosenVariants.set(projectId, "");
-          try { localStorage.removeItem(`sona-code:model:${projectId}`); } catch (_) {}
+          try {
+            if (projectId) localStorage.removeItem(`sona-code:model:${projectId}`);
+            else localStorage.removeItem("sona-code:last-model");
+          } catch (_) {}
           toast("原模型已不可用，请重新选择模型", "error");
         }
       }
@@ -3702,18 +3699,25 @@ function renderWorkspace(view) {
     cancelSelectedRefresh();
     hideAutocomplete();
     scrollToLatestOnLoad = true;
+    const withoutProject = !state.projectId;
     state.projectId = projectId;
     state.queue = { items: [], paused: false, error: "" }; state.queueLoaded = false;
     state.skills = []; state.commands = []; updateSkillInput();
     if (!state.chosenModels.has(projectId)) {
-      try { state.chosenModels.set(projectId, localStorage.getItem(`sona-code:model:${projectId}`) || ""); }
-      catch (_) { state.chosenModels.set(projectId, ""); }
+      const initial = withoutProject ? state.chosenModels.get(null) || "" : "";
+      try {
+        state.chosenModels.set(projectId, localStorage.getItem(`sona-code:model:${projectId}`) ?? initial);
+        if (withoutProject) localStorage.setItem(`sona-code:model:${projectId}`, state.chosenModels.get(projectId));
+      }
+      catch (_) { state.chosenModels.set(projectId, initial); }
+      if (withoutProject) state.chosenVariants.set(projectId, state.chosenVariants.get(null) || "");
     }
     const saved = workspaceSelection.projectId === projectId ? workspaceSelection.sessionId : null;
     const project = activeProject();
     const remembered = saved && (!Array.isArray(project?.sessions) ||
       state.sessions.get(projectId)?.some(session => session.id === saved)) ? saved : null;
     state.sessionId = remembered || (state.sessions.get(projectId) || [])[0]?.id || null;
+    if (withoutProject) migrateCreationDraft(workspaceConversationKey(null, null), workspaceConversationKey(projectId, state.sessionId));
     state.statuses = state.projectStatuses.get(projectId) || {};
     restoreDraft();
     closeChangePopover();
@@ -4137,7 +4141,7 @@ function renderWorkspace(view) {
   window.addEventListener("resize", repositionPickers);
   addCleanup(() => window.removeEventListener("resize", repositionPickers));
   variantSelect.addEventListener("change", () => {
-    if (state.projectId) state.chosenVariants.set(state.projectId, variantSelect.value);
+    state.chosenVariants.set(state.projectId, variantSelect.value);
     variantLabel.textContent = variantSelect.value || "默认";
     variantTrigger.dataset.default = String(!variantSelect.value);
     variantTrigger.title = variantSelect.value ? "模型推理强度：" + variantSelect.value : "模型推理强度：默认";
@@ -4362,7 +4366,7 @@ function renderWorkspace(view) {
   const reloadSonaModels = () => {
     workspaceModelCache.clear();
     if (alive()) refreshSidebarAccount();
-    if (alive() && state.projectId) loadModels(state.projectId);
+    if (alive()) loadModels(state.projectId);
   };
   window.addEventListener("sona-models-changed", reloadSonaModels);
   addCleanup(() => window.removeEventListener("sona-models-changed", reloadSonaModels));
@@ -4405,7 +4409,15 @@ function renderWorkspace(view) {
       renderSidebar();
       if (selected && (!draftContextReady || selected.id !== state.projectId)) selectProject(selected.id);
       else if (selected) loadSessions(selected);
-      else { renderHeader(); renderMain(); }
+      else {
+        state.projectId = null; state.sessionId = null;
+        if (!draftContextReady) restoreDraft();
+        if (!state.chosenModels.has(null)) {
+          try { state.chosenModels.set(null, localStorage.getItem("sona-code:last-model") || ""); } catch (_) {}
+        }
+        loadModels(null);
+        renderHeader(); renderMain();
+      }
       // Older/custom stores need the native API, but still load their counts
       // without requiring expansion. Limit cold starts to two at a time.
       const missing = state.projects.filter(project => project.session_count === null && project.id !== selected?.id);
@@ -4444,7 +4456,7 @@ function renderWorkspace(view) {
         connectEvents(state.projectId);
         workspaceModelCache.delete(state.projectId);
         loadModels(state.projectId); loadAgents(state.projectId);
-      }
+      } else loadModels(null);
     },
     dispose() {
       for (const cleanup of cleanups.splice(0)) { try { cleanup(); } catch (_) {} }
