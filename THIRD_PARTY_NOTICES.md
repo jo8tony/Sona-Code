@@ -32,3 +32,8 @@ unchanged. Its license is included at `licenses/OpenCode-LICENSE.txt` in the
 installed application resources. The patch and build recipe are maintained
 in this repository; release requires ordinary-user verification on an
 affected Windows computer.
+# Monaco Editor
+
+Monaco Editor 0.57.0 (Microsoft Corporation) is distributed under the MIT license.
+Local language modules, workers, CSS and fonts are bundled in `sona_code/web/static/vendor/monaco/`.
+The original license and upstream third-party notices are included there as `LICENSE.txt` and `ThirdPartyNotices.txt`, including the notices for TypeScript and DOMPurify. No CDN is used.

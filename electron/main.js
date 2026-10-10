@@ -110,6 +110,10 @@ if (!app.requestSingleInstanceLock()) {
       if (!url.startsWith(`${origin}/__recorder/`)) event.preventDefault();
     });
     window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    window.webContents.on("will-prevent-unload", event => {
+      // Unsaved edits are confirmed before shutting down the backend.
+      if (quitReady) event.preventDefault();
+    });
     window.loadFile(path.join(__dirname, "..", "desktop", "index.html"));
     window.once("ready-to-show", showWindow);
 
@@ -180,7 +184,9 @@ if (!app.requestSingleInstanceLock()) {
     quitting = true;
     if (quitReady) return;
     event.preventDefault();
-    shutdownPromise ||= stopBackend().then(() => {
+    shutdownPromise ||= confirmQuit().then(async approved => {
+      if (!approved) { quitting = false; shutdownPromise = null; return; }
+      await stopBackend();
       quitReady = true;
       app.quit();
     }).catch((error) => {
@@ -189,6 +195,18 @@ if (!app.requestSingleInstanceLock()) {
       dialog.showErrorBox("Sona Code 退出失败", String(error));
     });
   });
+}
+
+async function confirmQuit() {
+  if (!window || window.isDestroyed()) return true;
+  const dirty = await window.webContents.executeJavaScript("document.documentElement.dataset.sonaUnsavedCode === 'true'");
+  if (!dirty) return true;
+  showWindow();
+  const result = await dialog.showMessageBox(window, {
+    type: "warning", title: "有未保存的代码修改", message: "退出将丢弃未保存的代码修改。",
+    buttons: ["继续编辑", "丢弃修改并退出"], defaultId: 0, cancelId: 0, noLink: true,
+  });
+  return result.response === 1;
 }
 
 async function stopBackend() {

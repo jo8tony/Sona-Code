@@ -1,6 +1,8 @@
 $ErrorActionPreference = "Stop"
 
 $ProjectDir = Split-Path -Parent $PSScriptRoot
+& node (Join-Path $PSScriptRoot "build-editor.mjs") --check
+if ($LASTEXITCODE -ne 0) { throw "Local Monaco resources are missing or corrupt; run npm run editor:build" }
 $BuildPython = if ($env:BUILD_PYTHON) {
     $env:BUILD_PYTHON
 } elseif (Test-Path (Join-Path $ProjectDir ".venv-build\Scripts\python.exe")) {

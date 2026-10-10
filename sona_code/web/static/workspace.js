@@ -634,6 +634,14 @@ function renderWorkspace(view) {
     projectFiles.set(projectId, entry);
     return entry.promise;
   }
+  const main = view.querySelector(".wsp-main");
+  const codeEditor = createWorkspaceEditor(main, {
+    api, error: message => toast(message, "error"),
+    visibility: visible => {
+      for (const child of main.children) if (!child.classList.contains("wsp-editor")) child.inert = visible;
+    },
+  });
+  addCleanup(() => codeEditor.dispose());
   const tree = createWorkspaceTree(view.querySelector("#wsp-tree"), {
     list: (projectId, path) => api("workspace/projects/" + encodeURIComponent(projectId) +
       "/tree?path=" + encodeURIComponent(path), { silent: true }),
@@ -645,6 +653,10 @@ function renderWorkspace(view) {
     visibility: visible => view.querySelector("#wsp-tree-trigger").setAttribute("aria-expanded", String(visible)),
     open: async (projectId, path, mode) => {
       try {
+        if (mode === "editor") {
+          await codeEditor.open(state.projects.find(project => project.id === projectId), path);
+          return;
+        }
         await api("workspace/projects/" + encodeURIComponent(projectId) + "/entries/open?path=" +
           encodeURIComponent(path) + "&mode=" + mode, { method: "POST", body: {}, silent: true });
       } catch (error) { toast("打开路径失败：" + detail(error), "error"); }
@@ -2479,6 +2491,9 @@ function renderWorkspace(view) {
           workspaceIcon("chevron", "wsp-diff-chevron"),
           el("span", { class: "wsp-file-badge", text: label }),
           el("span", { class: "wsp-diff-path", title, text: title }),
+          el("button", { class: "wsp-change-locate", type: "button", title: "打开当前文件",
+            "aria-label": "打开当前文件 " + title,
+            onclick: event => { event.preventDefault(); void codeEditor.open(activeProject(), title); } }, workspaceIcon("fileCode")),
           el("button", { class: "wsp-change-locate", type: "button", title: "在目录树中定位",
             "aria-label": "在目录树中定位 " + title,
             onclick: event => { event.preventDefault(); void tree.locate(activeProject(), title); } }, workspaceIcon("locate")),
@@ -4546,6 +4561,7 @@ function renderWorkspace(view) {
       if (disposed || suspended) return;
       saveDraft();
       suspended = true;
+      codeEditor.suspend();
       cancelSelectedRefresh();
       if (events) events.close();
       events = null; eventProjectId = null;
@@ -4556,6 +4572,7 @@ function renderWorkspace(view) {
     resume() {
       if (disposed || !suspended) return;
       suspended = false;
+      codeEditor.resume();
       markVisibleSessionRead();
       // Retain DOM, drafts, expanded projects and scroll positions; refresh in place.
       updateTrajectoryHeight();

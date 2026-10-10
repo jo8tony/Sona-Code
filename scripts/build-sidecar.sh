@@ -2,6 +2,7 @@
 set -euo pipefail
 
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
+node "$project_dir/scripts/build-editor.mjs" --check
 build_python="${BUILD_PYTHON:-$project_dir/.venv-build/bin/python}"
 
 if [[ ! -x "$build_python" ]]; then
