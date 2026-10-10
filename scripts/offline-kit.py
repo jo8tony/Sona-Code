@@ -16,7 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 INPUTS = ["package-lock.json", "pyproject.toml", "packaging/opencode.json", "packaging/openspec.json",
           "scripts/prepare-opencode.py", "packaging/opencode-locale-plugin.mjs", "scripts/prepare-openspec.py",
           "packaging/openspec-package/package.json", "packaging/openspec-package/package-lock.json",
-          "packaging/openspec-launcher/main.go", "packaging/openspec-launcher/offline.cjs", "packaging/command-runner/main.go"]
+          "packaging/openspec-launcher/main.go", "packaging/openspec-launcher/offline.cjs", "packaging/command-runner/main.go",
+          "packaging/opencode-sdk/package.json", "packaging/opencode-sdk/package-lock.json", "scripts/prepare-native-sdk.py"]
 
 
 def digest(path: Path) -> str:
@@ -60,9 +61,11 @@ def prepare(destination: Path, python: str) -> None:
     if not node:
         raise RuntimeError("Node.js is required for preparation")
     subprocess.run([node, str(ROOT / "scripts/build-editor.mjs"), "--check"], check=True)
+    subprocess.run([python, str(ROOT / 'scripts/prepare-native-sdk.py'), '--check'], check=True)
     sources = {"node_modules": ROOT / "node_modules", "openspec": ROOT / "build/openspec",
                "binaries/opencode.exe": ROOT / "src-tauri/binaries/opencode-x86_64-pc-windows-msvc.exe",
-               "tools/node.exe": Path(node), "electron-builder-cache": ROOT / ".runtime/electron-builder-cache"}
+               "tools/node.exe": Path(node), "electron-builder-cache": ROOT / ".runtime/electron-builder-cache",
+               "opencode-sdk": ROOT / 'build/opencode-sdk'}
     required = [ROOT / "node_modules/electron/dist/electron.exe", ROOT / "node_modules/esbuild/bin/esbuild",
                 ROOT / "build/openspec/manifest.json", ROOT / "build/openspec/bin/sona-command-runner.exe",
                 sources["binaries/opencode.exe"], sources["electron-builder-cache"]]

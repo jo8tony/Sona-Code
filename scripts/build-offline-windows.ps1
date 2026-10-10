@@ -41,6 +41,7 @@ function Copy-PreparedDirectory([string]$Source, [string]$Target) {
 }
 Copy-PreparedDirectory (Join-Path $KitDir "node_modules") (Join-Path $ProjectDir "node_modules")
 Copy-PreparedDirectory (Join-Path $KitDir "openspec") (Join-Path $ProjectDir "build\openspec")
+Copy-PreparedDirectory (Join-Path $KitDir "opencode-sdk") (Join-Path $ProjectDir "build\opencode-sdk")
 Copy-PreparedDirectory (Join-Path $KitDir "electron-builder-cache") (Join-Path $ProjectDir "build\offline-electron-builder-cache")
 $env:ELECTRON_BUILDER_CACHE = Join-Path $ProjectDir "build\offline-electron-builder-cache"
 & $BuildNode (Join-Path $PSScriptRoot "build-editor.mjs") --check
@@ -50,6 +51,8 @@ $EnvironmentDir = Join-Path $ProjectDir ".venv-offline"
 & $Python -m venv $EnvironmentDir
 if ($LASTEXITCODE -ne 0) { throw "Creating offline Python environment failed" }
 $BuildPython = Join-Path $EnvironmentDir "Scripts\python.exe"
+& $BuildPython (Join-Path $PSScriptRoot "prepare-native-sdk.py") --check
+if ($LASTEXITCODE -ne 0) { throw "Local OpenCode SDK is missing or corrupt" }
 & $BuildPython -m pip install --no-index --find-links (Join-Path $KitDir "wheels") -r (Join-Path $KitDir "requirements.txt")
 if ($LASTEXITCODE -ne 0) { throw "Offline wheel installation failed" }
 & $BuildPython -m PyInstaller --noconfirm --clean --distpath (Join-Path $ProjectDir "build\sidecar-offline\dist") --workpath (Join-Path $ProjectDir "build\sidecar-offline\work") (Join-Path $ProjectDir "packaging\sidecar.spec")

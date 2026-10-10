@@ -122,6 +122,9 @@ class WorkspaceManager:
             env = await asyncio.to_thread(_build_env, config, "opencode")
             if self.environment is not None:
                 env = await asyncio.to_thread(self.environment, path, "opencode", env)
+            if resolution.source == "bundled":
+                from sona_code.native_sdk import prepare_bundled_sdk
+                await asyncio.to_thread(prepare_bundled_sdk, env, path)
             password = secrets.token_urlsafe(32)
             env["OPENCODE_SERVER_USERNAME"] = "sona-code"
             env["OPENCODE_SERVER_PASSWORD"] = password

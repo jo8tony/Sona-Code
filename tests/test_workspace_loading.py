@@ -269,11 +269,11 @@ async def test_project_starts_are_parallel_deduplicated_and_survive_request_canc
 
 async def test_failed_start_is_removed_and_can_be_retried(slow_startup, monkeypatch):
     fixture = slow_startup
-    monkeypatch.setattr(workspace_manager, "resolve_opencode", lambda cfg: SimpleNamespace(path=None))
+    monkeypatch.setattr(workspace_manager, "resolve_opencode", lambda cfg: SimpleNamespace(path=None, source="missing"))
     with pytest.raises(workspace_manager.WorkspaceError, match="未找到 OpenCode"):
         await fixture.manager.ensure(fixture.paths[0], default_config())
     assert not fixture.manager._starting
-    monkeypatch.setattr(workspace_manager, "resolve_opencode", lambda cfg: SimpleNamespace(path="opencode"))
+    monkeypatch.setattr(workspace_manager, "resolve_opencode", lambda cfg: SimpleNamespace(path="opencode", source="path"))
     fixture.release.set()
     try:
         server = await asyncio.wait_for(fixture.manager.ensure(fixture.paths[0], default_config()), 2)

@@ -23,6 +23,8 @@ $BinaryDir = Join-Path $ProjectDir "src-tauri\binaries"
 $BinaryName = "sona-code-sidecar"
 
 New-Item -ItemType Directory -Force -Path $OutputDir, $BinaryDir | Out-Null
+& $BuildPython (Join-Path $PSScriptRoot "prepare-native-sdk.py")
+if ($LASTEXITCODE -ne 0) { throw "Preparing offline OpenCode plugin SDK failed" }
 & $BuildPython -m PyInstaller `
     --noconfirm `
     --clean `

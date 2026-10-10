@@ -32,6 +32,15 @@ unchanged. Its license is included at `licenses/OpenCode-LICENSE.txt` in the
 installed application resources. The patch and build recipe are maintained
 in this repository; release requires ordinary-user verification on an
 affected Windows computer.
+
+The Windows Python sidecar also includes the pinned `@opencode-ai/plugin`
+1.18.32 SDK (MIT) and its locked production dependencies to prepare a fresh
+isolated native config without registry access. The SDK archive retains the
+packages' original license files; dependencies use MIT, ISC, Apache-2.0, or
+BSD license terms (the dual AFL/BSD package is used under BSD-3-Clause).
+The complete package/version/license inventory is recorded in
+`packaging/opencode-sdk/package-lock.json`. Installed files are placed only
+in a fresh application OpenCode config's `node_modules` directory.
 # Monaco Editor
 
 Monaco Editor 0.57.0 (Microsoft Corporation) is distributed under the MIT license.

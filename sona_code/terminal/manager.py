@@ -384,6 +384,9 @@ class TerminalManager:
         env = _build_env(cfg, kind)
         if getattr(self, "environment", None) is not None:
             env = await asyncio.to_thread(self.environment, str(path.resolve()), kind, env)
+        if kind == "opencode" and resolution.source == "bundled":
+            from sona_code.native_sdk import prepare_bundled_sdk
+            await asyncio.to_thread(prepare_bundled_sdk, env, str(path.resolve()))
 
         sid = uuid.uuid4().hex[:12]
         if self.commands is not None and kind == "opencode":

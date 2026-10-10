@@ -14,6 +14,8 @@ JavaScript/TypeScript 提供 F12 跳转定义、查看定义和查找引用；�
 
 Windows 推荐 Electron 安装包，附带 Chromium，不需要联网安装 WebView2。安装包位于 `dist/electron/Sona-Code-2.3.1-Setup.exe`。编辑器不依赖 OpenCode 或模型接口；AI 对话仍需要你配置可访问的内网模型服务。
 
+Windows sidecar 内含固定版本的 OpenCode 插件 SDK；新隔离配置目录和当前项目已有的 `.opencode` 目录会从本地准备依赖，首次创建对话无需从 npm 下载这些目录的 SDK。已有 `package.json`、锁文件或 `node_modules` 不会被覆盖，也不会给普通项目创建 `.opencode`。祖先目录、用户 home 的 `.opencode`、用户自行安装的插件和显式覆盖的配置目录由用户管理依赖；内网 npm 需按 `packaging/opencode-sdk/package-lock.json` 的版本清单准备缺失包。
+
 ## 在外网准备一次
 
 需要 Windows x64、Python 3.12 x64 和 Node.js 22+：
@@ -31,7 +33,7 @@ npm run desktop:build:windows:electron
 
 编辑器资源已提交源码，正常打包只校验资源，不再下载 Monaco。升级编辑器或重建资源时执行 `npm run editor:build`，提交新的资源与 `manifest.json`。
 
-最后一条命令产生 `dist/Sona-Code-Windows-x64-offline-build.zip` 及 `.sha256`。依赖包包含本机已安装的 Node 包与 Electron runtime、Node 可执行程序、Python wheels、NSIS 构建缓存，以及已验证的固定版本 OpenCode/OpenSpec 工具。不会包含用户配置、密钥、调用记录或本机虚拟环境。
+最后一条命令产生 `dist/Sona-Code-Windows-x64-offline-build.zip` 及 `.sha256`。依赖包包含本机已安装的 Node 包与 Electron runtime、Node 可执行程序、Python wheels、NSIS 构建缓存、固定版本的 OpenCode 插件 SDK，以及已验证的固定版本 OpenCode/OpenSpec 工具。不会包含用户配置、密钥、调用记录或本机虚拟环境。
 
 ## 在内网从源码重新打包
 
