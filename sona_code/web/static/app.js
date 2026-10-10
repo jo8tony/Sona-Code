@@ -220,6 +220,7 @@ function runCleanups() {
 
 const routes = [
   { re: /^#\/workspace$/, nav: "workspace", render: (view) => renderWorkspace(view) },
+  { re: /^#\/application$/, nav: "application", render: (view) => renderApplicationSettings(view) },
   { re: /^#\/models$/, nav: "models", render: (view) => renderModels(view) },
   { re: /^#\/skills$/, nav: "skills", render: (view) => renderSkills(view) },
   { re: /^#\/dashboard$/, nav: "dashboard", render: (view) => renderDashboard(view) },
@@ -242,7 +243,7 @@ function setNav(name) {
 function route() {
   let hash = location.hash || "#/workspace";
   if (hash === "#/preferences") {
-    hash = adminMenusVisible ? "#/settings" : "#/skills";
+    hash = adminMenusVisible ? "#/settings" : "#/application";
     history.replaceState(null, "", location.pathname + location.search + hash);
   }
   const isWorkspace = hash === "#/workspace";
@@ -258,7 +259,7 @@ function route() {
       document.body.classList.toggle("workspace-route", r.nav === "workspace");
       setNav(r.nav);
       updateAdminMenus();
-      document.title = "Sona Code · " + ({ workspace: "工作区", models: "模型", skills: "技能", dashboard: "仪表盘", calls: "调用列表", trajectory: "轨迹", terminal: "终端", settings: "设置" }[r.nav] || "");
+      document.title = "Sona Code · " + ({ workspace: "工作区", application: "应用设置", models: "模型", skills: "技能", dashboard: "仪表盘", calls: "调用列表", trajectory: "轨迹", terminal: "终端", settings: "设置" }[r.nav] || "");
       if (isWorkspace) {
         if (workspacePage) workspacePage.controller.resume();
         else {

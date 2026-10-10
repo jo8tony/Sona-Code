@@ -144,7 +144,7 @@ const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8").repl
 const calls = [], state = {projectId: "p", sessionId: "a", search: "query", messages: [{saved: true}]};
 const methods = ["saveDraft", "cancelSelectedRefresh", "hideAutocomplete", "closeRowMenus", "closeChangePopover",
   "closeModelPicker", "closeAgentPicker", "closeVariantPicker", "updateTrajectoryHeight", "loadProjects",
-  "loadCheck", "refreshSelected", "connectEvents", "loadModels", "loadAgents", "refreshSidebarAccount"];
+  "loadCheck", "refreshSelected", "connectEvents", "loadModels", "loadAgents", "refreshSidebarAccount", "markVisibleSessionRead"];
 const context = vm.createContext({state, disposed: false, suspended: false,
     navigation: {close() {}},
   events: {close() {calls.push("closeEvents");}}, eventProjectId: "p", queueDialog: null, deleteDialog: null,
@@ -158,7 +158,7 @@ assert.equal(calls.filter(call => call === "closeEvents").length, 1);
 assert.equal(calls.filter(call => call === "saveDraft").length, 1);
 calls.length = 0; controller.resume(); controller.resume();
 assert.equal(context.suspended, false);
-assert.deepEqual(calls, ["updateTrajectoryHeight", "refreshSidebarAccount", "loadProjects", "loadCheck", "refreshSelected", "connectEvents", "loadModels", "loadAgents"]);
+assert.deepEqual(calls, ["markVisibleSessionRead", "updateTrajectoryHeight", "refreshSidebarAccount", "loadProjects", "loadCheck", "refreshSelected", "connectEvents", "loadModels", "loadAgents"]);
 assert.equal(context.workspaceModelCache.has("p"), false, "Settings changes must invalidate cached models");
 assert.equal(state.search, "query"); assert.equal(state.sessionId, "a"); assert.equal(state.messages[0].saved, true);
 controller.dispose(); controller.dispose(); assert.equal(calls.filter(call => call === "dispose").length, 1);

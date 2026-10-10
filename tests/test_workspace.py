@@ -534,7 +534,7 @@ vm.runInContext(selectionSource + "persistWorkspaceSelection();", blocked);
 
 function el(tag, props = {}, ...children) {
   const node = {tag, ...props, children: [], get childNodes() {return this.children;},
-    append(...items) {for (const item of items) this.insertBefore(item, null);},
+    append(...items) {for (const item of items.filter(Boolean)) this.insertBefore(item, null);},
     insertBefore(item, before) {item.remove(); const index = before ? this.children.indexOf(before) : this.children.length;
       this.children.splice(index,0,item); item.parent=this;},
     remove() {if (this.parent) {this.parent.children.splice(this.parent.children.indexOf(this),1);this.parent=null;}},
@@ -550,6 +550,7 @@ const state = {
   sessionLimits: new Map(), errors: new Map(), projectStatuses: new Map(),
 };
 const context = vm.createContext({state, sideList, el, closeRowMenus() {}, sidebarDrag: null, bindSidebarDrag() {},
+  workspaceUnreadCompletions: new Set(),
   sidebarSections: new Map(), sidebarRows: new Map(), workspaceConversationKey: (p,s) => JSON.stringify([p,s]), statusIcon: () => el("svg"),
   view: {querySelector() {return {}; }}, rowMenu: () => el("div"),
   sessionTitle: s => s.title, shortStamp: () => "", stamp: () => ""});

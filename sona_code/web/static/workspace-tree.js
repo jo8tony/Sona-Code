@@ -226,13 +226,14 @@ function createWorkspaceTree(pane, callbacks) {
   });
   function setSide(value) {
     finishResize();
-    const position = value === "right" ? "right" : "left";
+    const position = value === "left" ? "left" : "right";
     for (const button of sideButtons) button.setAttribute("aria-pressed", String(button.dataset.treeSide === position));
     root.classList.toggle("tree-right", position === "right");
     if (project) body.querySelector(".wsp-tree-row.selected .wsp-tree-name")?.scrollIntoView({block: "nearest", inline: "nearest"});
-    try { localStorage.setItem("sona-code:tree-side", position); } catch (_) {}
+    try { localStorage.setItem("sona-code:tree-side:v2", position); } catch (_) {}
   }
-  try { setSide(localStorage.getItem("sona-code:tree-side")); } catch (_) { setSide("left"); }
+  // The old key was also written by the former left-side default on every load.
+  try { setSide(localStorage.getItem("sona-code:tree-side:v2")); } catch (_) { setSide("right"); }
   for (const button of sideButtons) button.addEventListener("click", () => setSide(button.dataset.treeSide));
 
   function widthBounds() {

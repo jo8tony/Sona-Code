@@ -211,6 +211,7 @@ textarea { resize: vertical; }
 .switch input:checked + .slider { background: var(--accent-soft); border-color: var(--accent); }
 .switch input:checked + .slider::after { left: 17px; background: var(--accent); }
 .switch-label { font-size: 14.5px; color: var(--text-dim); }
+.application-settings .switch input:disabled + .slider { opacity: .45; }
 
 /* ------------------------------------------------ 过滤栏 / 分页 */
 .filter-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }

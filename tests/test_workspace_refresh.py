@@ -435,10 +435,12 @@ const context = vm.createContext({
     if (path.endsWith("/queue")) return Promise.resolve(queue);
     return Promise.resolve([{info: {role: "assistant", time: {completed: Date.now() + 1000}, error: answerError}}]);
   },
-  timestamp: value => value, state: {projects: [{id: "p", name: "示例项目"}]},
+  timestamp: value => value, state: {projects: [{id: "p", name: "示例项目"}], projectId: "p", sessionId: "a", tab: "chat"},
+  renderSidebar() {},
   workspaceNotifyAnswerComplete: body => {notices.push(body);},
 });
-vm.runInContext(source.slice(source.indexOf("  function observeSessionStatus("),
+vm.runInContext(source.slice(0, source.indexOf("function workspaceRoundDuration(")), context);
+vm.runInContext(source.slice(source.indexOf("  function unreadIndicator("),
   source.indexOf("  function connectEvents(")), context);
 async function complete() {
   context.observeSessionStatus("p", "a", undefined, "busy");

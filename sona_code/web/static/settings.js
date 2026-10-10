@@ -1,6 +1,45 @@
 "use strict";
 /* 设置页：上游管理 / 出站代理 / 记录设置 / 服务设置 + 连通性测试 + 保存 */
 
+function renderApplicationSettings(view) {
+  view.replaceChildren(createApplicationSettings());
+}
+
+function createApplicationSettings() {
+  const invokeDesktop = window.__TAURI__?.core?.invoke;
+  const autostartChk = el("input", {type: "checkbox", checked: true, disabled: true});
+  const autostartSw = el("label", {class: "switch"}, autostartChk, el("span", {class: "slider"}),
+    el("span", {class: "switch-label", text: "开机自启"}));
+  const autostartHint = el("div", {class: "f-hint", role: "status",
+    text: invokeDesktop ? "正在读取系统启动设置…" : "请在桌面应用中设置开机自启"});
+  const card = el("section", {class: "card application-settings"}, el("h2", {text: "应用设置"}),
+    el("div", {class: "field"}, autostartSw, autostartHint));
+  let autostartEnabled = true;
+  if (invokeDesktop) {
+    (async () => {
+      try {
+        autostartEnabled = await invokeDesktop("get_autostart");
+        autostartChk.checked = autostartEnabled;
+        autostartChk.disabled = false;
+        autostartHint.textContent = "登录系统时自动启动 Sona Code，修改后立即生效";
+      } catch (error) { autostartHint.textContent = "读取开机自启失败：" + (error.message || error); }
+    })();
+  }
+  autostartChk.addEventListener("change", async () => {
+    autostartChk.disabled = true;
+    try {
+      autostartEnabled = await invokeDesktop("set_autostart", {enabled: autostartChk.checked});
+      autostartChk.checked = autostartEnabled;
+      autostartHint.textContent = "登录系统时自动启动 Sona Code，修改后立即生效";
+      toast(autostartEnabled ? "已开启开机自启" : "已关闭开机自启", "ok");
+    } catch (error) {
+      autostartChk.checked = autostartEnabled;
+      autostartHint.textContent = "设置开机自启失败：" + (error.message || error);
+    } finally { autostartChk.disabled = false; }
+  });
+  return card;
+}
+
 function renderSettings(view) {
   view.replaceChildren(el("div", { class: "loading", text: "加载中…" }));
   (async () => {
@@ -67,6 +106,7 @@ function renderSettings(view) {
       const input = el("input", { type: "checkbox", checked });
       return [el("label", { class: "switch" }, input, el("span", { class: "slider" }), el("span", { class: "switch-label", text: label })), input];
     };
+    view.append(createApplicationSettings());
     const [redactSw, redactChk] = mkSwitch("脱敏敏感头（redact）", cfg.recording.redact);
     const [rrqSw, rrqChk] = mkSwitch("记录请求头", cfg.recording.record_request_headers);
     const [rspSw, rspChk] = mkSwitch("记录响应头", cfg.recording.record_response_headers);

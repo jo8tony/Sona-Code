@@ -30,6 +30,32 @@ function workspaceConversationKey(projectId, sessionId) {
   return JSON.stringify([projectId, sessionId || null]);
 }
 
+const workspaceUnreadCompletions = new Set();
+const workspaceSessionReadVersions = new Map();
+try {
+  const saved = JSON.parse(localStorage.getItem("sona-code:unread-completions") || "[]");
+  if (Array.isArray(saved)) for (const key of saved) {
+    if (typeof key !== "string") continue;
+    const pair = JSON.parse(key);
+    if (Array.isArray(pair) && pair.length === 2 && pair.every(value => typeof value === "string"))
+      workspaceUnreadCompletions.add(key);
+  }
+} catch (_) { /* Unread markers remain usable without browser storage. */ }
+
+function workspacePersistUnreadCompletions() {
+  try { localStorage.setItem("sona-code:unread-completions", JSON.stringify([...workspaceUnreadCompletions])); }
+  catch (_) { /* Keep markers in memory when storage is unavailable. */ }
+}
+
+function workspaceMarkSessionRead(projectId, sessionId) {
+  if (!projectId || !sessionId) return false;
+  const key = workspaceConversationKey(projectId, sessionId);
+  workspaceSessionReadVersions.set(key, (workspaceSessionReadVersions.get(key) || 0) + 1);
+  const changed = workspaceUnreadCompletions.delete(key);
+  if (changed) workspacePersistUnreadCompletions();
+  return changed;
+}
+
 function workspaceRoundDuration(milliseconds) {
   const seconds = Math.floor(Math.max(0, Number(milliseconds) || 0) / 1000);
   return `${Math.floor(seconds / 3600)}:${Math.floor(seconds / 60) % 60}:${seconds % 60}`;
@@ -102,6 +128,9 @@ async function workspacePrepareNotifications() {
 
 async function workspaceNotifyAnswerComplete(body) {
   const notification = window.__TAURI__?.notification;
+  if (document.hasFocus()) return;
+  try { await window.__TAURI__?.core?.invoke("request_task_attention"); }
+  catch (_) { /* Taskbar attention is independent of notification permission. */ }
   if (!notification || document.hasFocus()) return;
   try {
     if (!(await notification.isPermissionGranted())) return;
@@ -519,7 +548,7 @@ function renderWorkspace(view) {
   };
 
   view.innerHTML = `
-    <section class="wsp" id="wsp">
+    <section class="wsp tree-right" id="wsp">
       <aside class="wsp-side" aria-label="项目与对话">
         <div class="wsp-brand"><img class="wsp-brand-mark" src="sona-code-icon.png" alt="" width="34" height="34"><span class="wsp-brand-copy"><strong>Sona Code</strong><small>桌面工作区</small></span><button class="wsp-side-close" id="wsp-side-close" type="button" aria-label="关闭项目栏">${workspaceIcon("close").outerHTML}</button></div>
         <div class="wsp-side-top">
@@ -710,7 +739,8 @@ function renderWorkspace(view) {
   const commandMenu = view.querySelector("#wsp-command-menu");
   const sessionPath = (projectId, sessionId) =>
     `workspace/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}`;
-  const alive = () => !disposed && !suspended && view.isConnected && (!location.hash || location.hash === "#/workspace");
+  const alive = (background = false) => !disposed && view.isConnected &&
+    (background || !suspended && (!location.hash || location.hash === "#/workspace"));
   const queuePanel = el("section", { class: "wsp-queue", "aria-label": "待发送消息", hidden: true });
   view.querySelector("#wsp-form").before(queuePanel);
   let queueSignature = "";
@@ -1314,6 +1344,7 @@ function renderWorkspace(view) {
       }
       if (action === "delete") {
         await api(base, { method: "DELETE", silent: true });
+        markSessionRead(projectId, session.id);
         workspaceWriteDraft(workspaceConversationKey(projectId, session.id), null);
         conversationViews.delete(workspaceConversationKey(projectId, session.id));
         state.sessionDetails.delete(workspaceConversationKey(projectId, session.id));
@@ -1490,6 +1521,8 @@ function renderWorkspace(view) {
           title: `在 ${project.name} 中新建对话`, "aria-label": `在 ${project.name} 中新建对话`,
           onclick: () => { state.collapsedProjects.delete(project.id); renderSidebar(); createSession(project.id); } }, workspaceIcon("plus")));
       bindSidebarDrag(projectRow, "project", project.id, project.id);
+      const projectUnread = collapsed && [...workspaceUnreadCompletions].some(key => JSON.parse(key)[0] === project.id);
+      if (projectUnread) heading.append(unreadIndicator("项目内有任务已完成，尚未查看"));
       const projectRunning = collapsed && Object.values(state.projectStatuses.get(project.id) || {}).some(status => ["busy", "retry"].includes(status?.type));
       if (projectRunning && !cached.indicator) cached.indicator = el("span", {
         class: "wsp-thread-running", role: "img", "aria-label": "项目内有任务正在运行", title: "项目内有任务正在运行",
@@ -1526,6 +1559,13 @@ function renderWorkspace(view) {
         row.button.title = sessionTitle(session);
         row.title.textContent = `${session.parentID ? "↳ " : ""}${sessionTitle(session)}`;
         row.preview.textContent = stamp(session);
+        const unread = workspaceUnreadCompletions.has(key);
+        if (unread && !row.unread) {
+          row.unread = unreadIndicator("任务已完成，尚未查看");
+          row.button.append(row.unread);
+        } else if (!unread && row.unread) {
+          row.unread.remove(); row.unread = null;
+        }
         if (running && !row.indicator) {
           row.indicator = el("span", {class: "wsp-thread-running", role: "img"}, statusIcon("busy"));
           row.button.append(row.indicator);
@@ -1550,7 +1590,8 @@ function renderWorkspace(view) {
             state.sessionLimits.set(project.id, limit + 6);
             renderSidebar();
           },
-        }));
+        }, sessions.slice(limit).some(session => workspaceUnreadCompletions.has(workspaceConversationKey(project.id, session.id)))
+          ? unreadIndicator("更多会话中有已完成的任务，尚未查看") : null));
       }
       workspaceSyncChildren(threads, threadNodes);
       workspaceSyncChildren(section, [projectRow, ...(cached.indicator ? [cached.indicator] : []), threads]);
@@ -3371,6 +3412,23 @@ function renderWorkspace(view) {
     messageInfoVersions.set(info.id, messageVersion);
   }
 
+  function unreadIndicator(label) {
+    return el("span", {class: "wsp-unread-dot", role: "img", "aria-label": label, title: label});
+  }
+
+  function sessionIsVisible(projectId, sessionId) {
+    return alive() && document.hasFocus() && document.visibilityState !== "hidden" &&
+      state.projectId === projectId && state.sessionId === sessionId && state.tab === "chat";
+  }
+
+  function markSessionRead(projectId, sessionId) {
+    if (workspaceMarkSessionRead(projectId, sessionId)) renderSidebar();
+  }
+
+  function markVisibleSessionRead() {
+    if (sessionIsVisible(state.projectId, state.sessionId)) markSessionRead(state.projectId, state.sessionId);
+  }
+
   function observeSessionStatus(projectId, sessionId, previous, current) {
     const key = workspaceConversationKey(projectId, sessionId);
     const wasRunning = previous && previous !== "idle";
@@ -3383,7 +3441,8 @@ function renderWorkspace(view) {
     } else if (wasRunning && !running) {
       const watch = completionWatches.get(key);
       if (!watch) return;
-      if (document.hasFocus()) { completionWatches.delete(key); return; }
+      if (sessionIsVisible(projectId, sessionId)) { completionWatches.delete(key); return; }
+      watch.readVersion = workspaceSessionReadVersions.get(key) || 0;
       watch.timer = setTimeout(() => { void confirmAnswerComplete(projectId, sessionId, watch); }, 1200);
     }
   }
@@ -3396,8 +3455,7 @@ function renderWorkspace(view) {
 
   async function confirmAnswerComplete(projectId, sessionId, watch) {
     const key = workspaceConversationKey(projectId, sessionId);
-    if (!alive() || completionWatches.get(key) !== watch) return;
-    completionWatches.delete(key);
+    if (!alive(true) || completionWatches.get(key) !== watch) return;
     try {
       const base = sessionPath(projectId, sessionId);
       const [statuses, queue, messages] = await Promise.all([
@@ -3405,15 +3463,23 @@ function renderWorkspace(view) {
         api(`${base}/queue`, { silent: true }),
         api(`${base}/messages`, { silent: true }),
       ]);
-      if (!alive() || completionWatches.has(key) || document.hasFocus() ||
+      if (!alive(true) || completionWatches.get(key) !== watch ||
           (statuses?.[sessionId]?.type && statuses[sessionId].type !== "idle") ||
           queue?.items?.length || !Array.isArray(messages)) return;
       const lastAssistant = messages.filter((message) => message.info?.role === "assistant").at(-1)?.info;
       if (!lastAssistant?.time?.completed || lastAssistant.error ||
           timestamp(lastAssistant.time.completed) < watch.startedAt) return;
+      if (!state.projects.some(project => project.id === projectId) ||
+          (workspaceSessionReadVersions.get(key) || 0) !== watch.readVersion) return;
+      if (!sessionIsVisible(projectId, sessionId)) {
+        workspaceUnreadCompletions.add(key);
+        workspacePersistUnreadCompletions();
+        renderSidebar();
+      }
       const project = state.projects.find((item) => item.id === projectId);
       await workspaceNotifyAnswerComplete(`${project?.name || "工作区"}的 AI 回复已完成`);
     } catch (_) { /* Missing completion details should not produce a notification. */ }
+    finally { if (completionWatches.get(key) === watch) completionWatches.delete(key); }
   }
 
   function connectEvents(projectId) {
@@ -3496,12 +3562,12 @@ function renderWorkspace(view) {
   }
 
   async function refreshWorkspaceStatuses() {
-    if (!alive() || statusRefreshing) return;
+    if (!alive(true) || statusRefreshing) return;
     statusRefreshing = true;
     const versions = new Map(statusVersions);
     try {
       const result = await api("workspace/status", { silent: true });
-      if (!alive()) return;
+      if (!alive(true)) return;
       let changed = false;
       let selectedChanged = false;
       for (const [projectId, entry] of Object.entries(result.projects || {})) {
@@ -3772,6 +3838,7 @@ function renderWorkspace(view) {
   }
 
   function selectSession(projectId, sessionId) {
+    markSessionRead(projectId, sessionId);
     if (draftContextReady && state.projectId === projectId && state.sessionId === sessionId) return;
     saveDraft();
     saveConversationView();
@@ -4038,6 +4105,12 @@ function renderWorkspace(view) {
       state.projects = state.projects.filter((item) => item.id !== project.id);
       state.sessions.delete(project.id);
       state.errors.delete(project.id);
+      for (const key of workspaceUnreadCompletions) {
+        if (JSON.parse(key)[0] === project.id) {
+          const [, sessionId] = JSON.parse(key);
+          workspaceMarkSessionRead(project.id, sessionId);
+        }
+      }
       for (const key of conversationViews.keys()) {
         if (JSON.parse(key)[0] === project.id) conversationViews.delete(key);
       }
@@ -4181,6 +4254,7 @@ function renderWorkspace(view) {
     closeChangePopover();
     if (button.dataset.wspTab === "changes") state.selectedChange = null;
     state.tab = button.dataset.wspTab;
+    markVisibleSessionRead();
     workspaceSelection.tab = state.tab;
     scroll.scrollTop = 0;
     renderHeader(); renderMain(state.tab === "chat");
@@ -4380,8 +4454,9 @@ function renderWorkspace(view) {
   });
 
   const poll = setInterval(() => {
-    if (!alive()) return;
+    if (!alive(true)) return;
     refreshWorkspaceStatuses();
+    if (!alive()) return;
     if (!state.messagesLoaded || waitingForReply() || events?.readyState !== 1 || Date.now() - lastSelectedRefresh >= 15000)
       refreshSelected();
     if (Date.now() - lastSessionListRefresh > 15000) {
@@ -4393,6 +4468,10 @@ function renderWorkspace(view) {
   addCleanup(() => clearInterval(roundClockTick));
   window.addEventListener("pagehide", saveDraft);
   addCleanup(() => window.removeEventListener("pagehide", saveDraft));
+  window.addEventListener("focus", markVisibleSessionRead);
+  document.addEventListener("visibilitychange", markVisibleSessionRead);
+  addCleanup(() => window.removeEventListener("focus", markVisibleSessionRead));
+  addCleanup(() => document.removeEventListener("visibilitychange", markVisibleSessionRead));
   const reloadSonaModels = () => {
     workspaceModelCache.clear();
     if (alive()) refreshSidebarAccount();
@@ -4477,6 +4556,7 @@ function renderWorkspace(view) {
     resume() {
       if (disposed || !suspended) return;
       suspended = false;
+      markVisibleSessionRead();
       // Retain DOM, drafts, expanded projects and scroll positions; refresh in place.
       updateTrajectoryHeight();
       refreshSidebarAccount();

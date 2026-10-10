@@ -7,10 +7,25 @@ use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+mod desktop_settings;
+
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
 struct SidecarState(Mutex<Option<CommandChild>>);
+
+#[tauri::command]
+fn request_task_attention(window: tauri::WebviewWindow) -> Result<(), String> {
+    #[cfg(windows)]
+    if !window.is_focused().map_err(|error| error.to_string())? {
+        window
+            .request_user_attention(Some(tauri::UserAttentionType::Critical))
+            .map_err(|error| error.to_string())?;
+    }
+    #[cfg(not(windows))]
+    let _ = window;
+    Ok(())
+}
 
 #[tauri::command]
 async fn open_website_login(app: tauri::AppHandle, url: String) -> Result<(), String> {
@@ -25,7 +40,9 @@ async fn open_website_login(app: tauri::AppHandle, url: String) -> Result<(), St
         return Err("网站地址不能包含凭据".to_string());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        app.shell().open(url, None).map_err(|error| error.to_string())
+        app.shell()
+            .open(url, None)
+            .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -158,8 +175,21 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![open_website_login])
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .invoke_handler(tauri::generate_handler![
+            open_website_login,
+            desktop_settings::get_autostart,
+            desktop_settings::set_autostart,
+            request_task_attention,
+        ])
         .on_window_event(|window, event| {
+            #[cfg(windows)]
+            if matches!(event, tauri::WindowEvent::Focused(true)) {
+                let _ = window.request_user_attention(None);
+            }
             if matches!(
                 event,
                 tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
@@ -200,6 +230,9 @@ pub fn run() {
             std::fs::create_dir_all(&cache_dir)?;
             std::fs::create_dir_all(&log_dir)?;
             std::fs::create_dir_all(&state_dir)?;
+            if let Err(error) = desktop_settings::initialize(app.handle()) {
+                eprintln!("desktop: autostart setup failed: {error}");
+            }
 
             let config_path = config_dir.join("config.json");
             let records_dir = data_dir.join("records");
@@ -233,8 +266,8 @@ pub fn run() {
             let mut sidecar = app.shell().sidecar("sona-code-sidecar")?;
             let mut bundled_openspec = app.path().resource_dir()?.join("tools/openspec");
             if cfg!(debug_assertions) && !bundled_openspec.exists() {
-                bundled_openspec = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../build/openspec");
+                bundled_openspec =
+                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../build/openspec");
             }
             for key in [
                 "XDG_CONFIG_HOME",

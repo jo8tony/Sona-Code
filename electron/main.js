@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const net = require("node:net");
 const path = require("node:path");
+const { createDesktopSettings } = require("./desktop-settings.cjs");
 
 const origin = "http://127.0.0.1:8117";
 const workspaceUrl = `${origin}/__recorder/#/workspace`;
@@ -34,6 +35,9 @@ if (!app.requestSingleInstanceLock()) {
     const stateDir = path.join(dataRoot, "state");
     const logDir = path.join(cacheRoot, "logs");
     for (const dir of [dataRoot, cacheRoot, stateDir, logDir]) fs.mkdirSync(dir, { recursive: true });
+    const desktopSettings = createDesktopSettings(app, dataRoot);
+    try { desktopSettings.initialize(); }
+    catch (error) { console.error("desktop: autostart setup failed", error); }
 
     const iconPath = app.isPackaged
       ? path.join(process.resourcesPath, "icon.ico")
@@ -49,6 +53,18 @@ if (!app.requestSingleInstanceLock()) {
 
     const allowedSender = (event) => event.sender === window?.webContents
       && event.senderFrame?.url.startsWith(`${origin}/__recorder/`);
+    ipcMain.handle("sona:get-autostart", (event) => {
+      if (!allowedSender(event)) throw new Error("Invalid desktop request origin");
+      return desktopSettings.getAutostart();
+    });
+    ipcMain.handle("sona:set-autostart", (event, enabled) => {
+      if (!allowedSender(event)) throw new Error("Invalid desktop request origin");
+      return desktopSettings.setAutostart(enabled);
+    });
+    ipcMain.handle("sona:request-task-attention", (event) => {
+      if (!allowedSender(event)) throw new Error("Invalid desktop request origin");
+      if (process.platform === "win32" && !window.isFocused()) window.flashFrame(true);
+    });
     ipcMain.handle("sona:choose-directory", async (event, options = {}) => {
       if (!allowedSender(event)) throw new Error("Invalid desktop request origin");
       const result = await dialog.showOpenDialog(window, {
@@ -85,6 +101,7 @@ if (!app.requestSingleInstanceLock()) {
     window.on("close", (event) => {
       if (!quitting) { event.preventDefault(); window.hide(); }
     });
+    window.on("focus", () => window.flashFrame(false));
     window.webContents.on("will-navigate", (event, url) => {
       if (!url.startsWith(`${origin}/__recorder/`)) event.preventDefault();
     });
