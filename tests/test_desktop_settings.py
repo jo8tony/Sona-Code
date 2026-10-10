@@ -184,6 +184,15 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), "sona-desktop-package-test-")
         if (scenario === "stale" && file === "desktop-settings.cjs") fs.appendFileSync(destination, "\n// Old build\n");
       }
       await asar.createPackage(source, path.join(out, "resources", "app.asar"));
+      const bundle = path.join(out, "resources", "tools", "openspec"), files = {};
+      for (const relative of ["bin/openspec.exe", "bin/sona-command-runner.exe", "runtime/node.exe",
+        "runtime/offline.cjs", "defaults/openspec-config.json",
+        "package/node_modules/@fission-ai/openspec/bin/openspec.js"]) {
+        const target = path.join(bundle, relative), data = Buffer.from("fixture: " + relative);
+        fs.mkdirSync(path.dirname(target), {recursive: true}); fs.writeFileSync(target, data);
+        files[relative] = require("node:crypto").createHash("sha256").update(data).digest("hex");
+      }
+      fs.writeFileSync(path.join(bundle, "manifest.json"), JSON.stringify({platform: "windows_x64", files}));
       if (scenario === "current") verifyDesktopPackage(out);
       else assert.throws(() => verifyDesktopPackage(out), scenario === "missing" ? /缺少.*desktop-settings/ : /desktop-settings.*源码不同/);
     }

@@ -8,7 +8,7 @@ $KitDir = (Resolve-Path -LiteralPath $Kit).Path
 $Manifest = Get-Content -LiteralPath (Join-Path $KitDir "manifest.json") -Raw | ConvertFrom-Json
 if ($Manifest.platform -ne "windows-x64") { throw "This kit targets Windows x64" }
 if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -ne "X64") { throw "Windows x64 required" }
-$PythonVersion = & $Python -c 'import sys; print("%s.%s" % sys.version_info[:2])'
+$PythonVersion = & $Python -c 'import sys; print(str(sys.version_info.major)+chr(46)+str(sys.version_info.minor))'
 if ($LASTEXITCODE -ne 0 -or $PythonVersion.Trim() -ne ($Manifest.python -join ".")) { throw "Use Python $($Manifest.python -join '.') x64" }
 & $Python (Join-Path $PSScriptRoot "offline-kit.py") --kit $KitDir
 if ($LASTEXITCODE -ne 0) { throw "Offline kit verification failed" }

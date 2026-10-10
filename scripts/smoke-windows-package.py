@@ -288,6 +288,10 @@ def main() -> None:
                 "XDG_STATE_HOME": str(temp / "state"),
             }
         )
+        openspec = args.recorder.parent / "tools" / "openspec"
+        if (openspec / "manifest.json").is_file():
+            # Match the installed shell's managed command-runner environment.
+            env["SONACODE_BUNDLED_OPENSPEC"] = str(openspec)
         env.pop("BUN_BE_BUN", None)
         help_result = subprocess.run(
             [str(args.opencode), "--help"], env=env, capture_output=True,

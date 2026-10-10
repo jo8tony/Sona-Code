@@ -72,6 +72,11 @@ class CommandManager:
         bundle = Path(os.environ.get("SONACODE_BUNDLED_OPENSPEC", Path(__file__).resolve().parents[2] / "build/openspec"))
         helper = bundle / "bin" / ("sona-command-runner.exe" if os.name == "nt" else "sona-command-runner")
         if not helper.is_file():
+            if os.environ.get("SONACODE_BUNDLED_OPENSPEC"):
+                raise HTTPException(503, "客户端缺少 AI 命令启动器，无法启动对话。"
+                    "文件可能被安全软件隔离，或安装包资源不完整。"
+                    "请检查安全软件的隔离记录，完成安全复核后使用完整安装包修复。"
+                    f"缺失文件：{helper}")
             raise HTTPException(503, "Managed command runner missing; run scripts/prepare-openspec.py")
         return helper
 

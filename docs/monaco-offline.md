@@ -47,6 +47,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-offline-window
 
 修改业务代码后可以复用依赖包；修改 `package-lock.json`、`pyproject.toml` 或 OpenCode/OpenSpec 的清单、构建脚本与启动器时，需要重新在外网准备依赖包。当前依赖包仅适用 Windows x64 与相同 Python 次版本；macOS/ARM64 需在对应平台准备。
 
+## 安装后提示命令启动器缺失
+
+AI 对话需要安装目录内 `resources/tools/openspec/bin/sona-command-runner.exe`。如果提示“客户端缺少 AI 命令启动器”或旧版的 `Managed command runner missing`，先核对该文件及安全软件的隔离记录。安全软件隔离该文件时，需要完成安全复核，再使用资源完整的安装包修复；仅重启应用或停止防护不会补回已经缺失的文件。安装用户无需运行仓库里的 `scripts/prepare-openspec.py`。
+
+Electron 打包结束时会检查 AI 命令启动器、OpenSpec 运行时及资源清单中的全部 SHA-256。文件缺失、清单遗漏启动器或内容损坏都会终止打包。该检查不能替代安装后安全软件的鉴定。
+
 ## 许可证与校验
 
 Monaco 使用 MIT，允许商业使用，随发布保留 `LICENSE.txt` 和 `ThirdPartyNotices.txt`。上游第三方声明随静态资源分发。完整应用其他依赖的许可证按原有项目声明保留。

@@ -64,7 +64,8 @@ def prepare(destination: Path, python: str) -> None:
                "binaries/opencode.exe": ROOT / "src-tauri/binaries/opencode-x86_64-pc-windows-msvc.exe",
                "tools/node.exe": Path(node), "electron-builder-cache": ROOT / ".runtime/electron-builder-cache"}
     required = [ROOT / "node_modules/electron/dist/electron.exe", ROOT / "node_modules/esbuild/bin/esbuild",
-                ROOT / "build/openspec/manifest.json", sources["binaries/opencode.exe"], sources["electron-builder-cache"]]
+                ROOT / "build/openspec/manifest.json", ROOT / "build/openspec/bin/sona-command-runner.exe",
+                sources["binaries/opencode.exe"], sources["electron-builder-cache"]]
     if any(not path.exists() for path in required):
         raise RuntimeError("Finish npm ci and the Windows Electron build with ELECTRON_BUILDER_CACHE=.runtime/electron-builder-cache first")
     destination.mkdir(parents=True)
