@@ -284,7 +284,9 @@ Windows 构建会根据 `packaging/opencode.json` 下载并校验固定的 OpenC
 
 桌面版配置文件位于 `%APPDATA%\SonaCode\config.json`，记录目录位于 `%APPDATA%\SonaCode\records`。新版使用独立的 SonaCode 数据目录，不读取旧版目录。
 
-打包后的桌面版首次运行默认开启开机自启，可在应用设置中关闭；选择保存在同目录的 `desktop-settings.json`，后续启动会保留。Windows Electron 安装版和解压目录版使用当前 EXE 路径，electron-builder 单文件便携版使用原始便携 EXE 路径，避免指向临时解压目录。移动或重命名绿色版后，运行一次应用即可更新自启路径。
+打包后的桌面版首次运行默认开启开机自启，可在应用设置中关闭；选择保存在同目录的 `desktop-settings.json`，后续启动会保留。Windows Electron 安装版和解压目录版使用当前 EXE 路径，electron-builder 单文件便携版使用原始便携 EXE 路径，避免指向临时解压目录。自启路径在写入和读取时均加双引号，兼容 Electron 36.2.0 及包含空格、中文的 EXE 路径。移动或重命名绿色版后，运行一次应用即可更新自启路径。
+
+Electron 打包会检查 `app.asar` 中的启动、自启和 preload 模块是否与当前源码一致。内网重新打包后，也可在项目目录运行 `node electron/verify-package.cjs dist/electron/win-unpacked` 检查实际输出。自启设置失败时，错误会附带具体原因和诊断文件路径；Windows 文件位于 `%LOCALAPPDATA%\SonaCode\logs\autostart-diagnostics.json`，记录实际运行版本、目标 EXE、回滚前的启动项状态及回滚结果。
 
 ## 目录结构
 

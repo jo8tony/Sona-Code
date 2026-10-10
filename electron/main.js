@@ -35,7 +35,7 @@ if (!app.requestSingleInstanceLock()) {
     const stateDir = path.join(dataRoot, "state");
     const logDir = path.join(cacheRoot, "logs");
     for (const dir of [dataRoot, cacheRoot, stateDir, logDir]) fs.mkdirSync(dir, { recursive: true });
-    const desktopSettings = createDesktopSettings(app, dataRoot);
+    const desktopSettings = createDesktopSettings(app, dataRoot, process, path.join(logDir, "autostart-diagnostics.json"));
     try { desktopSettings.initialize(); }
     catch (error) { console.error("desktop: autostart setup failed", error); }
 

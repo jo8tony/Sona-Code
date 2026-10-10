@@ -4,6 +4,7 @@ const path = require("node:path");
 
 module.exports = async ({ appOutDir, packager, electronPlatformName }) => {
   if (electronPlatformName !== "win32") return;
+  require("./verify-package.cjs").verifyDesktopPackage(appOutDir);
 
   // signAndEditExecutable is disabled because electron-builder's winCodeSign
   // archive requires symlink privileges on some Windows build machines. Its

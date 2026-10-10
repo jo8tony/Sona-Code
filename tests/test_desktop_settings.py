@@ -17,7 +17,8 @@ const calls = [], app = {isPackaged: true,
 try {
   const settings = createDesktopSettings(app, root); settings.initialize();
   assert.equal(enabled, true); assert.equal(settings.getAutostart(), true);
-  assert.equal(calls[0].path, process.execPath); assert.deepEqual(calls[0].args, []);
+  assert.equal(calls[0].path, process.platform === "win32" ? `"${process.execPath}"` : process.execPath);
+  assert.deepEqual(calls[0].args, []);
   assert.equal(settings.setAutostart(false), false);
   createDesktopSettings(app, root).initialize(); assert.equal(enabled, false, "Restart must preserve opt-out");
   assert.throws(() => settings.setAutostart("true")); assert.equal(enabled, false);
@@ -38,7 +39,7 @@ try {
 ''')
 
 
-def test_windows_autostart_custom_name_spaces_and_portable_launcher():
+def test_windows_electron36_autostart_custom_name_spaces_and_portable_launcher():
     run_node(r'''
 const fs = require("node:fs"), os = require("node:os"), path = require("node:path"), assert = require("node:assert/strict");
 const {createDesktopSettings} = require("./electron/desktop-settings.cjs");
@@ -56,8 +57,10 @@ const app = {isPackaged: true,
   setLoginItemSettings(settings) {
     calls.push(settings);
     if (refuseWrite) return;
+    // Electron 36 writes path verbatim, so an unquoted Run value is parsed incorrectly.
+    const launchPath = settings.path.match(/^"([^"]+)"/)?.[1] || settings.path.split(" ")[0];
     if (settings.openAtLogin) entries.set(settings.name, {name: settings.name, scope: "user",
-      path: settings.path, args: settings.args, enabled: settings.enabled});
+      path: launchPath, args: settings.args, enabled: settings.enabled});
     else entries.delete(settings.name);
   },
 };
@@ -65,7 +68,7 @@ try {
   const settings = createDesktopSettings(app, root, runtime);
   settings.initialize();
   assert.equal(settings.getAutostart(), true, "Custom name and spaced path must not cause a false failure");
-  assert.equal(calls[0].path, runtime.execPath); assert.deepEqual(calls[0].args, []);
+  assert.equal(calls[0].path, `"${runtime.execPath}"`); assert.deepEqual(calls[0].args, []);
   assert.equal(JSON.parse(fs.readFileSync(path.join(root, "desktop-settings.json"))).autostart, true);
   // Neither an unrelated entry nor another command for this executable is our setting.
   entries.get("Sona Code").enabled = false;
@@ -81,6 +84,11 @@ try {
   assert.equal(settings.setAutostart(false), false, "An unrelated enabled entry must not prevent disabling ours");
   refuseWrite = true;
   assert.throws(() => settings.setAutostart(true), /系统未应用/);
+  const diagnostic = JSON.parse(fs.readFileSync(path.join(root, "autostart-diagnostics.json")));
+  assert.equal(diagnostic.implementation, "autostart-v2"); assert.equal(diagnostic.stage, "apply");
+  assert.equal(diagnostic.requested, true); assert.equal(diagnostic.previous, false);
+  assert.equal(diagnostic.targetPath, runtime.execPath); assert.deepEqual(diagnostic.launchItems, []);
+  assert.equal(diagnostic.rollbackError, null);
   assert.equal(settings.getAutostart(), false);
   assert.equal(JSON.parse(fs.readFileSync(path.join(root, "desktop-settings.json"))).autostart, false);
   refuseWrite = false;
@@ -90,18 +98,101 @@ try {
   runtime.env.PORTABLE_EXECUTABLE_FILE = "D:\\绿色软件\\Sona Code Portable.exe";
   const portable = createDesktopSettings(app, root, runtime);
   portable.setAutostart(true);
-  assert.equal(calls.at(-1).path, runtime.env.PORTABLE_EXECUTABLE_FILE);
+  assert.equal(calls.at(-1).path, `"${runtime.env.PORTABLE_EXECUTABLE_FILE}"`);
   assert.equal(portable.getAutostart(), true);
   runtime.execPath = "C:\\Users\\用户\\AppData\\Local\\Temp\\sona-456\\Sona Code.exe";
   const restarted = createDesktopSettings(app, root, runtime);
   restarted.initialize(); assert.equal(restarted.getAutostart(), true);
-  assert.equal(calls.at(-1).path, runtime.env.PORTABLE_EXECUTABLE_FILE, "Portable restart must retain the original launcher");
+  assert.equal(calls.at(-1).path, `"${runtime.env.PORTABLE_EXECUTABLE_FILE}"`, "Portable restart must retain the original launcher");
   restarted.setAutostart(false);
   restarted.initialize(); assert.equal(restarted.getAutostart(), false);
 } finally {
   assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
   fs.rmSync(root, {recursive: true, force: true});
 }
+''')
+
+
+def test_electron_autostart_logs_failed_state_before_rollback_and_keeps_original_error():
+    run_node(r'''
+const fs = require("node:fs"), os = require("node:os"), path = require("node:path"), assert = require("node:assert/strict");
+const {createDesktopSettings} = require("./electron/desktop-settings.cjs");
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "sona-desktop-diagnostics-test-"));
+const runtime = {platform: "win32", execPath: "C:\\Apps\\Sona Code.exe", env: {}, versions: {electron: "44.4.5"}};
+const childProcess = require("node:child_process"), originalSpawn = childProcess.spawnSync;
+childProcess.spawnSync = (command, args, options) => {
+  assert.equal(item?.enabled, false, "Raw registry state must be captured before rollback");
+  assert.equal(command, "powershell.exe"); assert.equal(options.windowsHide, true); assert.equal(options.timeout, 5000);
+  const script = Buffer.from(args.at(-1), "base64").toString("utf16le");
+  assert(script.includes("OpenSubKey") && script.includes("QueryValues"));
+  assert(!script.includes("SetValue") && !script.includes("DeleteValue"), "Registry diagnostics must be read-only");
+  return {status: 0, stdout: JSON.stringify({run: {exists: true, value: `"${runtime.execPath}"`},
+    startupApproved: {exists: true, value: [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]}})};
+};
+let item = null, writes = 0;
+const app = {isPackaged: true, getVersion: () => "2.3.1",
+  getLoginItemSettings() {return {openAtLogin: false, executableWillLaunchAtLogin: false, launchItems: item ? [item] : []};},
+  setLoginItemSettings(options) {
+    if (options.openAtLogin) item = {name: "Sona Code", scope: "user", path: runtime.execPath, args: [], enabled: false};
+    else item = null;
+    writes++;
+  },
+};
+try {
+  const settings = createDesktopSettings(app, root, runtime);
+  assert.throws(() => settings.initialize(), /启动项仍被系统禁用.*autostart-v2.*诊断日志/);
+  assert.equal(item, null, "Rollback removes the failed startup entry");
+  const report = JSON.parse(fs.readFileSync(path.join(root, "autostart-diagnostics.json")));
+  assert.equal(report.launchItems[0].enabled, false, "Diagnostics retain the state before rollback");
+  assert.equal(report.electronVersion, "44.4.5"); assert.equal(report.appVersion, "2.3.1");
+  assert.equal(report.launchItems[0].argsCount, 0); assert.equal(report.rollbackError, null);
+  assert.equal(report.registry.run.exists, true); assert.equal(report.registry.startupApproved.value[0], 3);
+  assert.equal(fs.existsSync(path.join(root, "desktop-settings.json")), false);
+  app.setLoginItemSettings = () => {throw Error(++writes % 2 === 1 ? "Apply denied" : "Rollback denied");};
+  childProcess.spawnSync = () => ({status: 1, stderr: "PowerShell blocked"});
+  writes = 0;
+  assert.throws(() => settings.setAutostart(true), /Apply denied/);
+  const failed = JSON.parse(fs.readFileSync(path.join(root, "autostart-diagnostics.json")));
+  assert.equal(failed.error, "Apply denied"); assert.equal(failed.rollbackError, "Rollback denied");
+  assert.equal(failed.registry.error, "PowerShell blocked");
+} finally {
+  childProcess.spawnSync = originalSpawn;
+  assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
+  fs.rmSync(root, {recursive: true, force: true});
+}
+''')
+
+
+def test_electron_package_verification_rejects_missing_or_stale_autostart_code():
+    run_node(r'''
+const fs = require("node:fs"), os = require("node:os"), path = require("node:path"), assert = require("node:assert/strict");
+let asar;
+try {asar = require("@electron/asar");}
+catch (error) {if (error.code === "MODULE_NOT_FOUND") process.exit(0); throw error;}
+const {verifyDesktopPackage} = require("./electron/verify-package.cjs");
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "sona-desktop-package-test-"));
+(async () => {
+  try {
+    for (const scenario of ["current", "missing", "stale"]) {
+      const source = path.join(root, scenario, "source"), out = path.join(root, scenario, "output");
+      fs.mkdirSync(path.join(source, "electron"), {recursive: true});
+      fs.mkdirSync(path.join(out, "resources"), {recursive: true});
+      for (const file of ["main.js", "desktop-settings.cjs", "preload.js"]) {
+        if (scenario === "missing" && file === "desktop-settings.cjs") continue;
+        const destination = path.join(source, "electron", file);
+        fs.copyFileSync(path.join("electron", file), destination);
+        if (scenario === "stale" && file === "desktop-settings.cjs") fs.appendFileSync(destination, "\n// Old build\n");
+      }
+      await asar.createPackage(source, path.join(out, "resources", "app.asar"));
+      if (scenario === "current") verifyDesktopPackage(out);
+      else assert.throws(() => verifyDesktopPackage(out), scenario === "missing" ? /缺少.*desktop-settings/ : /desktop-settings.*源码不同/);
+    }
+    assert(fs.readFileSync("electron/after-pack.cjs", "utf8").includes("verifyDesktopPackage(appOutDir)"));
+  } finally {
+    assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
+    fs.rmSync(root, {recursive: true, force: true});
+  }
+})().catch(error => {console.error(error); process.exitCode = 1;});
 ''')
 
 
