@@ -102,7 +102,10 @@ def delete_project(body: DeleteProjectBody, request: Request):
 
 @router.delete("/terminal/sessions/{session_id}")
 async def delete_session(session_id: str, request: Request):
-    ok = await _manager(request).kill(session_id)
+    try:
+        ok = await _manager(request).kill(session_id)
+    except TerminalError as exc:
+        return _err(exc)
     if not ok:
         return JSONResponse(status_code=404, content={"detail": "session not found"})
     return {"ok": True, "deleted": 1}

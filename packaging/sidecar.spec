@@ -9,7 +9,8 @@ from PyInstaller.utils.hooks import collect_submodules
 ROOT = Path(SPEC).resolve().parent.parent
 STATIC_DIR = ROOT / "sona_code" / "web" / "static"
 
-datas = [(str(STATIC_DIR), "sona_code/web/static")]
+datas = [(str(STATIC_DIR), "sona_code/web/static"),
+         (str(ROOT / "sona_code/workspace/managed-shell.js"), "sona_code/workspace")]
 hiddenimports = collect_submodules("uvicorn")
 binaries = []
 

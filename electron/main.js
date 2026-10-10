@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const net = require("node:net");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const { createDesktopSettings } = require("./desktop-settings.cjs");
 
 const origin = "http://127.0.0.1:8117";
@@ -15,6 +16,9 @@ let tray;
 let sidecar;
 let sidecarError;
 let quitting = false;
+let quitReady = false;
+let shutdownPromise;
+const shutdownToken = crypto.randomBytes(32).toString("hex");
 
 function showWindow() {
   if (!window || window.isDestroyed()) return;
@@ -124,6 +128,7 @@ if (!app.requestSingleInstanceLock()) {
     }
     Object.assign(env, {
       PYTHONIOENCODING: "utf-8", SONACODE_DESKTOP_INSTANCE_ID: instanceId,
+      SONACODE_SHUTDOWN_TOKEN: shutdownToken,
       SONACODE_BUNDLED_OPENCODE: opencodeFile,
       SONACODE_BUNDLED_OPENSPEC: app.isPackaged
         ? path.join(process.resourcesPath, "tools", "openspec")
@@ -143,6 +148,7 @@ if (!app.requestSingleInstanceLock()) {
         throw new Error("127.0.0.1:8117 已被其他程序占用。请退出占用程序后重试。");
       }
       if (existing.state === "free") {
+        if (quitting) return;
         const log = fs.openSync(path.join(logDir, "electron-desktop.log"), "a");
         try {
           sidecar = spawn(sidecarFile, [
@@ -163,20 +169,53 @@ if (!app.requestSingleInstanceLock()) {
           sidecar = null;
         }
       }
-      await window.loadURL(workspaceUrl);
+      if (!quitting) await window.loadURL(workspaceUrl);
     } catch (error) {
       dialog.showErrorBox("Sona Code 启动失败", `${error}\n诊断日志：${path.join(logDir, "electron-desktop.log")}`);
       app.quit();
     }
   }).catch((error) => { dialog.showErrorBox("Sona Code 启动失败", String(error)); app.quit(); });
 
-  app.on("before-quit", () => {
+  app.on("before-quit", (event) => {
     quitting = true;
-    if (sidecar?.pid) {
-      spawnSync("taskkill", ["/F", "/T", "/PID", String(sidecar.pid)], { windowsHide: true, timeout: 10000 });
-      sidecar = null;
-    }
+    if (quitReady) return;
+    event.preventDefault();
+    shutdownPromise ||= stopBackend().then(() => {
+      quitReady = true;
+      app.quit();
+    }).catch((error) => {
+      shutdownPromise = null;
+      quitting = false;
+      dialog.showErrorBox("Sona Code 退出失败", String(error));
+    });
   });
+}
+
+async function stopBackend() {
+  const child = sidecar;
+  if (!child?.pid) return;
+  const exited = () => child.exitCode !== null || child.signalCode !== null;
+  if (!exited()) {
+    await new Promise((resolve) => {
+      const request = http.request(`${origin}/__recorder/api/shutdown`, {
+        method: "POST", timeout: 20000,
+        headers: { Authorization: `Bearer ${shutdownToken}`, "Content-Length": "0" },
+      }, (response) => { response.resume(); response.on("end", resolve); });
+      request.on("timeout", () => request.destroy());
+      request.on("error", resolve);
+      request.end();
+    });
+    const deadline = Date.now() + 5000;
+    while (!exited() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  if (!exited()) {
+    const result = spawnSync("taskkill", ["/F", "/T", "/PID", String(child.pid)], { windowsHide: true, timeout: 10000 });
+    if (result.status !== 0 && processIsAlive(child.pid)) throw new Error("后台服务无法终止，请重试退出。");
+    const deadline = Date.now() + 3000;
+    while (processIsAlive(child.pid) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+    if (processIsAlive(child.pid)) throw new Error("后台服务仍在退出，请重试。");
+  }
+  sidecar = null;
 }
 
 function requestJson(route) {
@@ -256,6 +295,7 @@ async function stopOrphanedBackend(instanceId) {
 async function waitForBackend(instanceId) {
   const deadline = Date.now() + 60000;
   while (Date.now() < deadline) {
+    if (quitting) throw new Error("应用正在退出");
     if ((await requestJson("ping"))?.instance_id === instanceId) return;
     if (sidecarError) throw sidecarError;
     if (sidecar && sidecar.exitCode !== null) throw new Error(`后端进程退出：${sidecar.exitCode}`);

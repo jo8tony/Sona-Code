@@ -9,6 +9,7 @@ import secrets
 import signal
 import socket
 import subprocess
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ from typing import AsyncIterator, Awaitable, Callable
 import httpx
 
 from sona_code.config import AppConfig
+from sona_code.processes import ProcessScope
 from sona_code.workspace.diagnostics import (
     ProcessOutput, StartupRedactor, failure_detail, is_locale_error,
 )
@@ -45,6 +47,8 @@ class OpenCodeServer:
     client: httpx.AsyncClient
     port: int
     output: ProcessOutput | None = None
+    scope: ProcessScope | None = None
+    project: str | None = None
 
 
 def _free_port() -> int:
@@ -67,6 +71,10 @@ class WorkspaceManager:
         self._project_changes: dict[str, asyncio.Lock] = {}
         self._changing: set[str] = set()
         self.environment = None
+        self.commands = None
+        self.ledger = None
+        self.closing = False
+        self._stopping: set[tuple[str, str]] = set()
 
     async def ensure(self, project: str, config: AppConfig) -> OpenCodeServer:
         path = str(Path(project).expanduser().resolve())
@@ -74,10 +82,14 @@ class WorkspaceManager:
             return await self._ensure(path, config)
 
     async def _ensure(self, project: str, config: AppConfig) -> OpenCodeServer:
+        if self.closing:
+            raise WorkspaceError("应用正在退出", 503)
         path = str(Path(project).expanduser().resolve())
         if not Path(path).is_dir():
             raise WorkspaceError(f"项目目录不存在：{path}", 404)
         async with self._lock:
+            if self.closing:
+                raise WorkspaceError("应用正在退出", 503)
             if self._config_supplier is not None:
                 config = self._config_supplier()
             existing = self._servers.get(path)
@@ -97,6 +109,8 @@ class WorkspaceManager:
             existing = self._servers.pop(path, None)
             if existing:
                 await self._close_server(existing)
+            if self.commands is not None:
+                await self.commands.stop_owner(path)
 
             resolution = await asyncio.to_thread(resolve_opencode, config)
             if not resolution.path:
@@ -119,11 +133,16 @@ class WorkspaceManager:
                 | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             ) if os.name == "nt" else 0
             for attempt in range(3):
+                if self.closing:
+                    raise WorkspaceError("应用正在退出", 503)
                 port = _free_port()
+                launch_env = self.commands.environment(path, path, env) if self.commands is not None else env
+                redactor = StartupRedactor(config, launch_env)
                 argv = [*_build_argv(executable, []), "serve", "--hostname", "127.0.0.1", "--port", str(port)]
                 try:
-                    process = subprocess.Popen(
-                        argv, cwd=path, env=env, stdout=subprocess.PIPE, bufsize=0,
+                    scope = ProcessScope() if self.commands is not None else None
+                    process = (scope.spawn if scope else subprocess.Popen)(
+                        argv, cwd=path, env=launch_env, stdout=subprocess.PIPE, bufsize=0,
                         stderr=subprocess.STDOUT, creationflags=creationflags,
                         start_new_session=os.name != "nt",
                     )
@@ -137,10 +156,12 @@ class WorkspaceManager:
                     base_url=f"http://127.0.0.1:{port}",
                     auth=("sona-code", password), trust_env=False, timeout=20,
                 )
-                server = OpenCodeServer(process, client, port, output)
+                server = OpenCodeServer(process, client, port, output, scope, path)
                 ready = False
                 try:
                     for _ in range(50):
+                        if self.closing:
+                            raise WorkspaceError("应用正在退出", 503)
                         if process.poll() is not None:
                             break
                         try:
@@ -181,6 +202,8 @@ class WorkspaceManager:
             raise WorkspaceError(last_detail, 503)
         finally:
             self._starting.pop(path, None)
+            if self.commands is not None and path not in self._servers:
+                await self.commands.stop_owner(path)
 
     async def _wait_for_starts(self) -> None:
         """Called with the lifecycle lock held so no new starts can enter."""
@@ -193,8 +216,19 @@ class WorkspaceManager:
     ) -> object:
         # Exclude skill changes during task dispatch while keeping project tasks parallel.
         if method == "POST" and endpoint.endswith(("/prompt_async", "/command", "/shell", "/summarize")):
+            session = endpoint.split("/")[2]
+            path = str(Path(project).resolve())
+            if self.closing or (path, session) in self._stopping:
+                raise WorkspaceError("会话正在停止或应用正在退出", 409)
+            if self.ledger is not None:
+                self.ledger.begin(path, session)
             async with self.task_dispatch(project):
-                return await self._request(project, config, method, endpoint, body=body, params=params)
+                try:
+                    return await self._request(project, config, method, endpoint, body=body, params=params)
+                except BaseException:
+                    if self.ledger is not None:
+                        self.ledger.finish(path, session, "interrupted")
+                    raise
         return await self._request(project, config, method, endpoint, body=body, params=params)
 
     @asynccontextmanager
@@ -280,8 +314,11 @@ class WorkspaceManager:
             except HistoryNotFound as exc:
                 raise WorkspaceError("会话不存在", 404) from exc
             if snapshot is not None:
-                return snapshot
+                return self._annotate(project, endpoint, snapshot)
         server = await self.ensure(project, config)
+        if self.closing or (method == "POST" and endpoint.endswith(("/prompt_async", "/command", "/shell", "/summarize"))
+                            and (path, endpoint.split("/")[2]) in self._stopping):
+            raise WorkspaceError("会话正在停止或应用正在退出", 409)
         try:
             response = await server.client.request(
                 method, endpoint, params={"directory": project, **(params or {})}, json=body,
@@ -295,7 +332,7 @@ class WorkspaceManager:
         if response.status_code == 204 or not response.content:
             return {"ok": True}
         try:
-            return response.json()
+            return self._annotate(project, endpoint, response.json())
         except ValueError as exc:
             raise WorkspaceError("OpenCode 返回了无法解析的数据", 502) from exc
 
@@ -359,16 +396,92 @@ class WorkspaceManager:
             await self._wait_for_starts()
             servers = list(self._servers.values())
             self._servers.clear()
-            for server in servers:
+            results = await asyncio.gather(*(self._close_server(server) for server in servers), return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+
+    def _annotate(self, project: str, endpoint: str, value):
+        if self.ledger is not None and endpoint.startswith("/session/") and endpoint.endswith("/message") and isinstance(value, list):
+            return self.ledger.annotate(project, endpoint.split("/")[2], value)
+        return value
+
+    async def stop_session(self, project: str, config: AppConfig, session: str) -> dict:
+        path = str(Path(project).resolve())
+        key = (path, session)
+        self._stopping.add(key)
+        try:
+            server = await self.ensure(path, config)
+            try:
+                await self._abort_native(server, session)
+            except (httpx.HTTPError, WorkspaceError, ValueError) as exc:
+                if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
+                    raise WorkspaceError("OpenCode 无法停止该会话", exc.response.status_code) from exc
+                # An unresponsive native runner must not keep executing after
+                # Stop. Escalate to the owned project server as a last resort.
+                self._servers.pop(path, None)
                 await self._close_server(server)
+                raise WorkspaceError("会话已强制停止，项目服务已关闭，可重新发送任务", 503) from exc
+            return {"ok": True}
+        finally:
+            self._stopping.discard(key)
+            if self.commands is not None:
+                self.commands.blocked.discard(key)
+
+    async def _abort_native(self, server: OpenCodeServer, session: str) -> None:
+        path = server.project
+        if self.ledger is not None:
+            self.ledger.finish(path, session, "stopped")
+        if self.commands is not None:
+            self.commands.blocked.add((path, session))
+        try:
+            response = await server.client.post(f"/session/{session}/abort", params={"directory": path}, json={}, timeout=5)
+        finally:
+            if self.commands is not None:
+                await self.commands.stop_session(path, session)
+        response.raise_for_status()
+        # V1 abort may return before finalizers have published idle.
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            response = await server.client.get("/session/status", params={"directory": path}, timeout=min(2, max(.1, deadline - time.monotonic())))
+            response.raise_for_status()
+            statuses = response.json()
+            if not isinstance(statuses, dict):
+                raise WorkspaceError("会话状态无法确认", 503)
+            if statuses.get(session, {}).get("type", "idle") == "idle":
+                return
+            await asyncio.sleep(.1)
+        raise WorkspaceError("会话停止超时", 503)
 
     async def _close_server(self, server: OpenCodeServer) -> None:
         try:
-            await server.client.aclose()
+            if self.commands is not None and server.project:
+                try:
+                    response = await server.client.get("/session/status", params={"directory": server.project}, timeout=2)
+                    response.raise_for_status()
+                    statuses = response.json()
+                    if not isinstance(statuses, dict) or not all(isinstance(status, dict) for status in statuses.values()):
+                        raise ValueError("Invalid native session statuses")
+                    await asyncio.gather(*(self._abort_native(server, session) for session, status in statuses.items()
+                                           if status.get("type") != "idle"), return_exceptions=True)
+                except (httpx.HTTPError, ValueError):
+                    logger.warning("Native session cleanup unavailable for %s", server.project)
         finally:
             try:
-                await self._stop_process(server.process)
+                try:
+                    if self.commands is not None and server.project:
+                        await self.commands.stop_owner(server.project)
+                finally:
+                    try:
+                        await server.client.aclose()
+                    finally:
+                        if server.scope is not None:
+                            await asyncio.to_thread(server.scope.close)
+                        else:
+                            await self._stop_process(server.process)
             finally:
+                if self.ledger is not None and server.project:
+                    self.ledger.finish_project(server.project)
                 if server.output is not None:
                     await asyncio.to_thread(server.output.close)
 

@@ -5,13 +5,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import secrets
+import time
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from sona_code.admin.api import router as admin_router
 from sona_code.admin.skills import SkillStore
@@ -22,7 +25,7 @@ from sona_code.openspec.projects import OpenSpecProjects
 from sona_code.openspec.bundle import OpenSpecError
 from sona_code.config import CONFIG_PATH, AppConfig, resolved_records_dir
 from sona_code.proxy.client import UpstreamClient
-from sona_code.proxy.handler import proxy_endpoint
+from sona_code.proxy.handler import proxy_endpoint, drain_recordings
 from sona_code.recording.store import CallStore
 from sona_code.terminal import TerminalManager
 from sona_code.terminal.projects import TerminalProjectStore
@@ -32,6 +35,8 @@ from sona_code.workspace.routes import router as workspace_router, configure_wor
 from sona_code.workspace.queue import WorkspaceQueue
 from sona_code.sona_site import SonaSiteError, SonaSiteManager
 from sona_code.workspace.manager import WorkspaceError
+from sona_code.workspace.commands import CommandManager
+from sona_code.workspace.lifecycle import ExecutionLedger
 from sona_code.admin.sona_routes import router as sona_router
 
 logger = logging.getLogger("sona_code")
@@ -68,6 +73,23 @@ class NoCacheStaticFiles(StaticFiles):
         return resp
 
 
+class ShutdownGate:
+    """Reject new requests during exit without wrapping streaming responses."""
+
+    def __init__(self, app: ASGIApp, runtime: "RuntimeState", shutdown_path: str):
+        self.app = app
+        self.runtime = runtime
+        self.shutdown_path = shutdown_path
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (scope["type"] == "http" and self.runtime.closing
+                and scope["path"] != self.shutdown_path):
+            response = JSONResponse(status_code=503, content={"detail": "应用正在退出"})
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 class RuntimeState:
     """运行时共享状态：配置、上游客户端、落盘存储。"""
 
@@ -84,6 +106,13 @@ class RuntimeState:
         self.sona_site.startup_refreshing = (
             config.model_settings.source == "sona" and self.sona_site.session(config.sona_site) is not None)
         self.workspace = WorkspaceManager(self.provider_config)
+        self.ledger = ExecutionLedger(config_path)
+        self.commands = CommandManager(self.ledger, config.server.port)
+        self.workspace.commands = self.commands
+        self.workspace.ledger = self.ledger
+        self.terminal.commands = self.commands
+        self.closing = False
+        self._close_task = None
         self.workspace_queue = WorkspaceQueue(config_path)
         self.skills = SkillStore()
         self.openspec = OpenSpecProjects(config_path)
@@ -148,9 +177,30 @@ class RuntimeState:
             await self.workspace.shutdown()
 
     async def aclose(self) -> None:
-        await self.workspace_queue.shutdown()
-        await self.workspace.shutdown()
-        await self.upstream_client.aclose()
+        if self._close_task is None:
+            self.closing = True
+            self.workspace.closing = True
+            self.terminal.closing = True
+            self.commands.closing = True
+            self._close_task = asyncio.create_task(self._close())
+        await asyncio.shield(self._close_task)
+
+    async def _close(self) -> None:
+        failures = []
+        for operation in (self.workspace_queue.shutdown, self.workspace.shutdown,
+                          self.terminal.shutdown, self.commands.shutdown, self.upstream_client.aclose):
+            try:
+                await operation()
+            except Exception as exc:
+                failures.append(exc)
+                logger.exception("Application cleanup failed")
+        for runs in self.ledger.runs.values():
+            for run in runs:
+                if run["state"] in {"running", "stopping"}:
+                    run.update(state="interrupted", end=int(time.time() * 1000))
+        self.ledger.save()
+        if failures:
+            raise RuntimeError("Application cleanup failed") from failures[0]
 
 
 def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
@@ -185,16 +235,32 @@ def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
             catalog_refresh.cancel()
             with suppress(asyncio.CancelledError):
                 await catalog_refresh
-            # 终止全部终端会话进程，避免孤儿进程
             try:
-                await runtime.terminal.shutdown()
-            except Exception:
-                logger.warning("终端会话清理失败", exc_info=True)
-            await runtime.aclose()
+                await runtime.aclose()
+            finally:
+                await drain_recordings()
 
     app = FastAPI(title="Sona Code", lifespan=lifespan)
     app.state.runtime = runtime
     configure_workspace_queue(app)
+    runtime.commands.install(app)
+
+    app.add_middleware(ShutdownGate, runtime=runtime, shutdown_path=f"{cfg.server.admin_prefix}/api/shutdown")
+
+    @app.post(f"{cfg.server.admin_prefix}/api/shutdown")
+    async def shutdown(request: Request):
+        token = os.environ.get("SONACODE_SHUTDOWN_TOKEN", "")
+        submitted = request.headers.get("authorization", "").removeprefix("Bearer ")
+        if (not token or not secrets.compare_digest(token, submitted) or request.client is None
+                or request.client.host != "127.0.0.1"):
+            raise HTTPException(403, "Invalid desktop owner")
+        try:
+            await runtime.aclose()
+        finally:
+            stop = getattr(app.state, "stop_server", None)
+            if stop is not None:
+                stop()
+        return {"ok": True}
     app.state.config = cfg  # 兼容旧引用
     app.state.config_path = config_path or CONFIG_PATH
 

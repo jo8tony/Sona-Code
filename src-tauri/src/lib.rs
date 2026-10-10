@@ -1,6 +1,9 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
@@ -12,7 +15,11 @@ mod desktop_settings;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-struct SidecarState(Mutex<Option<CommandChild>>);
+struct SidecarState {
+    child: Mutex<Option<CommandChild>>,
+    shutdown_token: String,
+    exited: Arc<AtomicBool>,
+}
 
 #[tauri::command]
 fn request_task_attention(window: tauri::WebviewWindow) -> Result<(), String> {
@@ -132,8 +139,46 @@ fn stop_sidecar(app: &tauri::AppHandle) {
     let Some(state) = app.try_state::<SidecarState>() else {
         return;
     };
-    if let Ok(mut guard) = state.0.lock() {
+    if let Ok(mut guard) = state.child.lock() {
         if let Some(child) = guard.take() {
+            if state.exited.load(Ordering::SeqCst) {
+                return;
+            }
+            // Give Python time to cancel native sessions and reap owned commands
+            // before using the platform's forced process-tree fallback.
+            let address = SocketAddr::from(([127, 0, 0, 1], 8117));
+            if let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(500))
+            {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(20)));
+                let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+                let request = format!(
+                    "POST /__recorder/api/shutdown HTTP/1.1\r\nHost: 127.0.0.1:8117\r\nAuthorization: Bearer {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    state.shutdown_token
+                );
+                if stream.write_all(request.as_bytes()).is_ok() {
+                    let mut response = String::new();
+                    if stream.read_to_string(&mut response).is_ok() && response.contains(" 200 ") {
+                        // A successful response means all owned native processes
+                        // have been reaped; now wait for the HTTP listener to close.
+                        let deadline = Instant::now() + Duration::from_secs(5);
+                        while Instant::now() < deadline {
+                            if TcpStream::connect_timeout(&address, Duration::from_millis(100))
+                                .is_err()
+                            {
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_millis(100));
+                        }
+                    }
+                }
+            }
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while !state.exited.load(Ordering::SeqCst) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            if state.exited.load(Ordering::SeqCst) {
+                return;
+            }
             #[cfg(target_os = "macos")]
             {
                 // PyInstaller one-file sidecar forks a worker; stop it before its bootloader parent.
@@ -280,9 +325,11 @@ pub fn run() {
                     std::env::var_os(key).unwrap_or_default(),
                 );
             }
+            let shutdown_token = uuid::Uuid::new_v4().simple().to_string();
             sidecar = sidecar
                 .env("PYTHONIOENCODING", "utf-8")
                 .env("SONACODE_DESKTOP_INSTANCE_ID", &instance_id)
+                .env("SONACODE_SHUTDOWN_TOKEN", &shutdown_token)
                 .env("SONACODE_BUNDLED_OPENCODE", bundled_opencode)
                 .env("SONACODE_BUNDLED_OPENSPEC", bundled_openspec)
                 .env("XDG_CONFIG_HOME", &config_dir)
@@ -290,7 +337,12 @@ pub fn run() {
                 .env("XDG_CACHE_HOME", &cache_dir)
                 .env("XDG_STATE_HOME", &state_dir);
             let (mut receiver, child) = sidecar.args(args).spawn()?;
-            app.manage(SidecarState(Mutex::new(Some(child))));
+            let exited = Arc::new(AtomicBool::new(false));
+            app.manage(SidecarState {
+                child: Mutex::new(Some(child)),
+                shutdown_token,
+                exited: exited.clone(),
+            });
 
             let log_path = log_dir.join("desktop.log");
             tauri::async_runtime::spawn(async move {
@@ -312,6 +364,9 @@ pub fn run() {
                             if let Some(file) = log_file.as_mut() {
                                 let _ = file.write_all(&bytes);
                             }
+                        }
+                        CommandEvent::Terminated(_) => {
+                            exited.store(true, Ordering::SeqCst);
                         }
                         _ => {}
                     }

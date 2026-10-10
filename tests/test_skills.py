@@ -363,6 +363,9 @@ def test_queued_skill_records_native_message_only_at_dispatch_and_rechecks_permi
         return {"id": "ses_1"}
 
     app.state.runtime.workspace.request = request
+    async def stop_session(project, config, session):
+        return await request(project, config, "POST", f"/session/{session}/abort", body={})
+    app.state.runtime.workspace.stop_session = stop_session
     project = tmp_path / "project"
     project.mkdir()
     app.state.runtime.terminal_projects.add(str(project), "opencode")

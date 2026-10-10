@@ -116,6 +116,14 @@ async def _safe_write_partial(store: CallStore, record: CallRecord) -> None:
 _pending_tasks: set[asyncio.Task] = set()
 
 
+async def drain_recordings() -> None:
+    """Finish recordings after HTTP connections have been drained."""
+    loop = asyncio.get_running_loop()
+    pending = [task for task in list(_pending_tasks) if task.get_loop() is loop]
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
 def _spawn_process_finalize(store: CallStore, record: CallRecord, ctx: dict) -> None:
     """启动后台任务：解析捕获数据 → 组装最终记录 → 落盘。
     绝不阻塞转发/响应路径。"""

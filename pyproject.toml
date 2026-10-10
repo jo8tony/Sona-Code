@@ -38,6 +38,7 @@ exclude = ["tests*"]
 sona_code = [
     "web/static/*",
     "web/static/vendor/*",
+    "workspace/*.js",
 ]
 
 [tool.pytest.ini_options]

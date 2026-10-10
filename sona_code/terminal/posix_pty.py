@@ -58,11 +58,11 @@ class PosixPtyProcess:
     def close(self, force: bool = False) -> None:
         if self.closed:
             return
-        if not self._reap():
-            try:
-                os.killpg(self.pid, signal.SIGKILL if force else signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+        # Background children can outlive the PTY's group leader.
+        try:
+            os.killpg(self.pid, signal.SIGKILL if force else signal.SIGTERM)
+        except ProcessLookupError:
+            pass
         try:
             os.close(self.fd)
         except OSError:

@@ -1,12 +1,57 @@
 """CLI 入口：加载配置 → 应用覆盖 → 启动 uvicorn。"""
 
 import argparse
+import asyncio
+import os
 import sys
 
 import uvicorn
 
 from sona_code.app import create_app
 from sona_code.config import CONFIG_PATH, load_config, resolved_records_dir
+
+
+class DesktopServer(uvicorn.Server):
+    async def startup(self, sockets=None) -> None:
+        await super().startup(sockets)
+        owner = os.environ.get("SONACODE_DESKTOP_INSTANCE_ID", "").split("-", 1)[0]
+        self.owner_task = asyncio.create_task(self.watch_owner(int(owner))) if owner.isdigit() else None
+
+    async def watch_owner(self, pid: int) -> None:
+        handle = None
+        if os.name == "nt":
+            from sona_code.processes import kernel
+            handle = kernel.OpenProcess(0x00100000, False, pid)
+        try:
+            while not self.should_exit:
+                if os.name == "nt":
+                    import ctypes
+                    wait = kernel.WaitForSingleObject
+                    wait.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+                    if not handle or wait(handle, 0) == 0:
+                        self.should_exit = True
+                        return
+                else:
+                    try:
+                        os.kill(pid, 0)
+                    except ProcessLookupError:
+                        self.should_exit = True
+                        return
+                await asyncio.sleep(.5)
+        finally:
+            if handle:
+                kernel.CloseHandle(handle)
+
+    async def shutdown(self, sockets=None) -> None:
+        # Cancel native tasks before waiting for SSE/command requests to finish.
+        try:
+            await self.config.app.state.runtime.aclose()
+        finally:
+            task = getattr(self, "owner_task", None)
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            await super().shutdown(sockets)
 
 
 def _harden_stdio() -> None:
@@ -60,7 +105,16 @@ def main(argv: list[str] | None = None) -> None:
     print(_banner(host, port, prefix, resolved_records_dir(cfg), args.config, overrides))
 
     app = create_app(cfg, config_path=args.config)
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    # Keep this job alive until process exit. An OS kill closes it and kills all
+    # desktop-owned descendants, including children whose parents already exited.
+    desktop_job = None
+    if os.name == "nt" and os.environ.get("SONACODE_DESKTOP_INSTANCE_ID"):
+        from sona_code.processes import WindowsJob
+        desktop_job = WindowsJob()
+        desktop_job.assign(os.getpid())
+    server = DesktopServer(uvicorn.Config(app, host=host, port=port, log_level="info", timeout_graceful_shutdown=3))
+    app.state.stop_server = lambda: setattr(server, "should_exit", True)
+    server.run()
 
 
 def _banner(

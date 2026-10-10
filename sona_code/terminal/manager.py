@@ -74,6 +74,7 @@ class TerminalSession:
     pump_task: asyncio.Task | None = None
     output_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     input_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    scope: object | None = None
 
     def append_buffer(self, raw: bytes) -> None:
         if self.max_buffer <= 0:
@@ -330,7 +331,7 @@ def _build_env(cfg: AppConfig, kind: str) -> dict[str, str]:
             inline["skills"] = skills
             env["OPENCODE_CONFIG_CONTENT"] = json.dumps(inline, ensure_ascii=False)
     for key in list(env):
-        if key in (BUNDLED_OPENCODE_ENV, "SONACODE_DESKTOP_INSTANCE_ID") or key.startswith(
+        if key in (BUNDLED_OPENCODE_ENV, "SONACODE_DESKTOP_INSTANCE_ID", "SONACODE_SHUTDOWN_TOKEN") or key.startswith(
             ORIGINAL_XDG_PREFIX
         ):
             env.pop(key, None)
@@ -341,12 +342,16 @@ def _build_env(cfg: AppConfig, kind: str) -> dict[str, str]:
 class TerminalManager:
     def __init__(self) -> None:
         self.sessions: dict[str, TerminalSession] = {}
+        self.closing = False
+        self.commands = None
 
     # ------------------------------------------------------------ 会话生命周期
     async def create(
         self, cfg: AppConfig, cwd: str, kind: str, rows: int, cols: int
     ) -> TerminalSession:
         t = cfg.terminal
+        if self.closing:
+            raise TerminalError("应用正在退出", 503)
         if not t.enabled:
             raise TerminalError("终端模块未启用（settings 中 terminal.enabled）")
         if PtyProcess is None:
@@ -381,17 +386,48 @@ class TerminalManager:
             env = await asyncio.to_thread(self.environment, str(path.resolve()), kind, env)
 
         sid = uuid.uuid4().hex[:12]
+        if self.commands is not None and kind == "opencode":
+            env = self.commands.environment("terminal:" + sid, str(path.resolve()), env)
+        scope = None
+        launch_task = None
         try:
+            if self.commands is not None and os.name == "nt":
+                from sona_code.processes import WindowsJob
+                scope = WindowsJob()
+            def launch():
+                spawned = PtyProcess.spawn(argv, cwd=str(path), env=env, dimensions=(rows, cols))
+                try:
+                    if scope is not None:
+                        scope.assign(spawned.pid)
+                except BaseException:
+                    spawned.close(True)
+                    raise
+                return spawned
             if sys.platform == "darwin":
                 # 直接在事件循环线程 forkpty，避免在线程池工作线程中死锁。
                 proc = PtyProcess.spawn(argv, cwd=str(path), env=env, dimensions=(rows, cols))
             else:
-                proc = await asyncio.to_thread(
-                    PtyProcess.spawn, argv, cwd=str(path), env=env, dimensions=(rows, cols)
-                )
-        except FileNotFoundError as e:
-            raise TerminalError(f"未找到命令 {command}：{e}") from e
-        except Exception as e:
+                launch_task = asyncio.create_task(asyncio.to_thread(launch))
+                proc = await asyncio.shield(launch_task)
+            if self.closing:
+                await asyncio.to_thread(proc.close, True)
+                if scope is not None:
+                    await asyncio.to_thread(scope.close)
+                raise TerminalError("应用正在退出", 503)
+        except BaseException as e:
+            if launch_task is not None and 'proc' not in locals():
+                try:
+                    proc = await asyncio.shield(launch_task)
+                except BaseException:
+                    pass
+            if 'proc' in locals():
+                await asyncio.to_thread(proc.close, True)
+            if scope is not None:
+                await asyncio.to_thread(scope.close)
+            if self.commands is not None:
+                await self.commands.stop_owner("terminal:" + sid)
+            if isinstance(e, asyncio.CancelledError):
+                raise
             raise TerminalError(f"启动失败：{type(e).__name__}: {e}") from e
 
         session = TerminalSession(
@@ -402,6 +438,7 @@ class TerminalManager:
             created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
             proc=proc,
             max_buffer=t.scrollback_kb * 1024,
+            scope=scope,
         )
         self.sessions[sid] = session
         session.pump_task = asyncio.create_task(self._pump(session))
@@ -415,15 +452,27 @@ class TerminalManager:
         return [s.info() for s in self.sessions.values()]
 
     async def kill(self, session_id: str) -> bool:
-        session = self.sessions.pop(session_id, None)
+        session = self.sessions.get(session_id)
         if session is None:
             return False
-        session.alive = False
         try:
+            if self.commands is not None:
+                await self.commands.stop_owner("terminal:" + session_id)
+            if session.scope is not None:
+                await asyncio.to_thread(session.scope.close)
             # close(force=True)：关 socket（解除泵阻塞）+ 强杀进程
             await asyncio.to_thread(session.proc.close, True)
         except Exception:
             logger.warning("终端会话 %s 关闭进程失败", session_id, exc_info=True)
+            raise TerminalError("终端进程清理失败，请重试", 503)
+        session.alive = False
+        if session.pump_task is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(session.pump_task), 3)
+            except asyncio.TimeoutError:
+                session.pump_task.cancel()
+                await asyncio.gather(session.pump_task, return_exceptions=True)
+        self.sessions.pop(session_id, None)
         logger.info("终端会话 %s 已终止（cwd=%s）", session_id, session.cwd)
         return True
 
@@ -431,7 +480,10 @@ class TerminalManager:
         """服务退出时终止全部会话进程。"""
         ids = list(self.sessions)
         if ids:
-            await asyncio.gather(*(self.kill(sid) for sid in ids))
+            results = await asyncio.gather(*(self.kill(sid) for sid in ids), return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
 
     # ------------------------------------------------------------ 客户端交互
     async def attach(self, websocket: WebSocket, session: TerminalSession) -> None:
@@ -500,6 +552,10 @@ class TerminalManager:
             logger.warning("终端会话 %s 输出泵异常", session.id, exc_info=True)
         finally:
             session.alive = False
+            if self.commands is not None:
+                await self.commands.stop_owner("terminal:" + session.id)
+            if session.scope is not None:
+                await asyncio.to_thread(session.scope.close)
             try:
                 if hasattr(proc, "_reap"):
                     proc._reap()

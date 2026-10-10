@@ -1774,7 +1774,7 @@ function renderWorkspace(view) {
     const toolName = String(part.tool || "工具");
     const toolLabels = { read: "读取文件", write: "写入文件", edit: "编辑文件", bash: "运行命令", glob: "查找文件", grep: "搜索内容", list: "列出目录", task: "执行任务" };
     const status = stateInfo.status || "running";
-    const statusLabels = { completed: "已完成", running: "运行中", pending: "等待中", error: "失败" };
+    const statusLabels = { completed: "已完成", running: "运行中", pending: "等待中", error: stateInfo.metadata?.interrupted ? "已停止" : "失败" };
     const key = part.id || part.callID || `${toolName}:${JSON.stringify(stateInfo.input || {})}`;
     const card = el("details", { class: `wsp-tool ${status}` });
     card.style.setProperty("--wsp-progress-delay", `-${(Date.now() % 1600) / 1000}s`);
@@ -1817,7 +1817,7 @@ function renderWorkspace(view) {
         el("summary", {},
           el("span", { class: "wsp-step-check", text: status === "completed" ? "✓" : status === "error" ? "!" : "◉" }),
           el("span", { class: "wsp-step-label", text: subject ? `${name} · ${subject}` : name }),
-          el("span", { class: "wsp-step-duration", text: toolDuration(part) || (status === "running" ? "运行中" : status === "error" ? "失败" : "") })));
+          el("span", { class: "wsp-step-duration", text: part.state?.metadata?.interrupted ? `已停止${toolDuration(part) ? ` · ${toolDuration(part)}` : ""}` : toolDuration(part) || (status === "running" ? "运行中" : status === "error" ? "失败" : "") })));
       const key = `step:${part.id || part.callID || `${name}:${subject}`}`;
       if (state.expandedTools.get(key)) row.open = true;
       row.addEventListener("toggle", () => state.expandedTools.set(key, row.open));

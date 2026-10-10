@@ -159,6 +159,7 @@ def main() -> None:
     compiler_env = dict(os.environ, CGO_ENABLED="0", GOTOOLCHAIN="local", GOPROXY="off", GOSUMDB="off")
     compiler_env["GOROOT"] = str(compiler_root / "go")
     run([str(go), "build", "-trimpath", "-ldflags=-s -w", "-o", str(executable_dir / ("openspec" + suffix)), str(ROOT / "packaging/openspec-launcher/main.go")], env=compiler_env)
+    run([str(go), "build", "-trimpath", "-ldflags=-s -w", "-o", str(executable_dir / ("sona-command-runner" + suffix)), str(ROOT / "packaging/command-runner/main.go")], env=compiler_env)
     # Include the Go runtime license used by the native launcher.
     shutil.copy2(compiler_root / "go/LICENSE", licenses / "Go-LICENSE.txt")
     hashes = {file.relative_to(bundle).as_posix(): digest(file) for file in sorted(bundle.rglob("*")) if file.is_file() and file.name != "manifest.json"}

@@ -353,6 +353,9 @@ def test_queue_routes_validate_and_revalidate_v1_payloads(tmp_path):
         return {"id": "ses_test"}
 
     app.state.runtime.workspace.request = fake_request
+    async def stop_session(project, config, session):
+        return await fake_request(project, config, "POST", f"/session/{session}/abort", body={})
+    app.state.runtime.workspace.stop_session = stop_session
     with TestClient(app) as client:
         project_id = client.get("/__recorder/api/workspace/projects").json()["items"][0]["id"]
         base = f"/__recorder/api/workspace/projects/{project_id}/sessions/ses_test"

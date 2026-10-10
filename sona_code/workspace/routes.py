@@ -1000,7 +1000,8 @@ async def run_shell(project_id: str, session_id: str, body: ShellBody, request: 
 async def abort_session(project_id: str, session_id: str, request: Request):
     path = _project_path(request, project_id)
     await request.app.state.runtime.workspace_queue.stop(project_id, _safe_id(session_id))
-    return await _opencode(request, path, "POST", f"/session/{_safe_id(session_id)}/abort", {})
+    runtime = request.app.state.runtime
+    return await runtime.workspace.stop_session(path, runtime.provider_config(), _safe_id(session_id))
 
 
 @router.get("/workspace/projects/{project_id}/sessions/{session_id}/diff")
