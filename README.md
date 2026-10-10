@@ -284,6 +284,8 @@ Windows 构建会根据 `packaging/opencode.json` 下载并校验固定的 OpenC
 
 桌面版配置文件位于 `%APPDATA%\SonaCode\config.json`，记录目录位于 `%APPDATA%\SonaCode\records`。新版使用独立的 SonaCode 数据目录，不读取旧版目录。
 
+打包后的桌面版首次运行默认开启开机自启，可在应用设置中关闭；选择保存在同目录的 `desktop-settings.json`，后续启动会保留。Windows Electron 安装版和解压目录版使用当前 EXE 路径，electron-builder 单文件便携版使用原始便携 EXE 路径，避免指向临时解压目录。移动或重命名绿色版后，运行一次应用即可更新自启路径。
+
 ## 目录结构
 
 ```

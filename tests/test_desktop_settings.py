@@ -10,7 +10,8 @@ const {createDesktopSettings} = require("./electron/desktop-settings.cjs");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "sona-desktop-test-"));
 let enabled = false;
 const calls = [], app = {isPackaged: true,
-  getLoginItemSettings() {return {openAtLogin: enabled, executableWillLaunchAtLogin: enabled};},
+  getLoginItemSettings(options) {return {openAtLogin: enabled, executableWillLaunchAtLogin: enabled,
+    launchItems: enabled ? [{name: "Sona Code", scope: "user", path: process.execPath, args: [], enabled}] : []};},
   setLoginItemSettings(settings) {calls.push(settings); enabled = settings.openAtLogin;},
 };
 try {
@@ -29,7 +30,97 @@ try {
   fs.writeFileSync(path.join(root, "desktop-settings.json"), "broken");
   assert.throws(() => createDesktopSettings(app, root).initialize()); assert.equal(enabled, true);
   app.isPackaged = false; const count = calls.length; settings.initialize(); assert.equal(calls.length, count);
-  assert.throws(() => settings.getAutostart(), /安装版/);
+  assert.throws(() => settings.getAutostart(), /打包后/);
+} finally {
+  assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
+  fs.rmSync(root, {recursive: true, force: true});
+}
+''')
+
+
+def test_windows_autostart_custom_name_spaces_and_portable_launcher():
+    run_node(r'''
+const fs = require("node:fs"), os = require("node:os"), path = require("node:path"), assert = require("node:assert/strict");
+const {createDesktopSettings} = require("./electron/desktop-settings.cjs");
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "sona-desktop-windows-test-"));
+const runtime = {platform: "win32", execPath: "C:\\Users\\用户\\Apps\\Sona Code\\Sona Code.exe", env: {}};
+const entries = new Map(), calls = [];
+let refuseWrite = false;
+const app = {isPackaged: true,
+  getLoginItemSettings(options) {
+    // Native openAtLogin reads only AppUserModelID; launchItems parses a command line.
+    const lookup = options.path.match(/^"([^"]+)"/)?.[1] || options.path.split(" ")[0];
+    const launchItems = [...entries.values()].filter(item => item.path.toLowerCase() === lookup.toLowerCase());
+    return {openAtLogin: false, launchItems, executableWillLaunchAtLogin: launchItems.some(item => item.enabled)};
+  },
+  setLoginItemSettings(settings) {
+    calls.push(settings);
+    if (refuseWrite) return;
+    if (settings.openAtLogin) entries.set(settings.name, {name: settings.name, scope: "user",
+      path: settings.path, args: settings.args, enabled: settings.enabled});
+    else entries.delete(settings.name);
+  },
+};
+try {
+  const settings = createDesktopSettings(app, root, runtime);
+  settings.initialize();
+  assert.equal(settings.getAutostart(), true, "Custom name and spaced path must not cause a false failure");
+  assert.equal(calls[0].path, runtime.execPath); assert.deepEqual(calls[0].args, []);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "desktop-settings.json"))).autostart, true);
+  // Neither an unrelated entry nor another command for this executable is our setting.
+  entries.get("Sona Code").enabled = false;
+  entries.set("Other", {name: "Other", scope: "user", path: runtime.execPath, args: [], enabled: true});
+  assert.equal(settings.getAutostart(), false, "Task Manager disablement must be visible");
+  entries.get("Sona Code").enabled = true;
+  entries.get("Sona Code").args = ["--other"];
+  assert.equal(settings.getAutostart(), false);
+  entries.get("Sona Code").args = [];
+  entries.get("Sona Code").scope = "machine";
+  assert.equal(settings.getAutostart(), false);
+  entries.get("Sona Code").scope = "user";
+  assert.equal(settings.setAutostart(false), false, "An unrelated enabled entry must not prevent disabling ours");
+  refuseWrite = true;
+  assert.throws(() => settings.setAutostart(true), /系统未应用/);
+  assert.equal(settings.getAutostart(), false);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "desktop-settings.json"))).autostart, false);
+  refuseWrite = false;
+  createDesktopSettings(app, root, runtime).initialize();
+  assert.equal(settings.getAutostart(), false, "Restart must preserve opt-out");
+  runtime.execPath = "C:\\Users\\用户\\AppData\\Local\\Temp\\sona-123\\Sona Code.exe";
+  runtime.env.PORTABLE_EXECUTABLE_FILE = "D:\\绿色软件\\Sona Code Portable.exe";
+  const portable = createDesktopSettings(app, root, runtime);
+  portable.setAutostart(true);
+  assert.equal(calls.at(-1).path, runtime.env.PORTABLE_EXECUTABLE_FILE);
+  assert.equal(portable.getAutostart(), true);
+  runtime.execPath = "C:\\Users\\用户\\AppData\\Local\\Temp\\sona-456\\Sona Code.exe";
+  const restarted = createDesktopSettings(app, root, runtime);
+  restarted.initialize(); assert.equal(restarted.getAutostart(), true);
+  assert.equal(calls.at(-1).path, runtime.env.PORTABLE_EXECUTABLE_FILE, "Portable restart must retain the original launcher");
+  restarted.setAutostart(false);
+  restarted.initialize(); assert.equal(restarted.getAutostart(), false);
+} finally {
+  assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
+  fs.rmSync(root, {recursive: true, force: true});
+}
+''')
+
+
+def test_macos_autostart_uses_native_state_and_ignores_windows_portable_path():
+    run_node(r'''
+const fs = require("node:fs"), os = require("node:os"), path = require("node:path"), assert = require("node:assert/strict");
+const {createDesktopSettings} = require("./electron/desktop-settings.cjs");
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "sona-desktop-macos-test-"));
+const runtime = {platform: "darwin", execPath: "/Applications/Sona Code.app/Contents/MacOS/Sona Code",
+  env: {PORTABLE_EXECUTABLE_FILE: "C:\\Sona Code.exe"}};
+let enabled = false;
+const app = {isPackaged: true,
+  getLoginItemSettings(options) {assert.equal(options.path, runtime.execPath); return {openAtLogin: enabled};},
+  setLoginItemSettings(options) {assert.equal(options.path, runtime.execPath); enabled = options.openAtLogin;},
+};
+try {
+  const settings = createDesktopSettings(app, root, runtime);
+  settings.initialize(); assert.equal(settings.getAutostart(), true);
+  settings.setAutostart(false); settings.initialize(); assert.equal(settings.getAutostart(), false);
 } finally {
   assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
   fs.rmSync(root, {recursive: true, force: true});
