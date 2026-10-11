@@ -346,8 +346,11 @@ function createWorkspaceEditor(root, callbacks) {
     const changed = Array.from(files.values()).filter(dirty);
     if (changed.length && !window.confirm(`关闭将丢弃 ${changed.length} 个文件的未保存修改，是否继续？`)) return;
     ++navigationGeneration; history.clear();
-    for (const file of files.values()) { client.close(file.projectId, file.path); clearTimeout(file.autoTimer); file.change?.dispose(); file.model?.dispose(); }
+    const closing = Array.from(files.values());
+    // Closing a language group reports status synchronously and renders again.
+    // Detach every model from UI state before disposing any of them.
     files.clear(); current = null; editor?.setModel(null); hide(); render();
+    for (const file of closing) { client.close(file.projectId, file.path); clearTimeout(file.autoTimer); file.change?.dispose(); file.model?.dispose(); }
   }
   const beforeUnload = event => {
     if (Array.from(files.values()).some(file => dirty(file) || file.saving)) { event.preventDefault(); event.returnValue = ""; }

@@ -20,7 +20,7 @@ class Element {
   remove() {if(this.parent){this.parent.children=this.parent.children.filter(item=>item!==this);this.parent=null;}}
 }
 const source = fs.readFileSync('sona_code/web/static/workspace-editor.js', 'utf8');
-function harness(preferences = {}) {
+function harness(preferences = {}, {realClient = false} = {}) {
   const models = new Map();
   const requests = [];
   const root = new Element('root');
@@ -56,7 +56,7 @@ function harness(preferences = {}) {
         if (models.has(uri)) throw Error('ModelService: Cannot add model because it already exists!');
         const model = {
           value, uri,
-          getValue() { return this.value; },
+          getValue() { assert.equal(this.disposed, undefined, 'Model is disposed!'); return this.value; },
           getLanguageId() { return this.language; },language,
           getWordAtPosition() {return {word:'value'};},
           validateRange(range) {
@@ -66,7 +66,7 @@ function harness(preferences = {}) {
             return {startLineNumber:a,startColumn:b,endLineNumber:c,endColumn:d};
           },
           onDidChangeContent(fn) { this.change = fn; return { dispose() {} }; },
-          dispose() { models.delete(uri); },
+          dispose() { this.disposed = true; models.delete(uri); },
         };
         models.set(uri, model);
         return model;
@@ -87,6 +87,19 @@ function harness(preferences = {}) {
     workspaceLanguageFamily:language=>language==='typescript'||language==='typescriptreact'?'typescript':null,
     console,
   });
+  if (realClient) {
+    // Exercise the real synchronous status callback when the last document
+    // of a language group closes, without launching a language server.
+    context.crypto = require('node:crypto').webcrypto;
+    context.TextEncoder = TextEncoder;
+    context.WebSocket = class {
+      static OPEN = 1;
+      readyState = 0;
+      addEventListener() {}
+      close() { this.readyState = 3; }
+    };
+    vm.runInContext(fs.readFileSync('sona_code/web/static/workspace-language-client.js', 'utf8'), context);
+  }
   vm.runInContext(fs.readFileSync('sona_code/web/static/workspace-code-history.js','utf8'),context);
   vm.runInContext(fs.readFileSync('sona_code/web/static/workspace-code-navigation.js','utf8'),context);
   vm.runInContext(fs.readFileSync('sona_code/web/static/workspace-analysis-settings.js','utf8'),context);
@@ -281,6 +294,18 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
     assert.equal(h.models.size,11,'Closing an inactive tab frees a file slot');
     const op=h.api.open({id:'p',name:'P'},'new.ts');h.requests.shift()(data('new'));await op;
     assert.equal(h.models.size,12);h.api.dispose();
+  } else if (process.argv[2] === 'panel-close-language-status') {
+    const h=harness({}, {realClient:true});
+    for(let i=0;i<12;i++){const op=h.api.open({id:'p',name:'P'},i+'.ts');h.requests.shift()(data(String(i)));await op;}
+    h.selected().value='draft';h.selected().change();
+    h.setConfirm(false);h.find('关闭').onclick();
+    assert.equal(h.root.children[0].hidden,false,'Cancelled close keeps the editor visible');
+    assert.equal(h.models.size,12);assert.equal(h.selected().value,'draft');
+    h.setConfirm(true);
+    h.find('关闭').onclick();
+    assert.equal(h.root.children[0].hidden,true,'Toolbar Close must hide a multi-file editor');
+    assert.equal(h.models.size,0,'All models must be released without reading disposed models');
+    assert.equal(h.selected(),null);h.api.dispose();
   } else if (process.argv[2] === 'language-sync') {
     const h=harness();const a=h.api.open({id:'p',name:'P'},'a.tsx');h.requests.shift()(data('disk'));await a;
     assert.equal(h.languageCalls.find(c=>c[0]==='open')[1].language,'typescriptreact');
