@@ -19,6 +19,9 @@ function loadWorkspaceMonaco() {
     };
     workspaceMonacoPromise = import(new URL("monaco.js", workspaceMonacoBase).href).then(monaco => {
       monaco.jsonDefaults.setDiagnosticsOptions({ validate: true, enableSchemaRequest: false });
+      for (const defaults of [monaco.typescript.typescriptDefaults, monaco.typescript.javascriptDefaults]) {
+        defaults.setModeConfiguration({...defaults.modeConfiguration, definitions: false});
+      }
       return monaco;
     }).catch(error => { workspaceMonacoPromise = null; style.remove(); throw error; });
   }

@@ -638,6 +638,12 @@ function renderWorkspace(view) {
   const codeEditor = createWorkspaceEditor(main, {
     api, error: message => toast(message, "error"),
     projects: () => state.projects,
+    languageUrl: (projectId, family, editorId) => {
+      const url = new URL("api/workspace/projects/" + encodeURIComponent(projectId) + "/code-navigation/" + family,
+        document.baseURI);
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      url.searchParams.set("editor_id", editorId); return url.href;
+    },
     locate: (projectId, path) => {
       const project = state.projects.find(item => item.id === projectId);
       if (project) return tree.locate(project, path);

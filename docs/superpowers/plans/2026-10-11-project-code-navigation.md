@@ -419,7 +419,7 @@ if (editor.hasTextFocus() && event.ctrlKey && !event.altKey && !event.shiftKey &
 - `createAnalysisSettings({api,projectId,onSaved,onError}) -> {open(),dispose()}`，使用 Task 4 GET/PUT，onSaved 触发 reanalyze。
 - urlFor(projectId,family,editorId) 从当前 admin API base 构造 ws/wss，禁止硬编码8117或/__recorder。
 
-- [ ] **Step 1：red 客户端测试。** mock WebSocket 记录 messages/控制responses；覆盖150ms合并、definition前所有文档flush、重连snapshot、version/epoch/generation late结果、多结果菜单、取消、idle/hb、disposed状态。测 Review Focus 1/3。
+- [x] **Step 1：red 客户端测试。** mock WebSocket 记录 messages/控制responses；覆盖150ms合并、definition前所有文档flush、重连snapshot、version/epoch/generation late结果、多结果菜单、取消、idle/hb、disposed状态。测 Review Focus 1/3。
 
 ```javascript
 // 新 state harness 按已有 Element/vm 风格创建 FakeSocket 和可推进时钟。
@@ -469,8 +469,8 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
 
 harness 直接运行 production client，不以源码字符串是否含关键词替代行为断言。Run `.venv/Scripts/python.exe -m pytest tests/test_code_navigation.py tests/test_workspace_editor.py -q`。
 
-- [ ] **Step 2：实现 WS 客户端。** 每project/family一连接，editor_id=crypto.randomUUID，每connection request ID递增。客户端文档版本独立于Monaco getVersionId，model重建增加epoch；整个语言组revision用于缓存key。状态传递 generation，重连只保留最后文本快照，首批ack之前禁止查询。未知/过期reply不触发UI。ping20秒、inactive180秒回收，dispose 清除所有timer/provider/listener。
-- [ ] **Step 3：接 Monaco 交互。** model 的同组 snapshot 包含完整草稿，在 create/change/close/save/reload处通知客户端；file extension 决定 javascriptreact/typescriptreact，用户切换language时close旧文档再open新文档。TS/JS defaults modeConfiguration 关闭内置definitions，保留其他内置能力。
+- [x] **Step 2：实现 WS 客户端。** 每project/family一连接，editor_id=crypto.randomUUID，每connection request ID递增。客户端文档版本独立于Monaco getVersionId，model重建增加epoch；整个语言组revision用于缓存key。状态传递 generation，重连只保留最后文本快照，首批ack之前禁止查询。未知/过期reply不触发UI。ping20秒、inactive180秒回收，dispose 清除所有timer/provider/listener。
+- [x] **Step 3：接 Monaco 交互。** model 的同组 snapshot 包含完整草稿，在 create/change/close/save/reload处通知客户端；file extension 决定 javascriptreact/typescriptreact，用户切换language时close旧文档再open新文档。TS/JS defaults modeConfiguration 关闭内置definitions，保留其他内置能力。
 
 ```javascript
 const toLsp = p => ({line:p.lineNumber-1,character:p.column-1});
@@ -482,9 +482,9 @@ await openTarget(source.projectId, target.path, toMonaco(target.range), {recordH
 
 addAction 注册应用F12动作；canvas capture Ctrl＋primary click 用 getTargetAtClientPoint 检查文本/符号，抑制内置异步GoTo/Peek，然后调同一definition动作。Ctrl链接提示的provider不弹菜单/不改model；多目标显示文件/行号按钮，Escape取消、上下键选择、Enter打开。单目标直接openTarget。光标/activefile变化、源版本或任意同组目标草稿变化后取消旧跳转意图；空白不产生请求。
 
-- [ ] **Step 4：实现设置和状态 UI。** 工具栏“项目分析”打开本应用表单，字段对应 AnalysisSettings，Java模式source/maven/gradle、源码根/JAR逐行、项目JDK/本地Gradle、Python解释器。source为默认；gradle说明要评估构建脚本且只用本地工具；不塞入实现细节或额外授权流程。状态显示启动/索引/就绪/缺组件/超时/失败及“重新分析”。设置失败保留原值和草稿。组件status即使不可用也不影响editor.save。
-- [ ] **Step 5：green、真实浏览器检查。** 跑 Task 5/6、旧 editor/drafts/tree/navigation/interaction 测试；用实际Monaco验证F12/精确Ctrlclick/候选选择/左右键及原快捷键，捕获page errors和网络请求。未打开目标须真实加载，目标草稿须无多余GET；页面返回settings再回workspace后无重复provider/listener。
-- [ ] **Step 6：commit。** `git add sona_code/web/static tests/test_code_navigation.py tests/code-navigation-state.cjs tests/workspace-editor-state.cjs`；检查仅改本任务文件；`git commit -m "feat(editor): connect local definition navigation and analysis settings"`。
+- [x] **Step 4：实现设置和状态 UI。** 工具栏“项目分析”打开本应用表单，字段对应 AnalysisSettings，Java模式source/maven/gradle、源码根/JAR逐行、项目JDK/本地Gradle、Python解释器。source为默认；gradle说明要评估构建脚本且只用本地工具；不塞入实现细节或额外授权流程。状态显示启动/索引/就绪/缺组件/超时/失败及“重新分析”。设置失败保留原值和草稿。组件status即使不可用也不影响editor.save。
+- [x] **Step 5：green、真实浏览器检查。** 跑 Task 5/6、旧 editor/drafts/tree/navigation/interaction 测试；用实际Monaco验证F12/精确Ctrlclick/候选选择/左右键及原快捷键，捕获page errors和网络请求。未打开目标须真实加载，目标草稿须无多余GET；页面返回settings再回workspace后无重复provider/listener。
+- [x] **Step 6：commit。** `git add sona_code/web/static tests/test_code_navigation.py tests/code-navigation-state.cjs tests/workspace-editor-state.cjs`；检查仅改本任务文件；`git commit -m "feat(editor): connect local definition navigation and analysis settings"`。
 
 ## Task 7：安装包、内网依赖与构建完整性
 

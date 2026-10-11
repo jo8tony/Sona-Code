@@ -2,9 +2,11 @@
 
 function createWorkspaceEditor(root, callbacks) {
   const files = new Map();
+  const documentVersions = new Map(), documentEpochs = new Map(), analysisStates = new Map();
   const errorText = error => typeof error.detail === "string" ? error.detail : error.message;
   let current = null, monaco = null, editor = null, opener = null, disposed = false, reopen = false;
   let navigationGeneration = 0;
+  let navigation = null;
   let preferences = {defaultEditing: false, autoSave: false};
   try {
     const saved = JSON.parse(localStorage.getItem("sona-code:editor-preferences") || "null");
@@ -14,6 +16,7 @@ function createWorkspaceEditor(root, callbacks) {
   const tabs = el("div", { class: "wsp-editor-tabs", role: "tablist", "aria-label": "已打开文件" });
   const title = el("strong", { class: "wsp-editor-path" });
   const status = el("span", { role: "status", "aria-live": "polite" });
+  const analysisStatus = el("span", {class: "wsp-analysis-status", role: "status", "aria-live": "polite"});
   const message = el("p", { class: "wsp-editor-message", role: "status" });
   const canvas = el("div", { class: "wsp-editor-canvas" });
   const language = el("select", { "aria-label": "代码语言" });
@@ -25,6 +28,15 @@ function createWorkspaceEditor(root, callbacks) {
       {recordHistory: false, viewState: place.viewState, historyMove: true}),
     onChange: () => { back.disabled = !history.canBack; forward.disabled = !history.canForward; },
     onError: callbacks.error});
+  const client = createLanguageClient({urlFor: callbacks.languageUrl, onError: callbacks.error,
+    onStatus: value => {analysisStates.set(JSON.stringify([value.projectId, value.family]), value); render();}});
+  const analysisSettings = createAnalysisSettings({api: callbacks.api, projectId: () => current?.projectId,
+    onSaved: projectId => { for (const family of ["java", "python", "typescript"]) client.reanalyze(projectId, family); },
+    onError: callbacks.error});
+  const analysis = button("项目分析", () => { void analysisSettings.open(); });
+  const reanalyze = button("重新分析", () => {
+    const source = documentSnapshot(); if (source) client.reanalyze(source.projectId, workspaceLanguageFamily(source.language));
+  });
   function toggleEditing() {
     if (!current?.model || current.loading || current.data.read_only) return;
     current.editing = !current.editing;
@@ -68,8 +80,8 @@ function createWorkspaceEditor(root, callbacks) {
     if (disposed || files.get(file.key) !== file || !preferences.autoSave || file.autoPaused || file.saving || file.loading || !dirty(file) || file.data.read_only) return;
     file.autoTimer = setTimeout(() => { void saveFile(file); }, 1000);
   }
-  panel.append(el("header", { class: "wsp-editor-toolbar" }, back, forward, title, language, mode, save, format, reload, systemOpen, close),
-    options, tabs, message, canvas, el("footer", { class: "wsp-editor-status" }, status,
+  panel.append(el("header", { class: "wsp-editor-toolbar" }, back, forward, title, language, mode, save, format, reload, analysis, reanalyze, systemOpen, close),
+    options, tabs, message, canvas, el("footer", { class: "wsp-editor-status" }, status, analysisStatus,
       el("span", { text: "Ctrl+←/→ 后退/前进 · Ctrl/Cmd+I 预览/编辑 · Ctrl/Cmd+S 保存" })));
   root.append(panel);
 
@@ -79,9 +91,14 @@ function createWorkspaceEditor(root, callbacks) {
   function dirty(file) { return !!file.model && file.model.getValue() !== file.saved; }
   function show() {
     if (!disposed) { panel.hidden = false; callbacks.visibility?.(true); }
+    const source = documentSnapshot(); client.setActive(source?.projectId, source && workspaceLanguageFamily(source.language));
     requestAnimationFrame(() => editor?.layout());
   }
-  function hide() { panel.hidden = true; callbacks.visibility?.(false); }
+  function hide() {
+    panel.hidden = true;
+    if (!disposed) { client.setActive(null, null); navigation?.invalidate(); }
+    callbacks.visibility?.(false);
+  }
   function render() {
     if (disposed) return;
     document.documentElement.dataset.sonaUnsavedCode = String(Array.from(files.values()).some(file => dirty(file) || file.saving));
@@ -106,6 +123,10 @@ function createWorkspaceEditor(root, callbacks) {
     reload.disabled = !file || file.loading || file.saving;
     format.disabled = !file?.editing || file.loading || file?.data?.read_only;
     language.disabled = !file?.model || file.loading;
+    analysis.disabled = !file;
+    const source = documentSnapshot(), family = source && workspaceLanguageFamily(source.language);
+    reanalyze.disabled = !family;
+    analysisStatus.textContent = family ? analysisStates.get(JSON.stringify([file.projectId, family]))?.message || "正在连接本地语言服务" : "此语言支持语法预览";
     if (file?.model) {
       language.value = file.model.getLanguageId();
       editor.updateOptions({ readOnly: file.loading || !file.editing || file.data.read_only });
@@ -130,6 +151,19 @@ function createWorkspaceEditor(root, callbacks) {
       selection: selection && {startLineNumber: selection.startLineNumber, startColumn: selection.startColumn,
         endLineNumber: selection.endLineNumber, endColumn: selection.endColumn},
       viewState: editor.saveViewState()}));
+  }
+  function nextDocumentVersion(file) {
+    file.version = (documentVersions.get(file.key) || 0) + 1; documentVersions.set(file.key, file.version);
+  }
+  function newDocumentEpoch(file) {
+    file.epoch = (documentEpochs.get(file.key) || 0) + 1; documentEpochs.set(file.key, file.epoch); nextDocumentVersion(file);
+  }
+  function documentSnapshot(file = current) {
+    if (!file?.model || file.loading || !file.data?.encoding?.startsWith("utf-8")) return null;
+    let language = file.model.getLanguageId();
+    if (language === "javascript" && /\.jsx$/i.test(file.path)) language = "javascriptreact";
+    if (language === "typescript" && /\.tsx$/i.test(file.path)) language = "typescriptreact";
+    return {projectId: file.projectId, path: file.path, language, version: file.version, epoch: file.epoch, text: file.model.getValue()};
   }
   function applySelection(selection) {
     if (!selection || !current?.model) return;
@@ -161,6 +195,8 @@ function createWorkspaceEditor(root, callbacks) {
         if (!current?.model) return;
         status.textContent = status.textContent.split(" · 行 ")[0] + ` · 行 ${event.position.lineNumber}, 列 ${event.position.column}`;
       });
+      navigation = createCodeNavigation({monaco, editor, canvas, client, snapshot: documentSnapshot, openTarget,
+        history, onError: callbacks.error});
     }
     return true;
   }
@@ -172,13 +208,20 @@ function createWorkspaceEditor(root, callbacks) {
     try {
       const [data, ready] = await Promise.all([callbacks.api(endpoint(file), { silent: true }), ensureEditor()]);
       if (!ready || !valid()) return false;
+      client.close(file.projectId, file.path);
       file.model?.dispose(); file.change?.dispose();
       file.data = data; file.saved = data.content;
       const uri = monaco.Uri.from({ scheme: "inmemory", authority: file.projectId, path: "/" + file.path });
       file.model = monaco.editor.createModel(data.content, workspaceCodeLanguage(monaco, file.path), uri);
-      file.change = file.model.onDidChangeContent(() => { render(); scheduleAutoSave(file); });
+      newDocumentEpoch(file);
+      file.change = file.model.onDidChangeContent(() => {
+        nextDocumentVersion(file); const source = documentSnapshot(file); if (source) client.change(source);
+        render(); scheduleAutoSave(file);
+      });
       file.autoPaused = false;
       file.editing = preferences.defaultEditing && !data.read_only;
+      file.loading = false;
+      const source = documentSnapshot(file); if (source) client.open(source);
       if (current === file) activate(file);
       return true;
     } catch (error) {
@@ -239,6 +282,7 @@ function createWorkspaceEditor(root, callbacks) {
       if (disposed || files.get(file.key) !== file) return true;
       // Editing may continue while a save is in flight. Only the submitted text is the new baseline.
       file.saved = data.content; file.data = data; file.notice = dirty(file) ? "已保存，仍有新的未保存修改" : "已保存";
+      client.saved(file.projectId, file.path, data.revision);
       file.autoPaused = false;
       return true;
     } catch (error) {
@@ -257,11 +301,13 @@ function createWorkspaceEditor(root, callbacks) {
     if (dirty(file) && !window.confirm("丢弃 “" + file.path + "” 的未保存修改？")) return;
     ++navigationGeneration;
     const leaving = current === file ? capturePosition() : null;
+    client.close(file.projectId, file.path);
     clearTimeout(file.autoTimer); files.delete(file.key); file.change?.dispose();
     if (current === file) {
       const next = Array.from(files.values()).at(-1);
       if (next) {
         activate(next); history.record(leaving, capturePosition());
+        const source = documentSnapshot(); client.setActive(source?.projectId, source && workspaceLanguageFamily(source.language));
         Promise.resolve(callbacks.locate?.(next.projectId, next.path)).catch(error => callbacks.error(errorText(error)));
       }
       else { current = null; editor?.setModel(null); hide(); history.clear(); }
@@ -274,7 +320,7 @@ function createWorkspaceEditor(root, callbacks) {
     const changed = Array.from(files.values()).filter(dirty);
     if (changed.length && !window.confirm(`关闭将丢弃 ${changed.length} 个文件的未保存修改，是否继续？`)) return;
     ++navigationGeneration; history.clear();
-    for (const file of files.values()) { clearTimeout(file.autoTimer); file.change?.dispose(); file.model?.dispose(); }
+    for (const file of files.values()) { client.close(file.projectId, file.path); clearTimeout(file.autoTimer); file.change?.dispose(); file.model?.dispose(); }
     files.clear(); current = null; editor?.setModel(null); hide(); render();
   }
   const beforeUnload = event => {
@@ -282,7 +328,7 @@ function createWorkspaceEditor(root, callbacks) {
   };
   window.addEventListener("beforeunload", beforeUnload);
   const shortcut = event => {
-    if (disposed || panel.hidden || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.isComposing) return;
+    if (disposed || panel.hidden || analysisSettings.isOpen || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.isComposing) return;
     const key = event.key.toLowerCase();
     if (editor?.hasTextFocus() && event.ctrlKey && ["ArrowLeft", "ArrowRight"].includes(event.key)) {
       event.preventDefault(); event.stopPropagation();
@@ -294,7 +340,11 @@ function createWorkspaceEditor(root, callbacks) {
   };
   document.addEventListener("keydown", shortcut, true);
   language.addEventListener("change", () => {
-    if (current?.model) monaco.editor.setModelLanguage(current.model, language.value);
+    if (current?.model) {
+      client.close(current.projectId, current.path); monaco.editor.setModelLanguage(current.model, language.value);
+      newDocumentEpoch(current); const source = documentSnapshot(); if (source) client.open(source);
+      client.setActive(current.projectId, source && workspaceLanguageFamily(source.language)); render();
+    }
   });
   return { open, openTarget,
     suspend() { reopen = !panel.hidden; hide(); },
@@ -303,6 +353,7 @@ function createWorkspaceEditor(root, callbacks) {
       disposed = true; ++navigationGeneration; history.clear(); window.removeEventListener("beforeunload", beforeUnload);
       document.removeEventListener("keydown", shortcut, true);
       opener?.dispose();
+      navigation?.dispose(); analysisSettings.dispose(); client.dispose();
       editor?.dispose();
       for (const file of files.values()) { clearTimeout(file.autoTimer); file.change?.dispose(); file.model?.dispose(); }
       files.clear(); hide(); panel.remove();

@@ -13,6 +13,7 @@ class Element {
   replaceChildren(...items) { this.children = items; }
   setAttribute(key, value) { this[key] = value; }
   addEventListener(name, callback) { this.events[name] = callback; }
+  removeEventListener(name) { delete this.events[name]; }
   showModal() { this.open = true; }
   close() { this.open = false; }
   focus() {}
@@ -27,28 +28,35 @@ function harness(preferences = {}) {
   const timers = new Map(); let timerId = 0;
   const storage = new Map([['sona-code:editor-preferences', JSON.stringify(preferences)]]);
   let selected;
-  const locations = [], errors = [];
+  const locations = [], errors = [], languageCalls = [];
+  const client = {open:s=>languageCalls.push(['open',s]),change:s=>languageCalls.push(['change',s]),
+    close:(...args)=>languageCalls.push(['close',...args]),saved:(...args)=>languageCalls.push(['saved',...args]),
+    setActive:(...args)=>languageCalls.push(['active',...args]),dispose:()=>languageCalls.push(['dispose']),
+    reanalyze(){},subscribe:()=>()=>{},stamp:()=> '1',definition:async()=>[]};
   const editor = {
     textFocus: true, selection: {startLineNumber:1,startColumn:1,endLineNumber:1,endColumn:1},
     view: {scrollTop:0}, layout() {}, focus() {this.textFocus=true;}, hasTextFocus() {return this.textFocus;},
     getSelection() {return this.selection;}, setSelection(value) {this.selection=value;}, revealRangeInCenter() {},
+    getPosition() {return {lineNumber:this.selection.startLineNumber,column:this.selection.startColumn};},
+    getModel() {return selected;}, addAction() {return {dispose(){}};}, onDidChangeModel() {return {dispose(){}};},
     updateOptions(options) { this.options = options; },
     setModel(model) { selected = model;this.selection={startLineNumber:1,startColumn:1,endLineNumber:1,endColumn:1}; },
     saveViewState() { return JSON.parse(JSON.stringify(this.view)); },
-    restoreViewState(value) {this.view=value;}, onDidChangeCursorPosition() {}, dispose() {},
+    restoreViewState(value) {this.view=value;}, onDidChangeCursorPosition() {return {dispose(){}};}, dispose() {},
   };
   const monaco = {
     Uri: { from: value => JSON.stringify(value) },
-    languages: { getLanguages: () => [{ id: 'plaintext' }] },
+    KeyCode:{F12:59},languages: { getLanguages: () => [{ id: 'plaintext' },{id:'typescript'}],registerDefinitionProvider:()=>({dispose(){}}) },
     editor: {
-      create: () => editor,
+      create: () => editor,MouseTargetType:{CONTENT_TEXT:6},
       registerEditorOpener: () => ({dispose(){}}),
       createModel(value, language, uri) {
         if (models.has(uri)) throw Error('ModelService: Cannot add model because it already exists!');
         const model = {
           value, uri,
           getValue() { return this.value; },
-          getLanguageId() { return language; },
+          getLanguageId() { return this.language; },language,
+          getWordAtPosition() {return {word:'value'};},
           validateRange(range) {
             const lines=this.value.split('\n');const clamp=(line,column)=>{
               line=Math.max(1,Math.min(line,lines.length));return [line,Math.max(1,Math.min(column,lines[line-1].length+1))];};
@@ -61,20 +69,25 @@ function harness(preferences = {}) {
         models.set(uri, model);
         return model;
       },
+      setModelLanguage(model,language) {model.language=language;},
     },
   };
   const context = vm.createContext({
     el: (tag, attrs, ...children) => new Element(tag, attrs, children),
     window: { addEventListener() {}, removeEventListener() {}, confirm: () => true },
-    document: { documentElement: {dataset: {}}, addEventListener: (name, callback) => {listeners[name] = callback;}, removeEventListener: name => {delete listeners[name];} },
+    document: { body:new Element('body'),documentElement: {dataset: {}}, addEventListener: (name, callback) => {listeners[name] = callback;}, removeEventListener: name => {delete listeners[name];} },
     localStorage: {getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value)},
     setTimeout: fn => {timers.set(++timerId, fn); return timerId;}, clearTimeout: id => timers.delete(id),
     requestAnimationFrame: fn => fn(),
     loadWorkspaceMonaco: async () => monaco,
-    workspaceCodeLanguage: () => 'plaintext',
+    workspaceCodeLanguage: (_monaco,path) => path.endsWith('.tsx')||path.endsWith('.ts') ? 'typescript' : 'plaintext',
+    createLanguageClient:()=>client,AbortController,
+    workspaceLanguageFamily:language=>language==='typescript'||language==='typescriptreact'?'typescript':null,
     console,
   });
   vm.runInContext(fs.readFileSync('sona_code/web/static/workspace-code-history.js','utf8'),context);
+  vm.runInContext(fs.readFileSync('sona_code/web/static/workspace-code-navigation.js','utf8'),context);
+  vm.runInContext(fs.readFileSync('sona_code/web/static/workspace-analysis-settings.js','utf8'),context);
   vm.runInContext(source, context);
   const api = context.createWorkspaceEditor(root, {
     api: () => new Promise((resolve, reject) => {resolve.reject = reject; requests.push(resolve);}),
@@ -91,7 +104,7 @@ function harness(preferences = {}) {
     walk(root);
     return found;
   };
-  return { api, requests, editor, models, find, root, listeners, timers, locations, errors, selected: () => selected,
+  return { api, requests, editor, models, find, root, listeners, timers, locations, errors, languageCalls, selected: () => selected,
     fireTimers() {const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn());} };
 }
 const data = content => ({ content, revision: 'a'.repeat(64), read_only: false, encoding: 'utf-8', eol: 'LF' });
@@ -213,6 +226,14 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
     h.find('后退').onclick();await tick();assert.equal(h.selected().value,'a','Superseded target does not enter history');
     h.find('b.txt').onclick();await tick();assert.equal(h.selected().value,'b');assert.equal(h.find('前进').disabled,true);
     h.api.dispose();
+  } else if (process.argv[2] === 'language-sync') {
+    const h=harness();const a=h.api.open({id:'p',name:'P'},'a.tsx');h.requests.shift()(data('disk'));await a;
+    assert.equal(h.languageCalls.find(c=>c[0]==='open')[1].language,'typescriptreact');
+    h.selected().value='draft';h.selected().change();const before=h.languageCalls.find(c=>c[0]==='change')[1];
+    h.find('保存').onclick();h.requests.shift()(data('draft'));await tick();assert.ok(h.languageCalls.some(c=>c[0]==='saved'));
+    h.find('重新加载').onclick();h.requests.shift()(data('new disk'));await tick();
+    const after=h.languageCalls.filter(c=>c[0]==='open').at(-1)[1];assert.ok(after.epoch>before.epoch);assert.ok(after.version>before.version);
+    h.find('关闭').onclick();assert.ok(h.languageCalls.some(c=>c[0]==='close'));h.api.dispose();assert.equal(h.languageCalls.at(-1)[0],'dispose');
   } else throw new Error('Unknown editor scenario');
   console.log('passed', process.argv[2]);
 })().catch(error => {console.error(error);process.exitCode=1;});
