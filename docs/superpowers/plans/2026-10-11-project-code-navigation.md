@@ -1,6 +1,6 @@
 # Project Code Navigation Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 为现有 Monaco 编辑器增加 Java、Python、JS、JSX、TS、TSX 的项目内定义跳转、Ctrl＋左右键位置历史，并交付可离线安装及重打包的 Windows x64 产物。
 
@@ -93,10 +93,10 @@ class NavigationError(Exception):
 
 ## 执行前检查
 
-- [ ] 读取设计、`AGENTS.md` 与使用的执行技能；按 `using-git-worktrees` 检查现有附属工作树/当前 feature 分支，保留已有 Monaco 提交，不从默认分支丢失它们。
-- [ ] 记录 `git status --short`、`git rev-parse HEAD` 和既有 Test4 的路径/hash，避免把旧包当成含新功能的产物。
-- [ ] 使用 `.venv/Scripts/python.exe` 运行测试；已有浏览器交互测试使用本机 Node。打包沿用当前 Electron 路径，真实安装版若运行中只读检查，不自动停止或覆盖安装。
-- [ ] 实现时在本计划勾选进度；每个任务先 red 测试再实现，验证通过后单独提交。文档/锁文件更新归入其相关任务。
+- [x] 读取设计、`AGENTS.md` 与使用的执行技能；按 `using-git-worktrees` 检查现有附属工作树/当前 feature 分支，保留已有 Monaco 提交，不从默认分支丢失它们。
+- [x] 记录 `git status --short`、`git rev-parse HEAD` 和既有 Test4 的路径/hash，避免把旧包当成含新功能的产物。
+- [x] 使用 `.venv/Scripts/python.exe` 运行测试；已有浏览器交互测试使用本机 Node。打包沿用当前 Electron 路径，真实安装版若运行中只读检查，不自动停止或覆盖安装。
+- [x] 实现时在本计划勾选进度；每个任务先 red 测试再实现，验证通过后单独提交。文档/锁文件更新归入其相关任务。
 
 ## Task 1：stdio 协议、位置与文件边界
 
@@ -109,7 +109,7 @@ class NavigationError(Exception):
 - `project_file_path(root: Path, relative: str) -> Path` 在现有 files.py 暴露既有 `_entry` 校验。
 - `file_uri(root: Path, relative: str) -> str`；`normalize_definitions(root: Path, result: object) -> tuple[list[dict], list[str]]`；`validate_position(text: str, position: dict) -> None`。后一个返回 reason code 列表以区分没有定义和不可打开目标。
 
-- [ ] **Step 1：写失败测试。** 测 Unicode Content-Length、分片/合并读取、重复/缺失/负数/超长头、非对象 JSON、EOF；测文件 URI round trip、Location/LocationLink、同目标去重、错误范围、越界与 UTF-16。
+- [x] **Step 1：写失败测试。** 测 Unicode Content-Length、分片/合并读取、重复/缺失/负数/超长头、非对象 JSON、EOF；测文件 URI round trip、Location/LocationLink、同目标去重、错误范围、越界与 UTF-16。
 
 ```python
 import io
@@ -146,8 +146,8 @@ def test_outside_and_virtual_definitions_do_not_open(tmp_path):
 
 伪 LSP helper 支持 `initialize`、echo、可延迟 definition、服务端 configuration 请求及取消通知，通过命令行 `--mode split|reorder|exit|hang` 选择故障。测试以 ProcessScope 启动 `sys.executable tests/helpers/navigation-lsp.py`，不借助真实 LSP 验证协议。
 
-- [ ] **Step 2：确认 red。** Run `.venv/Scripts/python.exe -m pytest tests/test_language_protocol.py tests/test_language_paths.py -q`；初次应为缺少新模块，随后具体断言失败须有对应根因。
-- [ ] **Step 3：实现协议与边界。** 使用一个持续读任务和一个写锁。阻塞管道 IO 放在线程中，Future 回调通过事件循环投递；解析错误/子进程退出使所有 pending request 明确失败，不挂住 Future。头最多 8 KiB，frame 最多 16 MiB。request ID 与浏览器 ID 分离。服务端请求未实现时返回 -32601。
+- [x] **Step 2：确认 red。** Run `.venv/Scripts/python.exe -m pytest tests/test_language_protocol.py tests/test_language_paths.py -q`；初次应为缺少新模块，随后具体断言失败须有对应根因。
+- [x] **Step 3：实现协议与边界。** 使用一个持续读任务和一个写锁。阻塞管道 IO 放在线程中，Future 回调通过事件循环投递；解析错误/子进程退出使所有 pending request 明确失败，不挂住 Future。头最多 8 KiB，frame 最多 16 MiB。request ID 与浏览器 ID 分离。服务端请求未实现时返回 -32601。
 
 ```python
 import json
@@ -165,8 +165,8 @@ def project_file_path(root: Path, relative: str) -> Path:
 
 URI 用 pathlib/urllib 单次解码处理 file scheme；回到项目相对路径后必须调用 project_file_path，不能仅用字符串 startswith 判断。LocationLink 优先 targetSelectionRange。UTF-16 验证按 `len(line.encode('utf-16-le')) // 2`，拒绝越界/拆开 surrogate 的列。目标超出文本的旧位置由导航夹取，协议非法负数范围直接拒绝。
 
-- [ ] **Step 4：green 与回归。** 运行 Task 1 两文件及 `tests/test_workspace_files.py`；增加 Windows junction、ADS、百分号和大小写路径测试。额外验证 request 取消、乱序响应、shutdown hang 后清理自己所属进程。
-- [ ] **Step 5：commit。** `git add sona_code/language_services sona_code/workspace/files.py tests/test_language_protocol.py tests/test_language_paths.py tests/helpers/navigation-lsp.py`；`git commit -m "feat(navigation): add bounded stdio RPC and project URI validation"`。
+- [x] **Step 4：green 与回归。** 运行 Task 1 两文件及 `tests/test_workspace_files.py`；增加 Windows junction、ADS、百分号和大小写路径测试。额外验证 request 取消、乱序响应、shutdown hang 后清理自己所属进程。
+- [x] **Step 5：commit。** `git add sona_code/language_services sona_code/workspace/files.py tests/test_language_protocol.py tests/test_language_paths.py tests/helpers/navigation-lsp.py`；`git commit -m "feat(navigation): add bounded stdio RPC and project URI validation"`。
 
 ## Task 2：固定服务组件、配置适配及源码/许可准备
 
@@ -179,7 +179,7 @@ URI 用 pathlib/urllib 单次解码处理 file scheme；回到项目相对路径
 - `build_launch(bundle: LanguageBundle, family: str, project: Path, settings: AnalysisSettings, cache: Path) -> ServerLaunch`；Task 4 的设置模型完成前只在测试提供相同字段的对象，不安装半成品配置服务。
 - 准备脚本 `--check` 只校验；`--prepare` 可按固定清单联网组装；缺件、过期及篡改均非零退出。运行时不调用准备脚本。
 
-- [ ] **Step 1：red 组件测试。** 用 tmp_path 构造具有真实 hash 的小清单，入口缺失、文件被改、清单漏入口、路径包含 `../`/ADS/junction、版本与源 manifest 不一致须失败。
+- [x] **Step 1：red 组件测试。** 用 tmp_path 构造具有真实 hash 的小清单，入口缺失、文件被改、清单漏入口、路径包含 `../`/ADS/junction、版本与源 manifest 不一致须失败。
 
 ```python
 import json, hashlib
@@ -202,7 +202,7 @@ def test_bundle_rejects_removed_runtime(tmp_path):
 
 缺少其他必需组件可使此最小清单失败；另写完整小清单测试正常包可用，确保失败不是碰巧由其他缺件触发。Run `.venv/Scripts/python.exe -m pytest tests/test_language_bundle.py tests/test_language_adapters.py -q`，确认具体缺失/篡改错误。
 
-- [ ] **Step 2：生成精确输入。** Node 服务 package.json 如下，执行 `npm install --package-lock-only --ignore-scripts --no-audit --no-fund` 生成 lockfile，再在 build 子目录 `npm ci --ignore-scripts`。npm cache 定位 .runtime，不更新根项目 lockfile。
+- [x] **Step 2：生成精确输入。** Node 服务 package.json 如下，执行 `npm install --package-lock-only --ignore-scripts --no-audit --no-fund` 生成 lockfile，再在 build 子目录 `npm ci --ignore-scripts`。npm cache 定位 .runtime，不更新根项目 lockfile。
 
 ```json
 {"name":"sona-language-services","private":true,"version":"1.0.0","dependencies":{"pyright":"1.1.414","typescript-language-server":"6.0.2","typescript":"6.0.3"}}
@@ -210,7 +210,7 @@ def test_bundle_rejects_removed_runtime(tmp_path):
 
 Node Windows x64 固定官方 ZIP 的 SHA 为 `2b0ff57b049cda1bbcea2240eec20467018713c1efe1f7360c2681859b90ed71`，可复用现有已校验 OpenSpec 22.23.3 运行时但新清单独立记录。Temurin ZIP SHA 为 `f9d6e191ab098c0d416e7d588a24420a8621cd2f4720dab2459b8b7b2d2d8b4e`。读取固定 JDT LS 里程碑的官方 .sha256 并将其 64 位摘要写入提交的 manifest；准备脚本以后只信任该已提交值，不抓 latest。
 
-- [ ] **Step 3：实现安全组装和适配。** 资源落在 `runtime/node.exe`、`runtime/jdk/`、`servers/jdtls/`、`servers/node/node_modules/`。解压拒绝绝对路径、越界、链接、同路径重复条目；先校验档案再解压到全新 staging，完整成功才更换 build 目录。递归更换前验证绝对目标在 workspace 的 build 子目录。
+- [x] **Step 3：实现安全组装和适配。** 资源落在 `runtime/node.exe`、`runtime/jdk/`、`servers/jdtls/`、`servers/node/node_modules/`。解压拒绝绝对路径、越界、链接、同路径重复条目；先校验档案再解压到全新 staging，完整成功才更换 build 目录。递归更换前验证绝对目标在 workspace 的 build 子目录。
 
 ```python
 # adapters.py 中 argv 按以下数组构建，launch_paths 返回这些固定键。
@@ -231,9 +231,9 @@ def java_argv(paths: dict, cache: Path) -> list[str]:
 
 Java 发送 autobuild=false、maven/gradle.enabled 按 mode、offline=true、wrapper.enabled=false、annotationProcessing=false、自动源码下载关闭；source_roots/local libraries 形成 unmanaged 项目分析设置。Python 传解释器路径且保留已有 pyright 配置优先级；TS initializationOptions 使用固定 tsserver 文件、禁用自动类型获取及本地 TS 插件加载。用所选版本真实能力核对这些字段，不借用其他版本的同名假设。
 
-- [ ] **Step 4：完成对应源码和许可证目录。** 从固定 release 取 Temurin 对应源码和 Temurin 构建配方，从 JDT LS tag 及其 p2/bundle 元数据取得对应 Eclipse 源码包；核对被再分发的每个受源码义务约束的 bundle 名称/版本与源码映射。build 下保存 LICENSE/NOTICE 原件和 `sources/manifest.json`、源码档案，更新第三方声明。`--check` 同时检查 source archive hash 与组件覆盖。`.gitattributes` 为新 package/lock/manifest/准备脚本固定 LF，避免清单输入经 Windows 检出改变。
-- [ ] **Step 5：green 和首次真实启动。** `.venv/Scripts/python.exe scripts/prepare-language-services.py --prepare` 后执行 `--check`；跑单元测试，再分别启动三服务并 initialize/shutdown，记录 capabilities.definitionProvider。Java source mode 验证两个不同包源码的定义，提前暴露 Maven 项目识别/源码根问题。无法真实解析必须在此修复适配，不推迟到前端完成后用文本搜索替代。
-- [ ] **Step 6：commit。** `git add sona_code/language_services/bundle.py sona_code/language_services/adapters.py packaging/language-services.json packaging/language-services-package scripts/prepare-language-services.py tests/test_language_bundle.py tests/test_language_adapters.py .gitattributes THIRD_PARTY_NOTICES.md`；`git commit -m "feat(navigation): prepare pinned offline language services"`。
+- [x] **Step 4：完成对应源码和许可证目录。** 从固定 release 取 Temurin 对应源码和 Temurin 构建配方，从 JDT LS tag 及其 p2/bundle 元数据取得对应 Eclipse 源码包；核对被再分发的每个受源码义务约束的 bundle 名称/版本与源码映射。build 下保存 LICENSE/NOTICE 原件和 `sources/manifest.json`、源码档案，更新第三方声明。`--check` 同时检查 source archive hash 与组件覆盖。`.gitattributes` 为新 package/lock/manifest/准备脚本固定 LF，避免清单输入经 Windows 检出改变。
+- [x] **Step 5：green 和首次真实启动。** `.venv/Scripts/python.exe scripts/prepare-language-services.py --prepare` 后执行 `--check`；跑单元测试，再分别启动三服务并 initialize/shutdown，记录 capabilities.definitionProvider。Java source mode 验证两个不同包源码的定义，提前暴露 Maven 项目识别/源码根问题。无法真实解析必须在此修复适配，不推迟到前端完成后用文本搜索替代。
+- [x] **Step 6：commit。** `git add sona_code/language_services/bundle.py sona_code/language_services/adapters.py packaging/language-services.json packaging/language-services-package scripts/prepare-language-services.py tests/test_language_bundle.py tests/test_language_adapters.py .gitattributes THIRD_PARTY_NOTICES.md`；`git commit -m "feat(navigation): prepare pinned offline language services"`。
 
 ## Task 3：隔离会话、草稿、查询和文件变化
 
@@ -246,7 +246,7 @@ Java 发送 autobuild=false、maven/gradle.enabled 按 mode、offline=true、wra
 - emit 为 `async emit(message: dict) -> None`，manager 可注入 launch/clock 供测试，生产默认 Task 2 的 build_launch、单调时钟与 ProcessScope。
 - `ProjectWatcher(root: Path, family: str, emit_changes)`：`async start() -> None`、`async saved(path: str) -> None`、`async close() -> None`；emit_changes 接收 LSP FileEvent 数组。
 
-- [ ] **Step 1：red。** 写隔离、单调版本、2 MiB、8 pending/6实例、idle/hb、临时故障、重连generation、关闭后重开路径与 watcher 外部更新测试。
+- [x] **Step 1：red。** 写隔离、单调版本、2 MiB、8 pending/6实例、idle/hb、临时故障、重连generation、关闭后重开路径与 watcher 外部更新测试。
 
 ```python
 # fake_service 为本文件定义的 fixture：创建完整 fixture bundle，
@@ -268,7 +268,7 @@ async def test_unsaved_buffers_are_isolated(fake_service):
 
 fixture 在 project 下写 a.py='original'，manager 的实例字典和 session.documents 仅作测试检查，不作为路由公共 API。Run `.venv/Scripts/python.exe -m pytest tests/test_language_sessions.py tests/test_language_watcher.py -q`。
 
-- [ ] **Step 2：实现 ordered 同步。** 文档记录 path/language/text/version/epoch，拒绝重复或倒退版本；close 后 reopen 要建立新 epoch，并维持当前服务的单调文档版本。open/change 通知与 definition 写入同一 peer 的写队列。初始化前消息只保留有界文档快照，完成后 didOpen，查询返回 analyzing 状态而非永远等待。
+- [x] **Step 2：实现 ordered 同步。** 文档记录 path/language/text/version/epoch，拒绝重复或倒退版本；close 后 reopen 要建立新 epoch，并维持当前服务的单调文档版本。open/change 通知与 definition 写入同一 peer 的写队列。初始化前消息只保留有界文档快照，完成后 didOpen，查询返回 analyzing 状态而非永远等待。
 
 ```python
 # manager.py 的文档记录。
@@ -290,10 +290,10 @@ change_params = {'textDocument': {'uri': uri, 'version': version},
 
 同步通知全文替换必须符合服务 TextDocumentSync 能力。definition 捕获文档 epoch/version 和组 revision，await peer.request 返回后再次核对再 normalize_definitions；cancel 对应 asyncio Task.cancel。saved 只在文件仍注册且磁盘 revision 对应时发 didSave/watcher，不接受浏览器提供任意 file URI。
 
-- [ ] **Step 3：实现生命周期和客户端请求。** key 为 project/editor/family，每次进程重建增加generation，缓存 key 带组件版本并有锁。初始化/查询 timeout 用 asyncio.wait_for。stdout 读任务、stderr 128 KiB 环形尾、watcher 与heartbeat任务均在 close 中回收。只有 manager 自己的 Scope 可以 close；shutdown/exit 超过 3 秒执行 Scope.close。客户端 configuration 回答按 section 返回白名单；registerCapability 只接受项目根内 watcher glob，applyEdit 返回 applied=false，不执行 commands。
-- [ ] **Step 4：实现有界 watcher。** 源码扩展按三family分类，追踪 tsconfig/jsconfig/pyright/pyproject/pom/gradle 等配置；记录 (mtime_ns,size) 和路径，新增/修改/删除生成 FileEvent type 1/2/3；排除 .git、node_modules、.venv、target/build/dist。2 秒扫描分批投递，不阻塞 ASGI 主循环；超过 20,000 回报状态并停止新增跟踪。扫描不穿越 reparse/link。应用保存通知与扫描去重，项目配置变化使状态提示重新分析。
-- [ ] **Step 5：green 与真实进程清理。** 单元测试及 `tests/test_workspace_processes.py tests/test_managed_lifecycle.py`；在 Windows 让伪 LSP 启动一个子进程并中途退出父进程，session.close 后子进程不存在；独立启动的对照进程由测试 finally 自行清理，断言未被 manager 终止。
-- [ ] **Step 6：commit。** `git add sona_code/language_services/manager.py sona_code/language_services/watcher.py tests/test_language_sessions.py tests/test_language_watcher.py tests/helpers/navigation-lsp.py`；`git commit -m "feat(navigation): isolate project language sessions and draft sync"`。
+- [x] **Step 3：实现生命周期和客户端请求。** key 为 project/editor/family，每次进程重建增加generation，缓存 key 带组件版本并有锁。初始化/查询 timeout 用 asyncio.wait_for。stdout 读任务、stderr 128 KiB 环形尾、watcher 与heartbeat任务均在 close 中回收。只有 manager 自己的 Scope 可以 close；shutdown/exit 超过 3 秒执行 Scope.close。客户端 configuration 回答按 section 返回白名单；registerCapability 只接受项目根内 watcher glob，applyEdit 返回 applied=false，不执行 commands。
+- [x] **Step 4：实现有界 watcher。** 源码扩展按三family分类，追踪 tsconfig/jsconfig/pyright/pyproject/pom/gradle 等配置；记录 (mtime_ns,size) 和路径，新增/修改/删除生成 FileEvent type 1/2/3；排除 .git、node_modules、.venv、target/build/dist。2 秒扫描分批投递，不阻塞 ASGI 主循环；超过 20,000 回报状态并停止新增跟踪。扫描不穿越 reparse/link。应用保存通知与扫描去重，项目配置变化使状态提示重新分析。
+- [x] **Step 5：green 与真实进程清理。** 单元测试及 `tests/test_workspace_processes.py tests/test_managed_lifecycle.py`；在 Windows 让伪 LSP 启动一个子进程并中途退出父进程，session.close 后子进程不存在；独立启动的对照进程由测试 finally 自行清理，断言未被 manager 终止。
+- [x] **Step 6：commit。** `git add sona_code/language_services/manager.py sona_code/language_services/watcher.py tests/test_language_sessions.py tests/test_language_watcher.py tests/helpers/navigation-lsp.py`；`git commit -m "feat(navigation): isolate project language sessions and draft sync"`。
 
 ## Task 4：项目设置、WebSocket 与应用生命周期
 
@@ -305,7 +305,7 @@ change_params = {'textDocument': {'uri': uri, 'version': version},
 - 路由固定为设计中的 languages、analysis-settings、code-navigation/{family}。query editor_id 是随机 UUID，连接属于当前 WS，不能用另一个人的 ID 接管现有session。
 - RuntimeState 新增 `language_services`，置 closing 并纳入 `_close`；删除项目时调用 close_project。
 
-- [ ] **Step 1：red 路由测试。** 测 status 不启动进程、settings round trip、secret环境隔离、malformed JSON/消息种类、缺/错 Origin、自定义 prefix、未注册/删除项目、非法family、WS大小限制及关闭。
+- [x] **Step 1：red 路由测试。** 测 status 不启动进程、settings round trip、secret环境隔离、malformed JSON/消息种类、缺/错 Origin、自定义 prefix、未注册/删除项目、非法family、WS大小限制及关闭。
 
 ```python
 from fastapi.testclient import TestClient
@@ -330,7 +330,7 @@ def test_analysis_rejects_unknown_project_without_starting_native(tmp_path):
 
 合法连接测试创建临时 project、注册 terminal_projects，注入 Task 3 fake manager，app.state.runtime.workspace.request 改为抛 AssertionError，确保没有因代码导航启动 OpenCode。Run `.venv/Scripts/python.exe -m pytest tests/test_language_routes.py tests/test_language_settings.py -q`。
 
-- [ ] **Step 2：实现 settings 模型。** 字段见统一契约；禁止额外字段。源码根/JAR 必须普通项目内路径，JDK/Gradle/Python 路径是允许的显式外部运行环境，验证入口存在、无 NUL，不拼 shell。持久化到 config_path 同级 language-services/settings.json，只写独立 app copy，临时保存失败保留原设置。
+- [x] **Step 2：实现 settings 模型。** 字段见统一契约；禁止额外字段。源码根/JAR 必须普通项目内路径，JDK/Gradle/Python 路径是允许的显式外部运行环境，验证入口存在、无 NUL，不拼 shell。持久化到 config_path 同级 language-services/settings.json，只写独立 app copy，临时保存失败保留原设置。
 
 ```python
 from pydantic import BaseModel, ConfigDict, Field
@@ -354,9 +354,9 @@ class AnalysisSettings(BaseModel):
     python: PythonSettings = Field(default_factory=PythonSettings)
 ```
 
-- [ ] **Step 3：实现 routes/runtime。** 抽取现有 `_project_path` 为可供 HTTP/WS 使用的注册表解析器，不改 IDs。校验 Origin 与应用 base URL scheme/host/port 完全一致，缺失 Origin 的浏览器导航接口拒绝；PUT 同样校验。接收端限制 UTF-8 字节大小，单发锁串行输出，未知字段/负数version/id拒绝。settings 更新关闭项目旧服务，frontend 下一次 reanalyze 使用新设置。backend closing 后拒绝新connect。
-- [ ] **Step 4：green。** 跑 Task 4 测试与 `tests/test_workspace.py tests/test_workspace_files.py tests/test_cli.py`，测试 Context 退出始终调用 manager.shutdown，即使其他 shutdown 失败也能清理语言进程；项目删除移除设置/缓存引用但不递归误删其他项目。
-- [ ] **Step 5：commit。** `git add sona_code/language_services/settings.py sona_code/language_services/routes.py sona_code/app.py sona_code/workspace/routes.py tests/test_language_routes.py tests/test_language_settings.py`；`git commit -m "feat(navigation): expose local analysis API and lifecycle"`。
+- [x] **Step 3：实现 routes/runtime。** 抽取现有 `_project_path` 为可供 HTTP/WS 使用的注册表解析器，不改 IDs。校验 Origin 与应用 base URL scheme/host/port 完全一致，缺失 Origin 的浏览器导航接口拒绝；PUT 同样校验。接收端限制 UTF-8 字节大小，单发锁串行输出，未知字段/负数version/id拒绝。settings 更新关闭项目旧服务，frontend 下一次 reanalyze 使用新设置。backend closing 后拒绝新connect。
+- [x] **Step 4：green。** 跑 Task 4 测试与 `tests/test_workspace.py tests/test_workspace_files.py tests/test_cli.py`，测试 Context 退出始终调用 manager.shutdown，即使其他 shutdown 失败也能清理语言进程；项目删除移除设置/缓存引用但不递归误删其他项目。
+- [x] **Step 5：commit。** `git add sona_code/language_services/settings.py sona_code/language_services/routes.py sona_code/app.py sona_code/workspace/routes.py tests/test_language_routes.py tests/test_language_settings.py`；`git commit -m "feat(navigation): expose local analysis API and lifecycle"`。
 
 ## Task 5：独立位置历史和 Ctrl＋左右键
 

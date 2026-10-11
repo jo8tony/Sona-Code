@@ -38,6 +38,10 @@ from sona_code.workspace.manager import WorkspaceError
 from sona_code.workspace.commands import CommandManager
 from sona_code.workspace.lifecycle import ExecutionLedger
 from sona_code.admin.sona_routes import router as sona_router
+from sona_code.language_services.bundle import LanguageBundle
+from sona_code.language_services.manager import LanguageServiceManager
+from sona_code.language_services.settings import AnalysisSettingsStore
+from sona_code.language_services.routes import router as language_router
 
 logger = logging.getLogger("sona_code")
 
@@ -118,6 +122,9 @@ class RuntimeState:
         self.openspec = OpenSpecProjects(config_path)
         self.workspace.environment = self.openspec.environment
         self.terminal.environment = self.openspec.environment
+        analysis_root = Path(config_path).expanduser().resolve().parent / 'language-services'
+        self.analysis_settings = AnalysisSettingsStore(analysis_root)
+        self.language_services = LanguageServiceManager(analysis_root / 'cache', LanguageBundle(), self.analysis_settings)
 
     async def refresh_sona_catalog(self) -> None:
         async with self.sona_refresh_lock:
@@ -182,13 +189,15 @@ class RuntimeState:
             self.workspace.closing = True
             self.terminal.closing = True
             self.commands.closing = True
+            self.language_services.closing = True
             self._close_task = asyncio.create_task(self._close())
         await asyncio.shield(self._close_task)
 
     async def _close(self) -> None:
         failures = []
         for operation in (self.workspace_queue.shutdown, self.workspace.shutdown,
-                          self.terminal.shutdown, self.commands.shutdown, self.upstream_client.aclose):
+                          self.terminal.shutdown, self.commands.shutdown, self.language_services.shutdown,
+                          self.upstream_client.aclose):
             try:
                 await operation()
             except Exception as exc:
@@ -294,6 +303,7 @@ def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
     # 终端 API（REST + WebSocket，同样先于兜底代理路由注册）
     app.include_router(terminal_router, prefix=f"{cfg.server.admin_prefix}/api")
     app.include_router(workspace_router, prefix=f"{cfg.server.admin_prefix}/api")
+    app.include_router(language_router, prefix=f"{cfg.server.admin_prefix}/api")
 
     # 静态 Web UI：admin 路由已注册在前，不会被吞掉 {admin_prefix}/api/*
     static_dir = Path(__file__).parent / "web" / "static"

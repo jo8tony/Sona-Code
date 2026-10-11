@@ -67,3 +67,12 @@ def test_java_does_not_activate_optional_annotation_processors(tmp_path):
     assert 'm2e.apt.core_' not in config
     assert 'jdt.apt.pluggable.core_' not in config
     assert 'org.eclipse.jdt.ls.core_' in config
+
+
+def test_project_jdk_runtime_name_uses_its_release_version(tmp_path):
+    (tmp_path / 'config_win').mkdir()
+    jdk = tmp_path / 'project-jdk'; jdk.mkdir()
+    (jdk / 'release').write_text('JAVA_VERSION="17.0.9"\n')
+    config = settings(); config.java.project_jdk = str(jdk)
+    launch = build_launch(Bundle(tmp_path), 'java', tmp_path, config, tmp_path / 'cache')
+    assert launch.configuration['java']['configuration']['runtimes'][0]['name'] == 'JavaSE-17'

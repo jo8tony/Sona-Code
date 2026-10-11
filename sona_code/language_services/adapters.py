@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import NavigationError
+from .settings import jdk_runtime_name
 
 SYSTEM_ENV = {'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP', 'USERPROFILE',
               'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA',
@@ -88,7 +89,7 @@ def build_launch(bundle, family: str, project: Path, settings, cache: Path) -> S
                               'referencedLibraries': {'include': java.libraries or ['lib/**/*.jar'],
                                                       'exclude': [], 'sources': {}}}}
         if java.project_jdk:
-            config['configuration']['runtimes'] = [{'name': 'JavaSE-21', 'path': java.project_jdk, 'default': True}]
+            config['configuration']['runtimes'] = [{'name': jdk_runtime_name(Path(java.project_jdk)), 'path': java.project_jdk, 'default': True}]
         configuration = {'java': config}
         initialize['initializationOptions'] = {'settings': configuration}
         argv = [str(paths['java']), '-Xmx1G', '-Declipse.application=org.eclipse.jdt.ls.core.id1',

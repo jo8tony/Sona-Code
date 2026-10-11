@@ -22,7 +22,7 @@ class FileError(Exception):
         super().__init__(detail)
 
 
-def _entry(root: Path, relative: str) -> Path:
+def _entry(root: Path, relative: str, *, directory: bool = False) -> Path:
     parts = relative.split("/")
     if (not relative or "\\" in relative or "\0" in relative
             or any(p in {"", ".", ".."} or ":" in p for p in parts)
@@ -36,7 +36,9 @@ def _entry(root: Path, relative: str) -> Path:
             raise FileError(400, "不支持编辑符号链接或重解析点")
     if not current.resolve(strict=True).is_relative_to(root.resolve()):
         raise FileError(400, "文件必须位于项目目录内")
-    if not current.is_file():
+    if directory and not current.is_dir():
+        raise FileError(400, "请选择普通目录")
+    if not directory and not current.is_file():
         raise FileError(400, "请选择普通文件")
     return current
 
@@ -56,6 +58,16 @@ def _bytes(path: Path) -> tuple[bytes, os.stat_result]:
 def project_file_path(root: Path, relative: str) -> Path:
     """Validate an existing ordinary project file using the editor boundary."""
     return _entry(root, relative)
+
+
+def project_directory_path(root: Path, relative: str) -> Path:
+    """Apply the same component boundary to an analysis source directory."""
+    if relative == '.':
+        resolved = root.resolve(strict=True)
+        if not resolved.is_dir():
+            raise FileError(400, "请选择普通目录")
+        return resolved
+    return _entry(root, relative, directory=True)
 
 
 def _document(raw: bytes, info: os.stat_result) -> dict:

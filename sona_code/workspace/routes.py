@@ -70,9 +70,14 @@ def _project_info(item: dict) -> dict:
 
 
 def _project_path(request: Request, project_id: str) -> str:
-    for item in request.app.state.runtime.terminal_projects.list():
+    return str(registered_project_path(request.app.state.runtime, project_id))
+
+
+def registered_project_path(runtime, project_id: str) -> Path:
+    """Resolve the shared registry for both HTTP and code-navigation sockets."""
+    for item in runtime.terminal_projects.list():
         if _project_id(item["path"]) == project_id:
-            return str(Path(item["path"]).expanduser().resolve())
+            return Path(item["path"]).expanduser().resolve()
     raise HTTPException(status_code=404, detail="项目不存在")
 
 
@@ -173,6 +178,8 @@ async def remove_project(project_id: str, request: Request) -> dict:
     path = _project_path(request, project_id)
     await request.app.state.runtime.workspace_queue.discard(project_id)
     deleted = request.app.state.runtime.terminal_projects.delete(path)
+    await request.app.state.runtime.language_services.close_project(project_id)
+    await asyncio.to_thread(request.app.state.runtime.analysis_settings.remove, project_id)
     await request.app.state.runtime.workspace.stop(path)
     return {"ok": deleted}
 
