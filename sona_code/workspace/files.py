@@ -53,6 +53,11 @@ def _bytes(path: Path) -> tuple[bytes, os.stat_result]:
     return raw, info
 
 
+def project_file_path(root: Path, relative: str) -> Path:
+    """Validate an existing ordinary project file using the editor boundary."""
+    return _entry(root, relative)
+
+
 def _document(raw: bytes, info: os.stat_result) -> dict:
     if any(value < 32 and value not in {9, 10, 12, 13} for value in raw):
         raise FileError(415, "二进制文件无法在代码编辑器中打开")
