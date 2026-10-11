@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -10,6 +11,9 @@ mode = argparse.ArgumentParser()
 mode.add_argument('--mode', default='normal')
 args = mode.parse_args()
 lock = threading.Lock()
+documents = {}
+cancellations = 0
+client_requests = {}
 
 
 def send(message):
@@ -29,6 +33,13 @@ def echo(message):
     send({'jsonrpc': '2.0', 'id': message['id'], 'result': params.get('value')})
 
 
+def definition(message):
+    time.sleep(.15)
+    uri = message['params']['textDocument']['uri'].rsplit('/', 1)[0] + '/target.py'
+    send({'jsonrpc': '2.0', 'id': message['id'], 'result': [{'uri': uri, 'range': {
+        'start': {'line': 0, 'character': 4}, 'end': {'line': 0, 'character': 10}}}]})
+
+
 while True:
     headers = {}
     while True:
@@ -44,12 +55,41 @@ while True:
         initialize_id = message['id']
         send({'jsonrpc': '2.0', 'id': 'config', 'method': 'workspace/configuration', 'params': {'items': [{}]}})
     elif message.get('id') == 'config':
-        send({'jsonrpc': '2.0', 'id': initialize_id, 'result': {'capabilities': {'textDocumentSync': 1}, 'configuration': message.get('result')}})
+        send({'jsonrpc': '2.0', 'id': initialize_id, 'result': {'capabilities': {'textDocumentSync': 2 if args.mode == 'analysis' else 1, 'definitionProvider': True}, 'configuration': message.get('result')}})
+    elif message.get('id') in client_requests:
+        response = {'error': message['error']} if 'error' in message else {'result': message.get('result')}
+        send({'jsonrpc': '2.0', 'id': client_requests.pop(message['id']), **response})
+    elif method == 'textDocument/didOpen':
+        doc = message['params']['textDocument']; documents[doc['uri']] = doc
+    elif method == 'textDocument/didChange':
+        params = message['params']; doc = documents[params['textDocument']['uri']]
+        doc['text'] = params['contentChanges'][0]['text']; doc['version'] = params['textDocument']['version']
+    elif method == 'textDocument/didClose':
+        documents.pop(message['params']['textDocument']['uri'], None)
+    elif method == 'textDocument/definition':
+        threading.Thread(target=definition, args=(message,), daemon=True).start()
+    elif method == 'test/documents':
+        send({'jsonrpc': '2.0', 'id': message['id'], 'result': documents})
+    elif method == 'test/cancellations':
+        send({'jsonrpc': '2.0', 'id': message['id'], 'result': cancellations})
+    elif method == 'test/spawn-child':
+        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+        send({'jsonrpc': '2.0', 'id': message['id'], 'result': child.pid})
+    elif method == 'test/stop-reading':
+        send({'jsonrpc': '2.0', 'id': message['id'], 'result': None})
+        time.sleep(30)
+    elif method in ('test/client-applyEdit', 'test/client-command'):
+        client_id = 'client-' + str(message['id']); client_requests[client_id] = message['id']
+        requested = 'workspace/applyEdit' if method.endswith('applyEdit') else 'workspace/executeCommand'
+        send({'jsonrpc': '2.0', 'id': client_id, 'method': requested, 'params': {}})
     elif method == 'echo':
         threading.Thread(target=echo, args=(message,), daemon=True).start()
     elif method == 'exit-now':
         os._exit(0)
+    elif method == 'bad-id':
+        send({'jsonrpc': '2.0', 'id': [], 'result': None})
     elif method == '$/cancelRequest':
+        cancellations += 1
         send({'jsonrpc': '2.0', 'method': 'cancelled', 'params': message['params']})
     elif method == 'shutdown' and args.mode != 'hang':
         send({'jsonrpc': '2.0', 'id': message['id'], 'result': None})

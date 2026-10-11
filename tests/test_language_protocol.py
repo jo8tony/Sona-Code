@@ -100,3 +100,44 @@ async def test_hung_shutdown_kills_owned_process():
     await asyncio.wait_for(rpc.close(), 5)
     assert rpc.process.poll() is not None
     assert rpc.scope.closed
+
+
+@pytest.mark.asyncio
+async def test_malformed_response_fails_pending_immediately():
+    rpc = peer()
+    try:
+        with pytest.raises(NavigationError) as error:
+            await rpc.request('bad-id', {}, timeout=.2)
+        assert error.value.code != 'timeout'
+    finally:
+        await rpc.close()
+
+
+@pytest.mark.asyncio
+async def test_parent_exit_fails_request_even_when_child_holds_stdout():
+    rpc = peer()
+    try:
+        await rpc.request('test/spawn-child', {})
+        with pytest.raises(NavigationError) as error:
+            await rpc.request('exit-now', {}, timeout=.3)
+        assert error.value.code == 'service_exit'
+    finally:
+        await rpc.close()
+
+
+@pytest.mark.asyncio
+async def test_request_deadline_includes_a_blocked_stdin_write():
+    rpc = peer()
+    task = None
+    try:
+        await rpc.request('test/stop-reading', {})
+        task = asyncio.create_task(rpc.request('echo', {'value': 'x' * (2 * 1024 * 1024)}, timeout=.1))
+        await asyncio.wait({task}, timeout=.5)
+        assert task.done(), 'request must not hang while writing to a stopped service'
+        assert isinstance(task.exception(), NavigationError)
+        assert task.exception().code == 'timeout'
+    finally:
+        await asyncio.to_thread(rpc.scope.close)
+        if task:
+            task.cancel(); await asyncio.gather(task, return_exceptions=True)
+        await rpc.close()

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python/FastAPI、现有 ProcessScope/Windows Job、原生 JavaScript、Monaco 0.57.0、JDT LS、Pyright、TypeScript Language Server、Node.js、Temurin JDK、Electron/NSIS。
 
-**Spec:** `docs/superpowers/specs/2026-10-11-project-code-navigation-design.md`（用户于 2026-10-11 指示“开始开发”，已确认该具体设计；本计划等待审阅及执行方式选择）。
+**Spec:** `docs/superpowers/specs/2026-10-11-project-code-navigation-design.md`（用户于 2026-10-11 确认设计与本计划，选择当前会话执行）。
 
 ## Global Constraints
 

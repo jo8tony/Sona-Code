@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+from contextlib import suppress
 from typing import BinaryIO
 
 from .errors import NavigationError
@@ -72,6 +73,7 @@ class JsonRpcPeer:
         self._handlers = set()
         self._reader = asyncio.create_task(self._read())
         self._stderr = asyncio.create_task(self._drain_stderr())
+        self._monitor = asyncio.create_task(self._wait_process())
         self._close_task = None
 
     async def _write(self, message: dict) -> None:
@@ -80,9 +82,15 @@ class JsonRpcPeer:
             if self._failure:
                 raise self._failure
             try:
-                await asyncio.to_thread(self._write_bytes, data)
+                await asyncio.wait_for(asyncio.to_thread(self._write_bytes, data), 3)
+            except TimeoutError as exc:
+                error = NavigationError('service_unresponsive', '语言服务无法接收消息')
+                self._fail(error)
+                raise error from exc
             except (OSError, ValueError) as exc:
-                raise NavigationError('service_exit', '语言服务已退出') from exc
+                error = NavigationError('service_exit', '语言服务已退出')
+                self._fail(error)
+                raise error from exc
 
     def _write_bytes(self, data):
         self.process.stdin.write(data)
@@ -96,18 +104,23 @@ class JsonRpcPeer:
         future = asyncio.get_running_loop().create_future()
         self.pending[request_id] = future
         try:
-            await self._write({'jsonrpc': '2.0', 'id': request_id, 'method': method, 'params': params})
-            return await asyncio.wait_for(future, timeout)
+            async with asyncio.timeout(timeout):
+                await self._write({'jsonrpc': '2.0', 'id': request_id, 'method': method, 'params': params})
+                return await future
         except (asyncio.CancelledError, asyncio.TimeoutError) as exc:
             try:
-                await self.notify('$/cancelRequest', {'id': request_id})
-            except NavigationError:
+                await asyncio.wait_for(self.notify('$/cancelRequest', {'id': request_id}), .2)
+            except (NavigationError, TimeoutError):
                 pass
             if isinstance(exc, asyncio.CancelledError):
                 raise
             raise NavigationError('timeout', '语言服务请求超时') from exc
         finally:
             self.pending.pop(request_id, None)
+            if not future.done():
+                future.cancel()
+            elif not future.cancelled():
+                future.exception()
 
     async def notify(self, method: str, params: dict) -> None:
         await self._write({'jsonrpc': '2.0', 'method': method, 'params': params})
@@ -130,8 +143,9 @@ class JsonRpcPeer:
                 await self._call(self.on_notification, method, message.get('params', {}))
         except Exception:
             if 'id' in message and not self._failure:
-                await self._write({'jsonrpc': '2.0', 'id': request_id,
-                                   'error': {'code': -32601, 'message': 'Client request rejected'}})
+                with suppress(NavigationError):
+                    await self._write({'jsonrpc': '2.0', 'id': request_id,
+                                       'error': {'code': -32601, 'message': 'Client request rejected'}})
 
     async def _read(self):
         try:
@@ -139,6 +153,11 @@ class JsonRpcPeer:
                 message = await asyncio.to_thread(read_frame, self.process.stdout)
                 if message is None:
                     raise NavigationError('service_exit', '语言服务已退出')
+                request_id = message.get('id')
+                if (message.get('jsonrpc') != '2.0'
+                        or 'id' in message and request_id is not None and type(request_id) not in {int, str}
+                        or 'method' in message and (not isinstance(message['method'], str) or not message['method'])):
+                    raise NavigationError('invalid_frame', '语言服务 RPC 消息格式无效')
                 if isinstance(message.get('method'), str):
                     task = asyncio.create_task(self._handle(message))
                     self._handlers.add(task)
@@ -151,10 +170,19 @@ class JsonRpcPeer:
                         else:
                             future.set_result(message.get('result'))
         except (NavigationError, OSError, ValueError) as exc:
-            self._failure = exc if isinstance(exc, NavigationError) else NavigationError('service_exit', '语言服务连接已关闭')
-            for future in list(self.pending.values()):
-                if not future.done():
-                    future.set_exception(self._failure)
+            self._fail(exc if isinstance(exc, NavigationError) else NavigationError('service_exit', '语言服务连接已关闭'))
+
+    def _fail(self, error):
+        self._failure = self._failure or error
+        for future in list(self.pending.values()):
+            if not future.done():
+                future.set_exception(self._failure)
+
+    async def _wait_process(self):
+        await asyncio.to_thread(self.process.wait)
+        # Drain replies already in the pipe before reporting process exit.
+        await asyncio.sleep(.05)
+        self._fail(NavigationError('service_exit', '语言服务已退出'))
 
     async def _drain_stderr(self):
         try:
@@ -175,16 +203,18 @@ class JsonRpcPeer:
     async def _close(self):
         self._closing = True
         try:
-            await self.request('shutdown', {}, timeout=2)
-            await self.notify('exit', {})
-            await asyncio.to_thread(self.process.wait, timeout=1)
+            async with asyncio.timeout(3):
+                await self.request('shutdown', {}, timeout=2)
+                await self.notify('exit', {})
+                await asyncio.to_thread(self.process.wait, timeout=1)
         except Exception:
             pass
         finally:
             await asyncio.to_thread(self.scope.close)
-            await asyncio.gather(self._reader, self._stderr, return_exceptions=True)
+            await asyncio.gather(self._reader, self._stderr, self._monitor, return_exceptions=True)
             for task in list(self._handlers):
                 task.cancel()
             await asyncio.gather(*self._handlers, return_exceptions=True)
             for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
-                stream.close()
+                with suppress(OSError, ValueError):
+                    stream.close()
