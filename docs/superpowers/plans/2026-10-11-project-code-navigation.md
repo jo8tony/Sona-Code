@@ -577,7 +577,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Clean offline rebuild failed' }
 ```
 
 再用重建产物运行六语言smoke，确认--check不联网、不重建上游OpenCode。故障和修复均记录在report，重新生成受影响的kit后才能交付。
-- [ ] **Step 7：提交结果并推送。** 输出installer、source、offline-kit、third-party-sources的独立SHA-256；用户收到新包后可与我们并行测试。按现有授权推送feature分支，成功才报告上传成功；若GitHub仍403/网络重置，交付本地commit和source，明确阻塞，不重复索要密码/令牌或未经授权改repo权限。创建PR时按app要求attach。
+- [x] **Step 7：提交结果并推送。** 输出installer、source、offline-kit、third-party-sources的独立SHA-256；用户收到新包后可与我们并行测试。按现有授权推送feature分支，成功才报告上传成功；若GitHub仍403/网络重置，交付本地commit和source，明确阻塞，不重复索要密码/令牌或未经授权改repo权限。创建PR时按app要求attach。
 
 ## 自审与执行交接
 
