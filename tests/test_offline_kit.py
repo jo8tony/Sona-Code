@@ -4,6 +4,9 @@ import importlib.util
 import json
 import shutil
 import sys
+import os
+import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -96,3 +99,38 @@ def test_manifest_paths_must_be_relative(payload, path):
     (kit / "manifest.json").write_text(json.dumps(manifest))
     with pytest.raises(RuntimeError, match="path"):
         kit_module().verify_kit(kit, source)
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows junction deletion boundary')
+@pytest.mark.parametrize('link_kind', ['ancestor', 'target', 'none'])
+def test_offline_copy_rejects_target_and_ancestor_junctions(tmp_path, link_kind):
+    project, external, prepared = [tmp_path / name for name in ('project', 'external', 'prepared')]
+    for directory in (project, external, prepared):
+        directory.mkdir()
+    (prepared / 'asset').write_text('new')
+    victim = external / 'language-services'; victim.mkdir()
+    sentinel = victim / 'sentinel'; sentinel.write_text('retain')
+    target = project / 'build' / 'language-services'
+    if link_kind != 'ancestor':
+        target.parent.mkdir()
+    root = Path(__file__).parents[1]
+    script = (root / 'scripts/build-offline-windows.ps1').read_text(encoding='utf-8')
+    helper = re.search(r'(?ms)^function Copy-PreparedDirectory\b.*?^}', script).group(0)
+    quote = lambda path: "'" + str(path).replace("'", "''") + "'"
+    setup = ''
+    if link_kind != 'none':
+        link = target.parent if link_kind == 'ancestor' else target
+        destination = external if link_kind == 'ancestor' else victim
+        setup = f'New-Item -ItemType Junction -Path {quote(link)} -Target {quote(destination)} | Out-Null\n'
+    test_script = tmp_path / 'copy-test.ps1'
+    test_script.write_text("$ErrorActionPreference = 'Stop'\n$ProjectDir = " + quote(project) + '\n' +
+                           setup + helper + '\nCopy-PreparedDirectory ' + quote(prepared) + ' ' + quote(target), encoding='utf-8')
+    result = subprocess.run(['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(test_script)],
+                            capture_output=True, timeout=15, creationflags=subprocess.CREATE_NO_WINDOW)
+    assert sentinel.read_text() == 'retain', 'Recursive copy must never delete outside the project'
+    if link_kind == 'none':
+        assert result.returncode == 0, result.stderr
+        assert (target / 'asset').read_text() == 'new'
+    else:
+        assert result.returncode != 0, 'Junction must be rejected before deletion or copying'
+        assert not (victim / 'asset').exists()

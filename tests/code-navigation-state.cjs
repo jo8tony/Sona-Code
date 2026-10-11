@@ -120,7 +120,17 @@ const find=(root,text)=>{if(root.text===text||root.textContent===text)return roo
   } else if(scenario==='limit') {
     const huge=doc('b.ts',2,'中'.repeat(800000));client.change(huge);
     assert.ok(status.some(s=>s.state==='document_limit'));assert.ok(!socket.sent.some(m=>m.text===huge.text));
-    const result=client.definition(a,{line:0,character:1}).catch(e=>e);assert.equal((await result).code,'document_limit');
+    assert.equal((await client.definition(huge,{line:0,character:1}).catch(e=>e)).code,'document_limit');
+    const healthy=client.definition(a,{line:0,character:1}).catch(e=>e);await tick();
+    const m=socket.sent.filter(m=>m.type==='definition').at(-1);
+    assert.ok(m,'An oversized sibling must not block a healthy source');
+    socket.result(m,{targets:[target('c.ts')]});assert.equal((await healthy)[0].path,'c.ts');
+    const mixed=await query();socket.result(mixed.m,{targets:[target('b.ts'),target('c.ts')]});
+    assert.deepEqual((await mixed.pending).map(t=>t.path),['c.ts'],'Never use disk positions for paused target drafts');
+    const paused=await query();const blocked=paused.pending.catch(e=>e);socket.result(paused.m);
+    assert.equal((await blocked).code,'document_limit');
+    client.change(doc('b.ts',3,'small again'));await advance(150);
+    const restored=await query();socket.result(restored.m);assert.equal((await restored.pending)[0].path,'b.ts');
   } else if(scenario==='unavailable') {
     socket.receive({type:'status',state:'unavailable',generation:1,message:'missing component'});
     const result=client.definition(a,{line:0,character:1}).catch(e=>e);assert.equal((await result).code,'unavailable');

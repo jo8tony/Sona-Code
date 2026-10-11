@@ -44,7 +44,7 @@ function createCodeNavigation({monaco, editor, canvas, client, snapshot, openTar
       if (!targets.length) { onError("未找到可打开的定义"); return false; }
       const target = targets.length === 1 ? targets[0] : await candidates(targets);
       if (!target || !valid()) return false;
-      return await openTarget(source.projectId, target.path, range(target.range), {recordHistory: true});
+      return await openTarget(source.projectId, target.path, range(target.range), {recordHistory: true, navigationGuard: valid});
     } catch (error) {
       if (valid() && !["cancelled", "stale"].includes(error.code) && error.name !== "AbortError") onError(error.message);
       return false;

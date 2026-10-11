@@ -36,6 +36,18 @@ function Copy-PreparedDirectory([string]$Source, [string]$Target) {
     if (-not $ResolvedTarget.StartsWith($ProjectDir + "\", [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Build target escapes project: $ResolvedTarget"
     }
+    # A lexical prefix does not protect against a junction in build or the target.
+    $TargetComponent = $ResolvedTarget
+    while ($true) {
+        try { $ComponentItem = Get-Item -LiteralPath $TargetComponent -Force -ErrorAction Stop }
+        catch [System.Management.Automation.ItemNotFoundException] { $ComponentItem = $null }
+        if ($ComponentItem -and ($ComponentItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+            throw "Build target contains a reparse point: $TargetComponent"
+        }
+        if ($TargetComponent.Equals($ProjectDir, [System.StringComparison]::OrdinalIgnoreCase)) { break }
+        $TargetComponent = Split-Path -Parent $TargetComponent
+        if (-not $TargetComponent) { throw "Cannot verify build target: $ResolvedTarget" }
+    }
     if (Test-Path -LiteralPath $ResolvedTarget) { Remove-Item -LiteralPath $ResolvedTarget -Recurse -Force }
     Copy-Item -LiteralPath $Source -Destination $ResolvedTarget -Recurse -Force
 }

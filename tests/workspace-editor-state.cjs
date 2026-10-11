@@ -29,6 +29,7 @@ function harness(preferences = {}) {
   const storage = new Map([['sona-code:editor-preferences', JSON.stringify(preferences)]]);
   let selected;
   const locations = [], errors = [], languageCalls = [];
+  const actions = [], cursors = [], modelChanges = [];
   const client = {open:s=>languageCalls.push(['open',s]),change:s=>languageCalls.push(['change',s]),
     close:(...args)=>languageCalls.push(['close',...args]),saved:(...args)=>languageCalls.push(['saved',...args]),
     setActive:(...args)=>languageCalls.push(['active',...args]),dispose:()=>languageCalls.push(['dispose']),
@@ -38,11 +39,12 @@ function harness(preferences = {}) {
     view: {scrollTop:0}, layout() {}, focus() {this.textFocus=true;}, hasTextFocus() {return this.textFocus;},
     getSelection() {return this.selection;}, setSelection(value) {this.selection=value;}, revealRangeInCenter() {},
     getPosition() {return {lineNumber:this.selection.startLineNumber,column:this.selection.startColumn};},
-    getModel() {return selected;}, addAction() {return {dispose(){}};}, onDidChangeModel() {return {dispose(){}};},
+    getModel() {return selected;}, addAction(action) {actions.push(action);return {dispose(){}};},
+    onDidChangeModel(fn) {modelChanges.push(fn);return {dispose(){}};},
     updateOptions(options) { this.options = options; },
-    setModel(model) { selected = model;this.selection={startLineNumber:1,startColumn:1,endLineNumber:1,endColumn:1}; },
+    setModel(model) { selected = model;this.selection={startLineNumber:1,startColumn:1,endLineNumber:1,endColumn:1};modelChanges.forEach(fn=>fn()); },
     saveViewState() { return JSON.parse(JSON.stringify(this.view)); },
-    restoreViewState(value) {this.view=value;}, onDidChangeCursorPosition() {return {dispose(){}};}, dispose() {},
+    restoreViewState(value) {this.view=value;}, onDidChangeCursorPosition(fn) {cursors.push(fn);return {dispose(){}};}, dispose() {},
   };
   const monaco = {
     Uri: { from: value => JSON.stringify(value) },
@@ -104,7 +106,7 @@ function harness(preferences = {}) {
     walk(root);
     return found;
   };
-  return { api, requests, editor, models, find, root, listeners, timers, locations, errors, languageCalls, selected: () => selected,
+  return { api, requests, editor, models, find, root, listeners, timers, locations, errors, languageCalls, client, actions, cursors, selected: () => selected,
     fireTimers() {const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn());} };
 }
 const data = content => ({ content, revision: 'a'.repeat(64), read_only: false, encoding: 'utf-8', eol: 'LF' });
@@ -218,6 +220,28 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
     assert.equal(await late,false);assert.equal(h.models.size,0);assert.equal(h.selected(),null);assert.equal(h.root.children[0].hidden,true);
     const next=h.api.open({id:'p',name:'P'},'c.txt');h.requests.shift()(data('fresh'));await next;
     assert.equal(h.find('后退').disabled,true,'Panel close clears history');h.api.dispose();
+  } else if (process.argv[2] === 'definition-load-cancel') {
+    for (const trigger of ['cursor','draft','group','suspend','success']) {
+      const h=harness();let revision=0;const subscribers=[],opened=new Set();
+      const changed=()=>{revision++;subscribers.forEach(fn=>fn('p','typescript'));};
+      h.client.subscribe=fn=>{subscribers.push(fn);return()=>{};};h.client.stamp=()=>String(revision);
+      h.client.open=s=>{opened.add(s.path);changed();};h.client.close=(_,path)=>{if(opened.delete(path))changed();};
+      h.client.change=changed;
+      h.client.definition=async()=>[{path:'b.ts',range:{start:{line:0,character:0},end:{line:0,character:1}}}];
+      const initial=h.api.open({id:'p',name:'P'},'a.ts');h.requests.shift()(data('source'));await initial;
+      const jumping=h.actions.find(a=>a.id==='sona-code.goto-definition').run();await tick();
+      assert.equal(h.requests.length,1,'Definition resolved but target GET remains pending');
+      if(trigger==='cursor'){h.editor.selection={startLineNumber:1,startColumn:2,endLineNumber:1,endColumn:2};h.cursors.forEach(fn=>fn({position:{lineNumber:1,column:2}}));}
+      if(trigger==='draft'){h.selected().value='draft';h.selected().change();}
+      if(trigger==='group')changed();
+      if(trigger==='suspend')h.api.suspend();
+      h.requests.shift()(data('target'));const navigated=await jumping;
+      assert.equal(navigated,trigger==='success',trigger+' must be checked before activation');
+      assert.equal(h.selected().value,trigger==='success'?'target':trigger==='draft'?'draft':'source');
+      assert.equal(h.find('后退').disabled,trigger!=='success','Cancelled target must not enter history');
+      assert.equal(h.locations.length,trigger==='success'?2:1);
+      assert.equal(h.errors.length,0);h.api.dispose();
+    }
   } else if (process.argv[2] === 'navigation-order') {
     const h=harness();const a=h.api.open({id:'p',name:'P'},'a.txt');h.requests.shift()(data('a'));await a;
     const b=h.api.openTarget('p','b.txt'), c=h.api.openTarget('p','c.txt');

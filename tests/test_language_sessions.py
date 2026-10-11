@@ -52,7 +52,14 @@ async def test_offline_import_error_is_visible_and_preserves_drafts(service, met
     await session.handle(opened('unsaved'))
     await session._notification(method, payload)
     assert any(m['type'] == 'status' and m['state'] == 'import_failed' and 'dependency' in m['message'] for m in service[2])
+    for kind in ('begin', 'end'):
+        await session._notification('$/progress', {'value': {'kind': kind}})
+        assert service[2][-1]['state'] == 'import_failed' and 'dependency' in service[2][-1]['message']
     assert session.documents['a.py'].text == 'unsaved' and session.ready.is_set()
+    await session.handle({'type': 'reanalyze', 'id': 2})
+    await asyncio.wait_for(session._restart_task, 4)
+    await asyncio.wait_for(session._init_task, 4)
+    assert service[2][-1]['state'] == 'ready'
 
 
 @pytest.mark.asyncio

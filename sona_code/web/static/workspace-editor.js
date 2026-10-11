@@ -200,7 +200,7 @@ function createWorkspaceEditor(root, callbacks) {
     }
     return true;
   }
-  async function load(file) {
+  async function load(file, {deferAnalysis = false} = {}) {
     const generation = file.generation = (file.generation || 0) + 1;
     const valid = () => !disposed && files.get(file.key) === file && file.generation === generation;
     file.loading = true; file.notice = ""; render();
@@ -221,7 +221,8 @@ function createWorkspaceEditor(root, callbacks) {
       file.autoPaused = false;
       file.editing = preferences.defaultEditing && !data.read_only;
       file.loading = false;
-      const source = documentSnapshot(file); if (source) client.open(source);
+      file.analysisPending = deferAnalysis;
+      const source = documentSnapshot(file); if (source && !deferAnalysis) client.open(source);
       if (current === file) activate(file);
       return true;
     } catch (error) {
@@ -233,8 +234,8 @@ function createWorkspaceEditor(root, callbacks) {
     if (!project) return false;
     return openTarget(project.id, path);
   }
-  async function openTarget(projectId, path, selection, {recordHistory = true, viewState = null, historyMove = false} = {}) {
-    if (disposed) return false;
+  async function openTarget(projectId, path, selection, {recordHistory = true, viewState = null, historyMove = false, navigationGuard = null} = {}) {
+    if (disposed || navigationGuard && !navigationGuard()) return false;
     const project = callbacks.projects().find(item => item.id === projectId);
     if (!project) {
       if (historyMove) throw {status: 404, detail: "项目已移除"};
@@ -248,10 +249,10 @@ function createWorkspaceEditor(root, callbacks) {
       file = { key, projectId, projectName: project.name, path, editing: false,
         model: null, data: null, saved: "", loading: true, saving: false, notice: "" };
       files.set(key, file);
-      render(); show(); file.pending = load(file);
+      render(); show(); file.pending = load(file, {deferAnalysis: true});
     }
     if (file.pending) await file.pending;
-    if (disposed || stamp !== navigationGeneration || files.get(key) !== file) return false;
+    if (disposed || stamp !== navigationGeneration || files.get(key) !== file || navigationGuard && !navigationGuard()) return false;
     if (!file.model) {
       files.delete(key); render();
       if (!files.size) hide();
@@ -262,6 +263,10 @@ function createWorkspaceEditor(root, callbacks) {
     // Existing models keep their drafts; failed or superseded loads never change the active model.
     const keepSelection = current === file && !selection ? from?.selection : null;
     activate(file); show();
+    if (file.analysisPending) {
+      file.analysisPending = false;
+      const source = documentSnapshot(file); if (source) client.open(source);
+    }
     if (viewState) editor.restoreViewState(viewState);
     const bounded = applySelection(selection || keepSelection);
     if (bounded && !viewState) editor.revealRangeInCenter(bounded);

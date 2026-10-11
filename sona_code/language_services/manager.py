@@ -86,6 +86,7 @@ class NavigationSession:
         self.closed = False
         self._failure = None
         self._build_errors = {}
+        self._notification_error = None
         self._sync_kind = 1
         self._save_text = False
         self._versions, self._epochs, self._pending_acks, self._queries = {}, {}, {}, {}
@@ -99,7 +100,9 @@ class NavigationSession:
         self._expiry_task = asyncio.create_task(self._expiry())
 
     async def _status(self, state, message):
-        if state == 'ready' and self._build_errors:
+        if state in {'ready', 'indexing'} and self._notification_error:
+            state, message = 'import_failed', self._notification_error
+        elif state == 'ready' and self._build_errors:
             state, message = 'import_failed', '离线构建导入失败，可检查缓存或切回源码模式：' + next(iter(self._build_errors.values()))
         await self.emit({'type': 'status', 'state': state, 'message': str(message)[:512], 'generation': self.generation})
 
@@ -196,7 +199,8 @@ class NavigationSession:
                                    '本地语言服务已就绪' if value.get('kind') == 'end' else '正在分析项目')
         elif isinstance(params, dict) and ((method == 'window/showMessage' and params.get('type') == 1)
                                           or (method == 'language/status' and params.get('type') == 'Error')):
-            await self._status('import_failed', '项目分析失败，可检查离线依赖或切回源码模式：' + str(params.get('message', '未知错误'))[:400])
+            self._notification_error = '项目分析失败，可检查离线依赖或切回源码模式：' + str(params.get('message', '未知错误'))[:400]
+            await self._status('import_failed', self._notification_error)
         elif method == 'textDocument/publishDiagnostics' and self.family == 'java' and isinstance(params, dict):
             imports = self.launch.configuration.get('java', {}).get('import', {})
             uri = params.get('uri', '')
@@ -402,6 +406,7 @@ class NavigationSession:
         self.revision += 1
         self._failure = None
         self._build_errors.clear()
+        self._notification_error = None
         self._init_task = asyncio.create_task(self._initialize())
 
     async def check_expiry(self):

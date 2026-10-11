@@ -195,7 +195,7 @@ function createLanguageClient({urlFor, onStatus, onError}) {
     const family = workspaceLanguageFamily(snapshot.language);
     const g = groups.get(keyFor(snapshot.projectId, family));
     if (disposed || !g) throw failure("unsupported", "此语言暂不支持定义跳转");
-    if (Array.from(g.documents.values()).some(entry => entry.tooLarge)) throw failure("document_limit", "同组草稿超过 2 MiB，无法查询定义");
+    if (g.documents.get(snapshot.path)?.tooLarge) throw failure("document_limit", "当前草稿超过语义分析容量，缩小后可恢复分析");
     if (!g.ready) throw failure(g.state === "unavailable" ? "unavailable" : "indexing", "语言服务尚未就绪，请稍后重试或重新分析");
     const entry = g.documents.get(snapshot.path), revision = stamp(snapshot);
     const valid = () => !disposed && revision === stamp(snapshot) && entry === g.documents.get(snapshot.path) &&
@@ -206,14 +206,15 @@ function createLanguageClient({urlFor, onStatus, onError}) {
     await waitForSync(Promise.all(Array.from(g.documents.values(), d => flush(g, d))), signal);
     if (signal?.aborted) throw aborted();
     if (!valid()) throw failure("stale", "草稿已变化，请重新查询");
-    const syncError = Array.from(g.documents.values()).find(d => d.error)?.error; if (syncError) throw syncError;
+    const syncError = Array.from(g.documents.values()).find(d => !d.tooLarge && d.error)?.error; if (syncError) throw syncError;
     if (Array.from(g.pending.values()).filter(p => p.kind === "definition").length >= 8) throw failure("request_limit", "待处理定义查询已达上限");
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw failure("timeout", "定义查询超时，请重新分析");
     const result = await request(g, {type: "definition", path: snapshot.path, version: snapshot.version, position}, remaining, signal);
     if (!valid() || result.version !== snapshot.version || result.path !== snapshot.path || result.epoch !== entry.wireEpoch)
       throw failure("stale", "定义结果已过期");
-    const targets = result.targets || [];
+    const targets = (result.targets || []).filter(target => !g.documents.get(target.path)?.tooLarge);
+    if (!targets.length && result.targets?.length) throw failure("document_limit", "定义目标草稿超过语义分析容量，缩小后可恢复分析");
     if (!targets.length && result.rejected?.length) throw failure("unsupported_target", "定义位于项目外、依赖源码或不可打开的文件");
     return targets;
   }
