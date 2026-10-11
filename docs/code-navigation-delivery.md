@@ -2,6 +2,8 @@
 
 本次交付覆盖 Java、Python、JS、JSX、TS、TSX 的本地项目定义跳转，Ctrl＋左右箭头位置历史，以及原有预览、编辑、保存和自动保存功能。操作与项目配置见 [code-navigation.md](code-navigation.md)，内网重建步骤见 [monaco-offline.md](monaco-offline.md)。
 
+优先使用内网 npm/pip、缺少版本时回退本地包，以及可清理目录、源码 Git 提交范围和 GitHub 登录方式见 [内网打包与依赖说明](intranet-build-and-dependencies.md)。
+
 ## 交付文件
 
 产物放在仓库 `dist/` 下，生成文件不提交 Git。每个 zip/exe 旁均提供独立 `.sha256`，完整验收记录放在 `dist/navigation-validation/`。

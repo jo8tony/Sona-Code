@@ -266,7 +266,7 @@ npm run desktop:build
 
 推送到 `main` 分支会触发 `.github/workflows/build-windows.yml`：在 Windows x64 环境运行测试、构建 PyInstaller sidecar，并生成两种 NSIS 安装程序：原有 Tauri 版与内置 Chromium 的 Electron 版。Actions 分别上传 `sona-code-windows-x64`、`sona-code-windows-x64-electron`。
 
-Windows 本机也可执行：
+Windows 本机有外网时也可执行：
 
 ```powershell
 python -m venv .venv-build
@@ -278,7 +278,9 @@ npm run desktop:build:windows
 npm run desktop:build:windows:electron
 ```
 
-Windows 构建会根据 `packaging/opencode.json` 下载并校验固定的 OpenCode x64 baseline 发布资产，并将其与 Python sidecar 一起写入安装包。构建机需能访问 GitHub Releases；Electron 构建机还需下载 Electron、electron-builder 和 NSIS 的构建依赖。把 `dist/electron/Sona-Code-*-Setup.exe` 拷贝到内网 Win10 x64 机器安装即可；安装或启动时无需下载 WebView2、OpenCode、Python 或 Chromium。Electron 版沿用原有本地服务和数据目录，界面、托盘及目录选择均可使用，安装包比 Tauri 版大。Windows 原生终端仍需 Win10 1809 或更新版本提供 ConPTY。
+Windows 构建会根据 `packaging/opencode.json` 准备并校验固定版本的 OpenCode，将其与 Python sidecar 一起写入安装包。通用准备流程需要上游源码和工具下载；Electron 构建机还需准备 Electron、electron-builder 和 NSIS 的构建依赖。把 `dist/electron/Sona-Code-*-Setup.exe` 拷贝到内网 Win10 x64 机器安装即可；安装或启动时无需下载 WebView2、OpenCode、Python 或 Chromium。Electron 版沿用原有本地服务和数据目录，界面、托盘及目录选择均可使用，安装包比 Tauri 版大。Windows 原生终端仍需 Win10 1809 或更新版本提供 ConPTY。
+
+内网从源码打包请按 [内网打包与依赖说明](docs/intranet-build-and-dependencies.md) 操作：优先内网 npm/pip，缺少锁定版本时使用本地依赖包；文档列出下载依赖、可清理目录和 Git 提交范围。完整本地包的准备与校验见 [Monaco 与离线打包](docs/monaco-offline.md)。`build/`、`dist/`、`node_modules/` 等生成目录已被 Git 忽略，无需上传内网源码仓库。
 
 如可接受继续使用 WebView2，也可以给 Tauri 配置随包运行时以避免安装时联网；本仓库新增的 Electron 版则完全不依赖 WebView2。两种桌面版都监听 `127.0.0.1:8117`，请勿同时运行。
 
