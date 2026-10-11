@@ -368,7 +368,7 @@ class AnalysisSettings(BaseModel):
 - editor 统一 `async openTarget(projectId,path,selection,{recordHistory=true}) -> boolean`；既有 `open(project,path)` 包装此函数，正常 load 完成才记历史。snapshots 不引用可被 dispose 的 model。
 - editor callbacks 增加 projects() 和 locate(projectId,path)；workspace.js 的 locate 直接 tree.locate 到已注册目标，不创建/发送 AI session。
 
-- [ ] **Step 1：red 状态测试。** Python wrapper 按已有测试的 subprocess.run(Node, .cjs, scenario) 运行。新 .cjs 用 fs/vm 读取 history source，以下案例直接验证状态机，另测 limit/deleted/busy/failed/cross-project。
+- [x] **Step 1：red 状态测试。** Python wrapper 按已有测试的 subprocess.run(Node, .cjs, scenario) 运行。新 .cjs 用 fs/vm 读取 history source，以下案例直接验证状态机，另测 limit/deleted/busy/failed/cross-project。
 
 ```javascript
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
@@ -391,8 +391,8 @@ const h = createCodeHistory({capture:()=>current,
 
 Run `.venv/Scripts/python.exe -m pytest tests/test_code_history.py tests/test_workspace_editor.py -q`；旧 editor 测试此时必须能定位预期变更导致的失败。
 
-- [ ] **Step 2：实现历史事务。** record 把当前快照替换再追加成功目标；相等位置去重，截断 forward 与超limit最旧项。move 更新离开快照，串行打开候选，404 跳过，失败维持index；move pending 时不接收重复导航。clear 递增generation，阻止已关闭编辑区晚到promise恢复历史。
-- [ ] **Step 3：接入 editor。** 把按钮/树/标签的 activate 入口分为内部 activate 与用户导航，避免 load/reload/render 误记历史。openTarget 先检查项目、容量和generation，load 失败不破坏原 active model；目标已开直接复用。保存回调继续只更新提交文本baseline，不动草稿。
+- [x] **Step 2：实现历史事务。** record 把当前快照替换再追加成功目标；相等位置去重，截断 forward 与超limit最旧项。move 更新离开快照，串行打开候选，404 跳过，失败维持index；move pending 时不接收重复导航。clear 递增generation，阻止已关闭编辑区晚到promise恢复历史。
+- [x] **Step 3：接入 editor。** 把按钮/树/标签的 activate 入口分为内部 activate 与用户导航，避免 load/reload/render 误记历史。openTarget 先检查项目、容量和generation，load 失败不破坏原 active model；目标已开直接复用。保存回调继续只更新提交文本baseline，不动草稿。
 
 ```javascript
 // 接到 editor 文本焦点的 capture keydown，不能使用“面板可见”代替焦点。
@@ -405,8 +405,8 @@ if (editor.hasTextFocus() && event.ctrlKey && !event.altKey && !event.shiftKey &
 
 插入前进/后退按钮，渲染 canBack/canForward，恢复 viewState 后应用夹取到当前model范围的selection。通过 tree.locate 更新对应项目文件，保留对话选择/草稿，不调用 selectProject 的模型请求路径来实现文件历史。
 
-- [ ] **Step 4：green 与交互。** 更新旧 mock 仅增加真实使用的 focus/selection API；测预览、编辑、IME、聊天焦点不拦截、关闭后迟到目标、标签12满、旧草稿不发GET、跨projecttree同步，以及 Ctrl＋I/S/autosave 原有案例。
-- [ ] **Step 5：commit。** `git add sona_code/web/static/workspace-code-history.js sona_code/web/static/workspace-editor.js sona_code/web/static/workspace-editor.css sona_code/web/static/workspace.js sona_code/web/static/index.html tests/test_code_history.py tests/code-history-state.cjs tests/workspace-editor-state.cjs`；`git commit -m "feat(editor): add code position back and forward history"`。
+- [x] **Step 4：green 与交互。** 更新旧 mock 仅增加真实使用的 focus/selection API；测预览、编辑、IME、聊天焦点不拦截、关闭后迟到目标、标签12满、旧草稿不发GET、跨projecttree同步，以及 Ctrl＋I/S/autosave 原有案例。
+- [x] **Step 5：commit。** `git add sona_code/web/static/workspace-code-history.js sona_code/web/static/workspace-editor.js sona_code/web/static/workspace-editor.css sona_code/web/static/workspace.js sona_code/web/static/index.html tests/test_code_history.py tests/code-history-state.cjs tests/workspace-editor-state.cjs`；`git commit -m "feat(editor): add code position back and forward history"`。
 
 ## Task 6：语言客户端、定义动作和分析设置 UI
 

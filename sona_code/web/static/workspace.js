@@ -637,6 +637,11 @@ function renderWorkspace(view) {
   const main = view.querySelector(".wsp-main");
   const codeEditor = createWorkspaceEditor(main, {
     api, error: message => toast(message, "error"),
+    projects: () => state.projects,
+    locate: (projectId, path) => {
+      const project = state.projects.find(item => item.id === projectId);
+      if (project) return tree.locate(project, path);
+    },
     visibility: visible => {
       for (const child of main.children) if (!child.classList.contains("wsp-editor")) child.inert = visible;
     },

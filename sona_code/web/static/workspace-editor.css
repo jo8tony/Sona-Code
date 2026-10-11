@@ -4,6 +4,7 @@
 .wsp-editor-toolbar { display: flex; gap: 8px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .wsp-editor-path { flex: 1; min-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .wsp-editor-toolbar select { width: 140px; }
+.wsp-editor-toolbar > button[title^="Ctrl+"] { flex-shrink: 0; }
 .wsp-editor button, .wsp-editor select { border: 1px solid var(--border); background: var(--panel); color: var(--text);
   padding: 6px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
 .wsp-editor button:disabled, .wsp-editor select:disabled { opacity: .45; cursor: default; }

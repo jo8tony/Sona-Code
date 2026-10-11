@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("scenario", ["reload", "reopen", "save", "shortcuts", "autosave"])
+@pytest.mark.parametrize("scenario", ["reload", "reopen", "save", "shortcuts", "autosave",
+                                      "history", "navigation-failure", "navigation-close", "navigation-order"])
 def test_editor_delayed_responses(scenario):
     node = shutil.which("node")
     if not node:
