@@ -558,7 +558,7 @@ Tests/smoke使用Task 3 manager和Task 4 routes分别验证后端真实服务、
 - [x] **Step 3：离线用户路径。** blocked HTTP/HTTPS/ALL_PROXY、npm offline、PIP_NO_INDEX环境启动独立sidecar，首次查询每种语言。检查启动资源全为本地，类型包获取/源码附件/wrapper下载关闭；项目依赖在离线fixture中提前准备。真实浏览器A→B→C后退/前进，关闭标签重开、跨项目、12标签限额、reload/settings页draft保留、输入法与焦点均通过。
 - [x] **Step 4：构建并校验新安装包。** `npm run desktop:build:windows:electron`（固定原有ELECTRON_BUILDER_CACHE）；解包测试payload组件与files SHA，用新payload运行smoke并保存report。保留旧Test4，以含 Navigation 的新名字导出测试包。应用真实安装版运行中时只测试独立payload；需用户退出旧版后的桌面验收不能通过强杀或覆盖配置替代。
 - [x] **Step 5：形成交付文档并commit。** docs说明默认源码模式、显式构建导入、环境路径、六语言限制、快捷键冲突、清单版本、商业分发对应源码、实际体积/冷启动/RSS。补安装包/source/offline-kit用法，不把通过sidecar-smoke写成桌面生命周期已通过。Run `git diff --check` 和Task 8相关测试，`git commit -m "test(navigation): verify six-language offline definition workflows"`。
-- [ ] **Step 6：干净内网重打包。** 从最终commit导出源码和新kit，用以下 PowerShell 命令在 workspace/build 内全新目录重建；开始前检查目标目录不存在，已有产物保留。
+- [x] **Step 6：干净内网重打包。** 从最终commit导出源码和新kit，用以下 PowerShell 命令在 workspace/build 内全新目录重建；开始前检查目标目录不存在，已有产物保留。
 
 ```powershell
 $navigationRoot = (Resolve-Path -LiteralPath 'G:\workspace\sona-code').Path
