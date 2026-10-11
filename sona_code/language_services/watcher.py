@@ -33,6 +33,11 @@ class ProjectWatcher:
     def _scan(self):
         result = {}
         limited = False
+        try:
+            if not _ordinary(self.root.lstat()) or not self.root.is_dir():
+                return result, limited
+        except OSError:
+            return result, limited
         # Keep existing entries before admitting new files into a full watch set.
         for relative in self.snapshot:
             try:

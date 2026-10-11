@@ -44,6 +44,32 @@ def opened(text='value = 1', version=1, request_id=1):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('method,payload', [
+    ('window/showMessage', {'type': 1, 'message': 'Offline build import: dependency unavailable'}),
+    ('language/status', {'type': 'Error', 'message': 'Offline build import: dependency unavailable'})])
+async def test_offline_import_error_is_visible_and_preserves_drafts(service, method, payload):
+    session = await connect(service)
+    await session.handle(opened('unsaved'))
+    await session._notification(method, payload)
+    assert any(m['type'] == 'status' and m['state'] == 'import_failed' and 'dependency' in m['message'] for m in service[2])
+    assert session.documents['a.py'].text == 'unsaved' and session.ready.is_set()
+
+
+@pytest.mark.asyncio
+async def test_build_file_diagnostics_report_missing_cache_until_resolved(service):
+    session = await connect(service)
+    session.family = 'java'
+    session.launch.configuration = {'java': {'import': {'maven': {'enabled': True}}}}
+    payload = {'uri': (service[1] / 'pom.xml').as_uri(), 'diagnostics': [
+        {'severity': 1, 'message': 'Cannot access central in offline mode: missing artifact'}]}
+    await session._notification('textDocument/publishDiagnostics', payload)
+    await session._status('ready', 'ready')
+    assert service[2][-1]['state'] == 'import_failed' and 'missing artifact' in service[2][-1]['message']
+    await session._notification('textDocument/publishDiagnostics', {**payload, 'diagnostics': []})
+    assert service[2][-1]['state'] == 'ready'
+
+
+@pytest.mark.asyncio
 async def test_unsaved_buffers_are_isolated_and_never_written(service):
     first = await connect(service)
     second = await connect(service, 'window-two')

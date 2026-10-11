@@ -5,6 +5,18 @@ from types import SimpleNamespace
 from sona_code.language_services.adapters import build_launch
 
 
+def test_source_root_discovery_stops_after_bounded_directories(tmp_path, monkeypatch):
+    from sona_code.language_services import adapters
+    visited = []
+    def walk(*args, **kwargs):
+        for number in range(20002):
+            visited.append(number)
+            yield str(tmp_path / str(number)), [], []
+    monkeypatch.setattr(adapters.os, 'walk', walk)
+    assert adapters._source_roots(tmp_path) == ['.']
+    assert len(visited) <= 20000
+
+
 def settings(mode='source'):
     return SimpleNamespace(java=SimpleNamespace(mode=mode, source_roots=[], libraries=[], project_jdk=None, gradle_home=None),
                            python=SimpleNamespace(interpreter=None))

@@ -85,6 +85,7 @@ class NavigationSession:
         self.ready = asyncio.Event()
         self.closed = False
         self._failure = None
+        self._build_errors = {}
         self._sync_kind = 1
         self._save_text = False
         self._versions, self._epochs, self._pending_acks, self._queries = {}, {}, {}, {}
@@ -98,6 +99,8 @@ class NavigationSession:
         self._expiry_task = asyncio.create_task(self._expiry())
 
     async def _status(self, state, message):
+        if state == 'ready' and self._build_errors:
+            state, message = 'import_failed', '离线构建导入失败，可检查缓存或切回源码模式：' + next(iter(self._build_errors.values()))
         await self.emit({'type': 'status', 'state': state, 'message': str(message)[:512], 'generation': self.generation})
 
     async def _initialize(self):
@@ -191,6 +194,22 @@ class NavigationSession:
             if isinstance(value, dict):
                 await self._status('ready' if value.get('kind') == 'end' else 'indexing',
                                    '本地语言服务已就绪' if value.get('kind') == 'end' else '正在分析项目')
+        elif isinstance(params, dict) and ((method == 'window/showMessage' and params.get('type') == 1)
+                                          or (method == 'language/status' and params.get('type') == 'Error')):
+            await self._status('import_failed', '项目分析失败，可检查离线依赖或切回源码模式：' + str(params.get('message', '未知错误'))[:400])
+        elif method == 'textDocument/publishDiagnostics' and self.family == 'java' and isinstance(params, dict):
+            imports = self.launch.configuration.get('java', {}).get('import', {})
+            uri = params.get('uri', '')
+            if (isinstance(uri, str) and uri.endswith(('/pom.xml', '/build.gradle', '/build.gradle.kts', '/settings.gradle', '/settings.gradle.kts'))
+                    and any(imports.get(mode, {}).get('enabled') for mode in ('maven', 'gradle'))):
+                errors = [str(item.get('message', '构建配置错误'))[:400] for item in params.get('diagnostics', [])[:100]
+                          if isinstance(item, dict) and item.get('severity') == 1]
+                if errors:
+                    if uri in self._build_errors or len(self._build_errors) < 100:
+                        self._build_errors[uri] = errors[0]
+                    await self._status('ready', '本地语言服务已就绪')
+                elif self._build_errors.pop(uri, None) is not None:
+                    await self._status('ready', '本地语言服务已就绪')
 
     async def _watched(self, events):
         if self.closed or not self.ready.is_set():
@@ -214,9 +233,19 @@ class NavigationSession:
         return self._versions[path]
 
     async def _did_open(self, document):
+        text = document.text
+        if self.family == 'python':
+            # Pyright's setFileOpened does not invalidate existing importers.
+            # Replay a restored draft as open(disk), change(draft), just as a
+            # normal editing session, so already analyzed members move too.
+            text = (await asyncio.to_thread(read_file, self.root, document.path))['content']
         await self.rpc.notify('textDocument/didOpen', {'textDocument': {
             'uri': file_uri(self.root, document.path), 'languageId': document.language,
-            'version': self._next_version(document.path), 'text': document.text}})
+            'version': self._next_version(document.path), 'text': text}})
+        if text != document.text:
+            await self.rpc.notify('textDocument/didChange', {'textDocument': {
+                'uri': file_uri(self.root, document.path), 'version': self._next_version(document.path)},
+                'contentChanges': [{'text': document.text}]})
 
     async def handle(self, message: dict) -> None:
         if self.closed:
@@ -372,6 +401,7 @@ class NavigationSession:
         self.generation = self.manager.generation()
         self.revision += 1
         self._failure = None
+        self._build_errors.clear()
         self._init_task = asyncio.create_task(self._initialize())
 
     async def check_expiry(self):

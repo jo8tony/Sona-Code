@@ -538,7 +538,7 @@ SONACODE_BUNDLED_LANGUAGE_SERVICES: app.isPackaged
 - smoke CLI：`--bundle PATH --report PATH [--package-resources PATH] [--offline]`；临时项目和独立配置放.report同级临时目录。结构化report含各语言返回path/range、服务版本、time/RSS和通过/失败。
 - pytest opt-in `SONACODE_TEST_LANGUAGE_NATIVE=1`；组件缺件时原生测试失败，不能在启用后以skip冒充通过。未启用时正常suite只skip这组原生测试。
 
-- [ ] **Step 1：写真实fixture和失败断言。** Java两包、继承、同名类与Maven多模块；Python包/import alias/类成员/同名模块；JS本地import、JSX React组件、TS路径别名与项目引用、TSX组件，目标最初未打开。测位置时使用 fixture 标注找到符号UTF-16列，不能固定一处错误列导致“无定义”误判。
+- [x] **Step 1：写真实fixture和失败断言。** Java两包、继承、同名类与Maven多模块；Python包/import alias/类成员/同名模块；JS本地import、JSX React组件、TS路径别名与项目引用、TSX组件，目标最初未打开。测位置时使用 fixture 标注找到符号UTF-16列，不能固定一处错误列导致“无定义”误判。
 
 ```python
 # 临时JS项目的真实跨未打开文件fixture；六语言各有同类明确输入。
@@ -554,10 +554,10 @@ files = {
 
 Tests/smoke使用Task 3 manager和Task 4 routes分别验证后端真实服务、用户入口；不是stub返回预写定义。JSX/TSX提供本地最小类型fixture，无需联网下载React。Java构建导入测试预备固定Maven/Gradle缓存和工具；source模式与build模式都有证据，缺缓存明确失败。
 
-- [ ] **Step 2：真实服务 green 和回归。** 顺序运行真实六语言（不与全套并发以免现有时间敏感用例抖动），再跑全套 `.venv/Scripts/python.exe -m pytest tests -q`，记录启用/skip项及实际stdout。验证退出无孤儿，外部env密钥不出现在日志，WebSocket故障期间保存正常。
-- [ ] **Step 3：离线用户路径。** blocked HTTP/HTTPS/ALL_PROXY、npm offline、PIP_NO_INDEX环境启动独立sidecar，首次查询每种语言。检查启动资源全为本地，类型包获取/源码附件/wrapper下载关闭；项目依赖在离线fixture中提前准备。真实浏览器A→B→C后退/前进，关闭标签重开、跨项目、12标签限额、reload/settings页draft保留、输入法与焦点均通过。
-- [ ] **Step 4：构建并校验新安装包。** `npm run desktop:build:windows:electron`（固定原有ELECTRON_BUILDER_CACHE）；解包测试payload组件与files SHA，用新payload运行smoke并保存report。保留旧Test4，以含 Navigation 的新名字导出测试包。应用真实安装版运行中时只测试独立payload；需用户退出旧版后的桌面验收不能通过强杀或覆盖配置替代。
-- [ ] **Step 5：形成交付文档并commit。** docs说明默认源码模式、显式构建导入、环境路径、六语言限制、快捷键冲突、清单版本、商业分发对应源码、实际体积/冷启动/RSS。补安装包/source/offline-kit用法，不把通过sidecar-smoke写成桌面生命周期已通过。Run `git diff --check` 和Task 8相关测试，`git commit -m "test(navigation): verify six-language offline definition workflows"`。
+- [x] **Step 2：真实服务 green 和回归。** 顺序运行真实六语言（不与全套并发以免现有时间敏感用例抖动），再跑全套 `.venv/Scripts/python.exe -m pytest tests -q`，记录启用/skip项及实际stdout。验证退出无孤儿，外部env密钥不出现在日志，WebSocket故障期间保存正常。
+- [x] **Step 3：离线用户路径。** blocked HTTP/HTTPS/ALL_PROXY、npm offline、PIP_NO_INDEX环境启动独立sidecar，首次查询每种语言。检查启动资源全为本地，类型包获取/源码附件/wrapper下载关闭；项目依赖在离线fixture中提前准备。真实浏览器A→B→C后退/前进，关闭标签重开、跨项目、12标签限额、reload/settings页draft保留、输入法与焦点均通过。
+- [x] **Step 4：构建并校验新安装包。** `npm run desktop:build:windows:electron`（固定原有ELECTRON_BUILDER_CACHE）；解包测试payload组件与files SHA，用新payload运行smoke并保存report。保留旧Test4，以含 Navigation 的新名字导出测试包。应用真实安装版运行中时只测试独立payload；需用户退出旧版后的桌面验收不能通过强杀或覆盖配置替代。
+- [x] **Step 5：形成交付文档并commit。** docs说明默认源码模式、显式构建导入、环境路径、六语言限制、快捷键冲突、清单版本、商业分发对应源码、实际体积/冷启动/RSS。补安装包/source/offline-kit用法，不把通过sidecar-smoke写成桌面生命周期已通过。Run `git diff --check` 和Task 8相关测试，`git commit -m "test(navigation): verify six-language offline definition workflows"`。
 - [ ] **Step 6：干净内网重打包。** 从最终commit导出源码和新kit，用以下 PowerShell 命令在 workspace/build 内全新目录重建；开始前检查目标目录不存在，已有产物保留。
 
 ```powershell

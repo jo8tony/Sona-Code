@@ -57,3 +57,16 @@ async def test_watcher_excludes_dependencies_links_and_enforces_limit(tmp_path):
     assert len(watcher.snapshot) == 2 and watcher.limited
     assert all('/' not in path for path in watcher.snapshot)
     await watcher.close()
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows project root junction replacement')
+def test_watcher_does_not_scan_replaced_root_junction(tmp_path):
+    root = tmp_path / 'project'; root.mkdir()
+    outside = tmp_path / 'outside'; outside.mkdir(); (outside / 'secret.py').write_text('external')
+    watcher = ProjectWatcher(root, 'python', lambda events: asyncio.sleep(0))
+    root.rmdir()
+    assert subprocess.run(['cmd', '/c', 'mklink', '/J', str(root), str(outside)], capture_output=True).returncode == 0
+    try:
+        assert watcher._scan()[0] == {}
+    finally:
+        root.rmdir()

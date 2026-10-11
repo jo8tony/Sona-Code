@@ -26,7 +26,7 @@ class ServerLaunch:
 def _source_roots(project: Path) -> list[str]:
     roots = []
     # Bounded discovery; never descend dependencies, build output or links.
-    for directory, children, _ in os.walk(project, followlinks=False):
+    for visited, (directory, children, _) in enumerate(os.walk(project, followlinks=False), 1):
         current = Path(directory)
         children[:] = [name for name in children if name not in {'.git', 'node_modules', '.venv', 'target', 'build', 'dist'}
                        and not (current / name).is_symlink()
@@ -35,7 +35,7 @@ def _source_roots(project: Path) -> list[str]:
         if relative.endswith(('src/main/java', 'src/test/java')):
             roots.append(relative)
             children[:] = []
-        if len(roots) >= 100:
+        if len(roots) >= 100 or visited >= 20000:
             break
     return roots or ['.']
 

@@ -292,6 +292,9 @@ def main() -> None:
         if (openspec / "manifest.json").is_file():
             # Match the installed shell's managed command-runner environment.
             env["SONACODE_BUNDLED_OPENSPEC"] = str(openspec)
+        languages = args.recorder.parent / 'tools' / 'language-services'
+        if (languages / 'manifest.json').is_file():
+            env['SONACODE_BUNDLED_LANGUAGE_SERVICES'] = str(languages)
         env.pop("BUN_BE_BUN", None)
         help_result = subprocess.run(
             [str(args.opencode), "--help"], env=env, capture_output=True,

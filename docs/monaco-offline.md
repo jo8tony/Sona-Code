@@ -1,5 +1,7 @@
 # Monaco 编辑器和内网打包
 
+Java、Python、JS、JSX、TS、TSX 的本地项目跳转及 Ctrl＋左右键历史见 [code-navigation.md](code-navigation.md)。完整安装包和内网依赖包包括固定语言服务、JDK/Node、原始许可证及精确对应源码；首次打开无需联网获取这些组件。
+
 代码目录树单击文件即可在对话区域预览，文件树始终可操作，点击其他文件可切换标签。Ctrl/Cmd+I 或“编辑/预览”按钮切换模式，Ctrl/Cmd+S 保存；关闭编辑区返回对话。菜单保留系统打开、文件管理器定位和对话引用。切换文件或设置页会保留未保存内容；关闭文件/面板及退出应用时提示未保存修改。
 
 编辑区的“默认编辑”和“自动保存”是两个独立开关，设置保存在本机浏览器/桌面应用中。启用自动保存后，停止输入 1 秒写入磁盘；保存期间的新输入会在下一次保存处理。外部修改冲突或写入失败时暂停该文件的自动保存，保留草稿；重新加载合并或手动保存成功后恢复。首次使用默认预览、手动保存。
@@ -33,7 +35,7 @@ npm run desktop:build:windows:electron
 
 编辑器资源已提交源码，正常打包只校验资源，不再下载 Monaco。升级编辑器或重建资源时执行 `npm run editor:build`，提交新的资源与 `manifest.json`。
 
-最后一条命令产生 `dist/Sona-Code-Windows-x64-offline-build.zip` 及 `.sha256`。依赖包包含本机已安装的 Node 包与 Electron runtime、Node 可执行程序、Python wheels、NSIS 构建缓存、固定版本的 OpenCode 插件 SDK，以及已验证的固定版本 OpenCode/OpenSpec 工具。不会包含用户配置、密钥、调用记录或本机虚拟环境。
+最后一条命令产生 `dist/Sona-Code-Windows-x64-offline-build.zip` 及 `.sha256`。依赖包包含本机已安装的 Node 包与 Electron runtime、Node 可执行程序、Python wheels、NSIS 构建缓存、固定版本的 OpenCode 插件 SDK、OpenCode/OpenSpec 工具，以及完整 `language-services` 运行时、许可证和对应源码。不会包含用户配置、密钥、调用记录或本机虚拟环境。
 
 ## 在内网从源码重新打包
 
@@ -45,7 +47,7 @@ Expand-Archive .\Sona-Code-Windows-x64-offline-build.zip -DestinationPath D:\
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-offline-windows.ps1 -Kit D:\sona-offline-kit -Python python
 ```
 
-脚本验证依赖包全部 SHA-256 和源码依赖清单，再安装本地 wheels、构建新的 Python sidecar 和 Electron 安装包。Node、Electron、NSIS、Monaco 都使用包内资源，不需要 Rust、Bun、Go 或外网 npm/pip。脚本会重新生成项目内 `node_modules`、`build/openspec` 和离线构建缓存，请在独立的源码副本中运行。缺失/损坏资源或依赖清单变更会停止，不会回退外网下载。
+脚本验证依赖包全部 SHA-256 和源码依赖清单，再安装本地 wheels、构建新的 Python sidecar 和 Electron 安装包。Node、Electron、NSIS、Monaco、语言服务都使用包内资源，不需要 Rust、Bun、Go 或外网 npm/pip。语言准备器仅执行 `--check`。脚本会重新生成项目内 `node_modules`、`build/openspec`、`build/language-services` 和离线构建缓存，请在独立的源码副本中运行。缺失/损坏资源、对应源码缺失或依赖清单变更会停止，不会回退外网下载。
 
 修改业务代码后可以复用依赖包；修改 `package-lock.json`、`pyproject.toml` 或 OpenCode/OpenSpec 的清单、构建脚本与启动器时，需要重新在外网准备依赖包。当前依赖包仅适用 Windows x64 与相同 Python 次版本；macOS/ARM64 需在对应平台准备。
 
