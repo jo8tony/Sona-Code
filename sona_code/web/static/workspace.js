@@ -568,7 +568,7 @@ function renderWorkspace(view) {
       <div class="wsp-main">
         <button class="wsp-todo-trigger" id="wsp-todo-trigger" type="button" aria-label="打开任务进度" aria-controls="wsp-todo-panel" aria-expanded="false" title="打开任务进度" hidden>${workspaceIcon("todo").outerHTML}<span>任务进度</span><small id="wsp-todo-trigger-count"></small></button>
         <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏">${workspaceIcon("panelLeft").outerHTML}</button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title-row"><div class="wsp-title" id="wsp-title">选择项目</div><button class="wsp-locate-session" id="wsp-locate-session" type="button" title="在项目栏中定位当前会话" aria-label="在项目栏中定位当前会话" disabled>${workspaceIcon("locate").outerHTML}</button></div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden>${workspaceIcon("stop").outerHTML}</button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span><button class="wsp-tree-trigger" id="wsp-tree-trigger" type="button" title="打开项目目录树" aria-label="打开项目目录树" aria-controls="wsp-tree" aria-expanded="false">${workspaceIcon("tree").outerHTML}</button></header>
-        <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动<span class="wsp-tab-count" id="wsp-change-count" aria-label="修改文件数量">0</span></button><button class="wsp-tab" type="button" data-wsp-tab="trajectory">轨迹</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button><button class="wsp-tab" type="button" data-wsp-tab="tasks">任务</button></nav>
+        <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动<span class="wsp-tab-count" id="wsp-change-count" aria-label="修改文件数量">0</span></button><button class="wsp-tab" type="button" data-wsp-tab="trajectory">轨迹</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button><button class="wsp-tab" type="button" data-wsp-tab="tasks">任务</button><button class="wsp-tab" type="button" data-wsp-tab="terminal">终端</button></nav>
         <aside class="wsp-todo-panel" id="wsp-todo-panel" aria-label="当前对话任务进度" hidden><div class="wsp-todo-panel-head"><span class="wsp-todo-panel-icon" aria-hidden="true">${workspaceIcon("todo").outerHTML}</span><div><strong>任务进度</strong><small>当前对话 · OpenCode</small></div><button class="wsp-todo-panel-close" id="wsp-todo-panel-close" type="button" aria-label="关闭任务进度" title="关闭任务进度">${workspaceIcon("close").outerHTML}</button></div><div class="wsp-todo-panel-summary"><span id="wsp-todo-summary"></span><strong id="wsp-todo-progress"></strong></div><div class="wsp-todo-progress-track"><span id="wsp-todo-progress-fill"></span></div><ol class="wsp-todo-panel-list" id="wsp-todo-panel-list"></ol><button class="wsp-todo-panel-link" id="wsp-todo-panel-link" type="button">查看任务页 ${workspaceIcon("open").outerHTML}</button></aside>
         <div class="wsp-chat-body" id="wsp-chat-body">
           <div class="wsp-scroll" id="wsp-scroll"><div class="wsp-content" id="wsp-content"></div></div>
@@ -634,6 +634,15 @@ function renderWorkspace(view) {
     projectFiles.set(projectId, entry);
     return entry.promise;
   }
+  const projectTerminal = createWorkspaceTerminal({
+    api, error: message => toast(message, "error"),
+    wsUrl: id => {
+      const url = new URL("api/terminal/ws/" + encodeURIComponent(id), document.baseURI);
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      return url.href;
+    },
+  });
+  addCleanup(() => projectTerminal.dispose());
   const main = view.querySelector(".wsp-main");
   const codeEditor = createWorkspaceEditor(main, {
     api, error: message => toast(message, "error"),
@@ -649,7 +658,7 @@ function renderWorkspace(view) {
       if (project) return tree.locate(project, path);
     },
     visibility: visible => {
-      for (const child of main.children) if (!child.classList.contains("wsp-editor")) child.inert = visible;
+      for (const child of main.children) if (!child.classList.contains("wsp-editor") && !child.classList.contains("wsp-head") && !child.classList.contains("wsp-tabs")) child.inert = visible;
     },
   });
   addCleanup(() => codeEditor.dispose());
@@ -1536,6 +1545,7 @@ function renderWorkspace(view) {
       const projectRow = el("div", { class: "wsp-project-row" }, heading,
         rowMenu([["重命名", () => openRenameProject(project)], ["打开目录", () => openProjectDirectory(project)],
           ["打开目录树", () => openProjectTree(project)],
+          ["打开终端", () => openProjectTerminal(project)],
           ["OpenSpec", () => openProjectOpenSpec(project, async () => {
             if (alive() && state.projectId === project.id) { await loadCommands(project.id); connectEvents(project.id); }
           })],
@@ -2663,6 +2673,11 @@ function renderWorkspace(view) {
   }
 
   function renderMain(forceBottom = false) {
+    const showingTerminal = state.tab === "terminal";
+    content.hidden = showingTerminal;
+    scroll.classList.toggle("wsp-scroll-terminal", showingTerminal);
+    if (showingTerminal) projectTerminal.mount(scroll, activeProject());
+    else projectTerminal.hide();
     composerDock.hidden = state.tab !== "chat";
     const previousTop = scroll.scrollTop;
     const previousMaximum = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
@@ -4124,9 +4139,18 @@ function renderWorkspace(view) {
     } catch (error) { toast("打开目录失败：" + detail(error), "error"); }
   }
 
+  function openProjectTerminal(project) {
+    codeEditor.hide();
+    if (state.projectId !== project.id) selectProject(project.id);
+    state.tab = workspaceSelection.tab = "terminal";
+    persistWorkspaceSelection();
+    renderHeader(); renderMain();
+  }
+
   async function removeProject(project) {
-    if (!await confirmDeletion("删除工作区项目", `确定从工作区列表删除项目“${project.name}”？项目目录和 Sona Code 对话仍保留在磁盘上。`)) return;
+    if (!await confirmDeletion("删除工作区项目", `确定从工作区列表删除项目“${project.name}”？该项目在工作区新建的 Shell 终端将关闭；项目目录和 Sona Code 对话仍保留在磁盘上。`)) return;
     try {
+      await projectTerminal.removeProject(project.id);
       await api(`workspace/projects/${encodeURIComponent(project.id)}`, { method: "DELETE", silent: true });
       state.projects = state.projects.filter((item) => item.id !== project.id);
       state.sessions.delete(project.id);
@@ -4278,6 +4302,7 @@ function renderWorkspace(view) {
   });
   view.querySelectorAll(".wsp-tab").forEach((button) => button.addEventListener("click", () => {
     closeChangePopover();
+    codeEditor.hide();
     if (button.dataset.wspTab === "changes") state.selectedChange = null;
     state.tab = button.dataset.wspTab;
     markVisibleSessionRead();
@@ -4573,6 +4598,7 @@ function renderWorkspace(view) {
       saveDraft();
       suspended = true;
       codeEditor.suspend();
+      projectTerminal.hide();
       cancelSelectedRefresh();
       if (events) events.close();
       events = null; eventProjectId = null;
@@ -4584,6 +4610,7 @@ function renderWorkspace(view) {
       if (disposed || !suspended) return;
       suspended = false;
       codeEditor.resume();
+      if (state.tab === "terminal") projectTerminal.mount(scroll, activeProject());
       markVisibleSessionRead();
       // Retain DOM, drafts, expanded projects and scroll positions; refresh in place.
       updateTrajectoryHeight();

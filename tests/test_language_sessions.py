@@ -24,6 +24,7 @@ async def service(tmp_path):
     project = tmp_path / 'project'; project.mkdir()
     (project / 'a.py').write_text('original', encoding='utf-8')
     (project / 'target.py').write_text('def target():\n    pass\n', encoding='utf-8')
+    (project / 'implementation.py').write_text('def target():\n    pass\n', encoding='utf-8')
     messages = []
     async def emit(message):
         messages.append(message)
@@ -88,7 +89,8 @@ async def test_unsaved_buffers_are_isolated_and_never_written(service):
 
 
 @pytest.mark.asyncio
-async def test_ordered_changes_reopen_versions_and_target_staleness(service):
+@pytest.mark.parametrize('kind', ['definition', 'implementation'])
+async def test_ordered_changes_reopen_versions_and_target_staleness(service, kind):
     session = await connect(service)
     await session.handle(opened('中文😀\nfoo'))
     await session.handle({'type': 'change', 'id': 2, 'path': 'a.py', 'version': 2, 'text': 'draft'})
@@ -100,23 +102,27 @@ async def test_ordered_changes_reopen_versions_and_target_staleness(service):
     await session.handle(opened('reopened', version=3, request_id=5))
     after = list((await session.rpc.request('test/documents', {})).values())[0]
     assert after['version'] > before['version']
-    await session.handle({'type': 'definition', 'id': 6, 'path': 'a.py', 'version': 3, 'position': {'line': 0, 'character': 1}})
+    await session.handle({'type': kind, 'id': 6, 'path': 'a.py', 'version': 3, 'position': {'line': 0, 'character': 1}})
     await session.handle({'type': 'change', 'id': 7, 'path': 'a.py', 'version': 4, 'text': 'changed during query'})
     await asyncio.sleep(.3)
-    assert not any(m.get('id') == 6 and m['type'] == 'definition-result' for m in service[2])
+    assert not any(m.get('id') == 6 and m['type'] == kind + '-result' for m in service[2])
     assert any(m.get('id') == 6 and m.get('code') == 'stale' for m in service[2])
 
 
 @pytest.mark.asyncio
-async def test_definition_targets_and_cancellation_are_real(service):
+@pytest.mark.parametrize('kind', ['definition', 'implementation'])
+async def test_definition_targets_and_cancellation_are_real(service, kind):
     session = await connect(service)
     await session.handle(opened())
-    await session.handle({'type': 'definition', 'id': 2, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
+    await session.handle({'type': kind, 'id': 2, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
     await asyncio.sleep(.3)
-    result = next(m for m in service[2] if m.get('id') == 2 and m['type'] == 'definition-result')
-    assert result['targets'][0]['path'] == 'target.py'
+    result = next(m for m in service[2] if m.get('id') == 2 and m['type'] == kind + '-result')
+    assert result['targets'][0]['path'] == ('implementation.py' if kind == 'implementation' else 'target.py')
+    if kind == 'implementation':
+        assert len(result['targets']) == 1
+        assert len(result['rejected']) == 2
     assert result['generation'] == session.generation
-    await session.handle({'type': 'definition', 'id': 3, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
+    await session.handle({'type': kind, 'id': 3, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
     await asyncio.sleep(.03)
     await session.handle({'type': 'cancel', 'id': 4, 'request_id': 3})
     await asyncio.sleep(.1)
@@ -124,22 +130,23 @@ async def test_definition_targets_and_cancellation_are_real(service):
 
 
 @pytest.mark.asyncio
-async def test_limits_and_invalid_messages_leave_snapshot_intact(service):
+@pytest.mark.parametrize('kind', ['definition', 'implementation'])
+async def test_limits_and_invalid_messages_leave_snapshot_intact(service, kind):
     session = await connect(service)
     await session.handle(opened())
     for index, message in enumerate([
         {'type': 'change', 'path': 'a.py', 'version': 2, 'text': 'x' * (2 * 1024 * 1024 + 1)},
         {'type': 'open', 'path': '../outside.py', 'version': 2, 'text': 'outside', 'language': 'python'},
         {'type': 'executeCommand', 'command': 'evil'},
-        {'type': 'definition', 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': -1}},
+        {'type': kind, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': -1}},
     ], 2):
         with pytest.raises(NavigationError):
             await session.handle({'id': index, **message})
     assert session.documents['a.py'].text == 'value = 1'
     for request_id in range(6, 14):
-        await session.handle({'type': 'definition', 'id': request_id, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
+        await session.handle({'type': kind, 'id': request_id, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
     with pytest.raises(NavigationError) as error:
-        await session.handle({'type': 'definition', 'id': 14, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
+        await session.handle({'type': kind, 'id': 14, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
     assert error.value.code == 'request_limit'
 
 
@@ -261,3 +268,33 @@ async def test_exited_parent_child_is_killed_but_independent_process_survives(se
         if handle:
             kernel.CloseHandle(handle)
         independent.terminate(); independent.wait(timeout=3)
+
+
+@pytest.mark.asyncio
+async def test_missing_implementation_capability_preserves_definitions(service):
+    manager, project, messages, emit = service
+    def without_implementation(*args):
+        launch = fake_launch(*args)
+        launch.argv.append('--no-implementation')
+        return launch
+    manager.launch = without_implementation
+    session = await connect(service)
+    await session.handle(opened())
+    assert next(m for m in reversed(messages) if m['type'] == 'status')['capabilities']['implementation'] is False
+    with pytest.raises(NavigationError) as error:
+        await session.handle({'type': 'implementation', 'id': 2, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
+    assert error.value.code == 'unsupported_implementation'
+    await session.handle({'type': 'definition', 'id': 3, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
+    await asyncio.sleep(.3)
+    assert next(m for m in messages if m.get('id') == 3)['targets'][0]['path'] == 'target.py'
+
+
+@pytest.mark.asyncio
+async def test_definitions_and_implementations_share_request_limit(service):
+    session = await connect(service)
+    await session.handle(opened())
+    for request_id in range(2, 10):
+        await session.handle({'type': 'definition' if request_id % 2 else 'implementation', 'id': request_id, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
+    with pytest.raises(NavigationError) as error:
+        await session.handle({'type': 'implementation', 'id': 10, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
+    assert error.value.code == 'request_limit'

@@ -89,6 +89,7 @@ class NavigationSession:
         self._notification_error = None
         self._sync_kind = 1
         self._save_text = False
+        self._implementation = False
         self._versions, self._epochs, self._pending_acks, self._queries = {}, {}, {}, {}
         self._last_id = 0
         self._last_heartbeat = self._last_activity = manager.clock()
@@ -104,7 +105,8 @@ class NavigationSession:
             state, message = 'import_failed', self._notification_error
         elif state == 'ready' and self._build_errors:
             state, message = 'import_failed', '离线构建导入失败，可检查缓存或切回源码模式：' + next(iter(self._build_errors.values()))
-        await self.emit({'type': 'status', 'state': state, 'message': str(message)[:512], 'generation': self.generation})
+        await self.emit({'type': 'status', 'state': state, 'message': str(message)[:512], 'generation': self.generation,
+                         'capabilities': {'implementation': self._implementation}})
 
     async def _initialize(self):
         try:
@@ -122,6 +124,8 @@ class NavigationSession:
             self.rpc = JsonRpcPeer(process, scope, self._client_request, self._notification)
             result = await self.rpc.request('initialize', self.launch.initialize, self.launch.timeout)
             capabilities = result.get('capabilities', {})
+            implementation = capabilities.get('implementationProvider', False)
+            self._implementation = implementation is True or isinstance(implementation, dict)
             if not capabilities.get('definitionProvider'):
                 raise NavigationError('unsupported_service', '语言服务未提供定义查询')
             sync = capabilities.get('textDocumentSync', 0)
@@ -276,7 +280,7 @@ class NavigationSession:
             self._restart_task = asyncio.create_task(self._restart())
             await self._ack(request_id)
             return
-        if kind not in {'open', 'change', 'close', 'saved', 'definition'}:
+        if kind not in {'open', 'change', 'close', 'saved', 'definition', 'implementation'}:
             raise NavigationError('invalid_message', '不支持此导航消息')
         path = message.get('path')
         if not isinstance(path, str) or len(path) > 4096:
@@ -353,34 +357,36 @@ class NavigationSession:
                     if self.watcher:
                         await self.watcher.saved(path)
                 await self._ack(request_id)
-            elif kind == 'definition':
+            elif kind in {'definition', 'implementation'}:
                 if not self.ready.is_set():
                     raise self._failure or NavigationError('indexing', '语言服务仍在初始化，请稍后重试')
+                if kind == 'implementation' and not self._implementation:
+                    raise NavigationError('unsupported_implementation', '此语言服务暂不支持转到实现')
                 if document.version != message.get('version'):
-                    raise NavigationError('stale_version', '定义查询的文档版本已过期')
+                    raise NavigationError('stale_version', '导航查询的文档版本已过期')
                 validate_position(document.text, message.get('position'))
                 if len(self._queries) >= 8:
-                    raise NavigationError('request_limit', '待处理定义查询已达上限')
+                    raise NavigationError('request_limit', '待处理导航查询已达上限')
                 stamp = (document.epoch, document.version, self.revision, self.generation)
-                task = asyncio.create_task(self._definition(request_id, document, message['position'], stamp))
+                task = asyncio.create_task(self._navigation(kind, request_id, document, message['position'], stamp))
                 self._queries[request_id] = task
 
-    async def _definition(self, request_id, document, position, stamp):
+    async def _navigation(self, kind, request_id, document, position, stamp):
         try:
             async with asyncio.timeout(15):
-                result = await self.rpc.request('textDocument/definition', {'textDocument': {'uri': file_uri(self.root, document.path)}, 'position': position})
+                result = await self.rpc.request('textDocument/' + kind, {'textDocument': {'uri': file_uri(self.root, document.path)}, 'position': position})
                 targets, rejected = await asyncio.to_thread(normalize_definitions, self.root, result)
             current = self.documents.get(document.path)
             if current is None or stamp != (current.epoch, current.version, self.revision, self.generation):
-                raise NavigationError('stale', '草稿已变化，请重新查询定义')
-            await self.emit({'type': 'definition-result', 'id': request_id, 'path': document.path,
+                raise NavigationError('stale', '草稿已变化，请重新查询')
+            await self.emit({'type': kind + '-result', 'id': request_id, 'path': document.path,
                              'version': document.version, 'epoch': document.epoch, 'generation': self.generation,
                              'revision': self.revision, 'targets': targets, 'rejected': rejected})
         except asyncio.CancelledError:
             if not self.closed:
-                await self._error(request_id, NavigationError('cancelled', '定义查询已取消'))
+                await self._error(request_id, NavigationError('cancelled', '导航查询已取消'))
         except (NavigationError, TimeoutError) as exc:
-            await self._error(request_id, exc if isinstance(exc, NavigationError) else NavigationError('timeout', '定义查询超时'))
+            await self._error(request_id, exc if isinstance(exc, NavigationError) else NavigationError('timeout', '导航查询超时'))
         finally:
             self._queries.pop(request_id, None)
 
@@ -405,6 +411,7 @@ class NavigationSession:
         self.generation = self.manager.generation()
         self.revision += 1
         self._failure = None
+        self._implementation = False
         self._build_errors.clear()
         self._notification_error = None
         self._init_task = asyncio.create_task(self._initialize())

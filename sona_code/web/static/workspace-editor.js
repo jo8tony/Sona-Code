@@ -2,6 +2,7 @@
 
 function createWorkspaceEditor(root, callbacks) {
   const files = new Map();
+  const tabNodes = new Map();
   const documentVersions = new Map(), documentEpochs = new Map(), analysisStates = new Map();
   const errorText = error => typeof error.detail === "string" ? error.detail : error.message;
   let current = null, monaco = null, editor = null, opener = null, disposed = false, reopen = false;
@@ -84,6 +85,13 @@ function createWorkspaceEditor(root, callbacks) {
     options, tabs, message, canvas, el("footer", { class: "wsp-editor-status" }, status, analysisStatus,
       el("span", { text: "Ctrl+←/→ 后退/前进 · Ctrl/Cmd+I 预览/编辑 · Ctrl/Cmd+S 保存" })));
   root.append(panel);
+  function layoutPanel() {
+    const nav = root.querySelector?.(".wsp-tabs");
+    if (nav) panel.style.top = Math.max(0, nav.getBoundingClientRect().bottom - root.getBoundingClientRect().top) + "px";
+    editor?.layout();
+  }
+  const layoutObserver = typeof ResizeObserver === "function" ? new ResizeObserver(layoutPanel) : null;
+  layoutObserver?.observe(root);
 
   function endpoint(file, resource = "file") {
     return "workspace/projects/" + encodeURIComponent(file.projectId) + "/" + resource + "?path=" + encodeURIComponent(file.path);
@@ -92,7 +100,7 @@ function createWorkspaceEditor(root, callbacks) {
   function show() {
     if (!disposed) { panel.hidden = false; callbacks.visibility?.(true); }
     const source = documentSnapshot(); client.setActive(source?.projectId, source && workspaceLanguageFamily(source.language));
-    requestAnimationFrame(() => editor?.layout());
+    requestAnimationFrame(layoutPanel);
   }
   function hide() {
     panel.hidden = true;
@@ -102,13 +110,25 @@ function createWorkspaceEditor(root, callbacks) {
   function render() {
     if (disposed) return;
     document.documentElement.dataset.sonaUnsavedCode = String(Array.from(files.values()).some(file => dirty(file) || file.saving));
-    tabs.replaceChildren(...Array.from(files.values(), file => {
-      const select = button((dirty(file) ? "● " : "") + file.path.split("/").at(-1), () => { void openTarget(file.projectId, file.path); }, {
-        role: "tab", "aria-selected": String(current === file), title: file.projectName + "/" + file.path,
-      });
-      return el("div", { class: "wsp-editor-tab" + (current === file ? " active" : "") }, select,
-        button("×", () => closeFile(file), { "aria-label": "关闭文件 " + file.path, title: "关闭此文件" }));
-    }));
+    // Keep buttons mounted: progress or autosave updates can arrive between
+    // pointerdown and click, and replacing the pressed node loses that click.
+    for (const [key, tab] of tabNodes) {
+      if (!files.has(key)) { tab.node.remove(); tabNodes.delete(key); }
+    }
+    for (const file of files.values()) {
+      let tab = tabNodes.get(file.key);
+      if (!tab) {
+        const select = button("", () => { void openTarget(file.projectId, file.path); }, {
+          role: "tab", title: file.projectName + "/" + file.path,
+        });
+        const node = el("div", {class: "wsp-editor-tab"}, select,
+          button("×", () => closeFile(file), {"aria-label": "关闭文件 " + file.path, title: "关闭此文件"}));
+        tab = {node, select}; tabNodes.set(file.key, tab); tabs.append(node);
+      }
+      tab.node.setAttribute("class", "wsp-editor-tab" + (current === file ? " active" : ""));
+      tab.select.textContent = (dirty(file) ? "● " : "") + file.path.split("/").at(-1);
+      tab.select.setAttribute("aria-selected", String(current === file));
+    }
     const file = current;
     title.textContent = file ? file.projectName + " / " + file.path : "代码编辑器";
     title.title = title.textContent;
@@ -143,6 +163,7 @@ function createWorkspaceEditor(root, callbacks) {
       editor.layout();
     }
     render();
+    tabNodes.get(file.key)?.node.scrollIntoView?.({block: "nearest", inline: "nearest"});
   }
   function capturePosition() {
     if (!current?.model || !editor) return null;
@@ -352,12 +373,14 @@ function createWorkspaceEditor(root, callbacks) {
     }
   });
   return { open, openTarget,
+    hide() { ++navigationGeneration; reopen = false; hide(); },
     suspend() { reopen = !panel.hidden; hide(); },
     resume() { if (reopen && files.size) show(); reopen = false; },
     dispose() {
       disposed = true; ++navigationGeneration; history.clear(); window.removeEventListener("beforeunload", beforeUnload);
       document.removeEventListener("keydown", shortcut, true);
       opener?.dispose();
+      layoutObserver?.disconnect();
       navigation?.dispose(); analysisSettings.dispose(); client.dispose();
       editor?.dispose();
       for (const file of files.values()) { clearTimeout(file.autoTimer); file.change?.dispose(); file.model?.dispose(); }

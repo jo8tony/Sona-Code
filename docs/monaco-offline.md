@@ -12,6 +12,8 @@ Java、Python、JS、JSX、TS、TSX 的本地项目跳转及 Ctrl＋左右键历
 
 Java、Python、JS、JSX、TS、TSX 支持 Ctrl＋点击和 F12 项目级跳转，可以打开尚未加载的目标文件，Ctrl＋左右箭头回退和前进。语言服务读取项目已有配置、源码和本地依赖，不自动安装依赖。具体设置与限制见 [code-navigation.md](code-navigation.md)；Go 等其他语言尚未接入项目语言服务。
 
+源码还支持 Ctrl＋Alt＋B / 右键“转到实现”和项目 Shell 终端 Tab，复用随包语言服务及本地 xterm.js，无新增 npm/pip 包或固定组件版本变更。旧 Test7 安装包不包含这次增量；使用最新源码按本文打包后才包含这些功能。
+
 ## 运行时离线
 
 `sona_code/web/static/vendor/monaco/` 已包含构建资源，随源码、wheel、Python sidecar、桌面安装包分发。Monaco 0.57.0、所有内置语言、五个 Worker、CSS、字体及许可证全部从应用本地 HTTP 服务加载，无 CDN；JSON 的外部 schema 请求关闭。

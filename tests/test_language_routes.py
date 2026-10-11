@@ -22,6 +22,7 @@ EDITOR = '33333333-3333-4333-8333-333333333333'
 def analysis_client(tmp_path):
     root = tmp_path / 'project'; root.mkdir(); (root / 'a.py').write_text('original')
     (root / 'target.py').write_text('def target():\n    pass')
+    (root / 'implementation.py').write_text('def target():\n    pass')
     app = create_app(AppConfig(default_upstream='', server={'admin_prefix': '/custom'}, recording={'dir': str(tmp_path / 'records')}),
                      config_path=str(tmp_path / 'config.json'))
     runtime = app.state.runtime
@@ -85,14 +86,16 @@ def until(socket, predicate):
     raise AssertionError('Expected reply missing')
 
 
-def test_socket_drafts_definition_and_project_removal(analysis_client):
+@pytest.mark.parametrize('kind', ['definition', 'implementation'])
+def test_socket_drafts_definition_and_project_removal(analysis_client, kind):
     client, root, runtime, base = analysis_client
     with client.websocket_connect(base + '/code-navigation/python?editor_id=' + EDITOR, headers={'origin': 'http://testserver'}) as socket:
         socket.send_json({'type': 'open', 'id': 1, 'path': 'a.py', 'language': 'python', 'version': 1, 'text': 'unsaved'})
         until(socket, lambda m: m['type'] == 'ack' and m.get('id') == 1)
-        socket.send_json({'type': 'definition', 'id': 2, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
-        target = until(socket, lambda m: m['type'] == 'definition-result')
-        assert target['targets'][0]['path'] == 'target.py'
+        socket.send_json({'type': kind, 'id': 2, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
+        target = until(socket, lambda m: m['type'] == kind + '-result' or m['type'] == 'error')
+        assert target['type'] == kind + '-result'
+        assert target['targets'][0]['path'] == ('implementation.py' if kind == 'implementation' else 'target.py')
         assert (root / 'a.py').read_text() == 'original'
         assert client.delete(base).status_code == 200
         with pytest.raises(WebSocketDisconnect):

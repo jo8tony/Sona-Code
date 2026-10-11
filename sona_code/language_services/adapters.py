@@ -51,6 +51,7 @@ def build_launch(bundle, family: str, project: Path, settings, cache: Path) -> S
                   'capabilities': {
                       'general': {'positionEncodings': ['utf-16']},
                       'textDocument': {'definition': {'linkSupport': True},
+                                       'implementation': {'linkSupport': True},
                                        'synchronization': {'didSave': True}},
                       'workspace': {'configuration': True, 'workspaceFolders': True,
                                     'didChangeWatchedFiles': {'dynamicRegistration': True}},

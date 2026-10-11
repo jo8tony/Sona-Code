@@ -9,6 +9,7 @@ import time
 
 mode = argparse.ArgumentParser()
 mode.add_argument('--mode', default='normal')
+mode.add_argument('--no-implementation', action='store_true')
 args = mode.parse_args()
 lock = threading.Lock()
 documents = {}
@@ -35,9 +36,15 @@ def echo(message):
 
 def definition(message):
     time.sleep(.15)
-    uri = message['params']['textDocument']['uri'].rsplit('/', 1)[0] + '/target.py'
-    send({'jsonrpc': '2.0', 'id': message['id'], 'result': [{'uri': uri, 'range': {
-        'start': {'line': 0, 'character': 4}, 'end': {'line': 0, 'character': 10}}}]})
+    root = message['params']['textDocument']['uri'].rsplit('/', 1)[0]
+    span = {'start': {'line': 0, 'character': 4}, 'end': {'line': 0, 'character': 10}}
+    if message['method'] == 'textDocument/implementation':
+        result = [{'targetUri': root + '/implementation.py', 'targetRange': span, 'targetSelectionRange': span},
+                  {'uri': root + '/../../outside.py', 'range': span},
+                  {'uri': 'jdt://dependency', 'range': span}]
+    else:
+        result = [{'uri': root + '/target.py', 'range': span}]
+    send({'jsonrpc': '2.0', 'id': message['id'], 'result': result})
 
 
 while True:
@@ -55,7 +62,7 @@ while True:
         initialize_id = message['id']
         send({'jsonrpc': '2.0', 'id': 'config', 'method': 'workspace/configuration', 'params': {'items': [{}]}})
     elif message.get('id') == 'config':
-        send({'jsonrpc': '2.0', 'id': initialize_id, 'result': {'capabilities': {'textDocumentSync': 2 if args.mode == 'analysis' else 1, 'definitionProvider': True}, 'configuration': message.get('result')}})
+        send({'jsonrpc': '2.0', 'id': initialize_id, 'result': {'capabilities': {'textDocumentSync': 2 if args.mode == 'analysis' else 1, 'definitionProvider': True, 'implementationProvider': not args.no_implementation}, 'configuration': message.get('result')}})
     elif message.get('id') in client_requests:
         response = {'error': message['error']} if 'error' in message else {'result': message.get('result')}
         send({'jsonrpc': '2.0', 'id': client_requests.pop(message['id']), **response})
@@ -66,7 +73,7 @@ while True:
         doc['text'] = params['contentChanges'][0]['text']; doc['version'] = params['textDocument']['version']
     elif method == 'textDocument/didClose':
         documents.pop(message['params']['textDocument']['uri'], None)
-    elif method == 'textDocument/definition':
+    elif method in ('textDocument/definition', 'textDocument/implementation'):
         threading.Thread(target=definition, args=(message,), daemon=True).start()
     elif method == 'test/documents':
         send({'jsonrpc': '2.0', 'id': message['id'], 'result': documents})

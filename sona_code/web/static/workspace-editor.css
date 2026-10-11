@@ -14,10 +14,11 @@
 .wsp-editor-options { display: flex; gap: 18px; align-items: center; padding: 7px 14px; border-bottom: 1px solid var(--border); font-size: 12px; flex-shrink: 0; }
 .wsp-editor-options label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .wsp-editor-options input { width: auto; margin: 0; accent-color: var(--accent); }
-.wsp-editor-tab { display: flex; border-right: 1px solid var(--border); white-space: nowrap; }
+.wsp-editor-tab { display: flex; flex: 0 0 auto; max-width: 240px; border-right: 1px solid var(--border); white-space: nowrap; }
 .wsp-editor-tab.active { background: var(--panel); box-shadow: inset 0 2px var(--accent); }
 .wsp-editor-tab button { border: 0; border-radius: 0; background: transparent; padding: 10px 12px; }
-.wsp-editor-tab button:last-child { padding-left: 2px; }
+.wsp-editor-tab button:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.wsp-editor-tab button:last-child { flex: 0 0 30px; padding: 10px 6px; }
 .wsp-editor-message { margin: 0; padding: 10px 14px; background: var(--accent-soft); color: var(--text); font-size: 12px; overflow-wrap: anywhere; flex-shrink: 0; }
 .wsp-editor-message[hidden], .wsp-editor-canvas[hidden] { display: none; }
 .wsp-editor-canvas { flex: 1; min-height: 0; width: 100%; position: relative; }

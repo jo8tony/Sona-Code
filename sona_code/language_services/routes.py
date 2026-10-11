@@ -63,6 +63,10 @@ class Definition(Message):
     position: Position
 
 
+class Implementation(Definition):
+    type: Literal['implementation']
+
+
 class Cancel(Message):
     type: Literal['cancel']
     request_id: Identifier
@@ -76,7 +80,7 @@ class Ping(Message):
     type: Literal['ping']
 
 
-NAVIGATION_MESSAGE = TypeAdapter(Annotated[Open | Change | Close | Saved | Definition | Cancel | Reanalyze | Ping,
+NAVIGATION_MESSAGE = TypeAdapter(Annotated[Open | Change | Close | Saved | Definition | Implementation | Cancel | Reanalyze | Ping,
                                          Field(discriminator='type')])
 
 

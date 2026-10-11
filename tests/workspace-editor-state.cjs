@@ -9,15 +9,15 @@ class Element {
     this.events = {};
     this.open = false;
   }
-  append(...items) { this.children.push(...items); }
-  replaceChildren(...items) { this.children = items; }
+  append(...items) { this.children.push(...items); for(const item of items)if(item&&typeof item==='object')item.parent=this; }
+  replaceChildren(...items) { for(const item of this.children)if(item&&typeof item==='object')item.parent=null;this.children = [];this.append(...items); }
   setAttribute(key, value) { this[key] = value; }
   addEventListener(name, callback) { this.events[name] = callback; }
   removeEventListener(name) { delete this.events[name]; }
   showModal() { this.open = true; }
   close() { this.open = false; }
   focus() {}
-  remove() {}
+  remove() {if(this.parent){this.parent.children=this.parent.children.filter(item=>item!==this);this.parent=null;}}
 }
 const source = fs.readFileSync('sona_code/web/static/workspace-editor.js', 'utf8');
 function harness(preferences = {}) {
@@ -27,13 +27,13 @@ function harness(preferences = {}) {
   const listeners = {};
   const timers = new Map(); let timerId = 0;
   const storage = new Map([['sona-code:editor-preferences', JSON.stringify(preferences)]]);
-  let selected;
+  let selected, languageOptions, confirmClose=true;
   const locations = [], errors = [], languageCalls = [];
   const actions = [], cursors = [], modelChanges = [];
   const client = {open:s=>languageCalls.push(['open',s]),change:s=>languageCalls.push(['change',s]),
     close:(...args)=>languageCalls.push(['close',...args]),saved:(...args)=>languageCalls.push(['saved',...args]),
     setActive:(...args)=>languageCalls.push(['active',...args]),dispose:()=>languageCalls.push(['dispose']),
-    reanalyze(){},subscribe:()=>()=>{},stamp:()=> '1',definition:async()=>[]};
+    reanalyze(){},subscribe:()=>()=>{},stamp:()=> '1',definition:async()=>[],implementation:async()=>[]};
   const editor = {
     textFocus: true, selection: {startLineNumber:1,startColumn:1,endLineNumber:1,endColumn:1},
     view: {scrollTop:0}, layout() {}, focus() {this.textFocus=true;}, hasTextFocus() {return this.textFocus;},
@@ -48,7 +48,7 @@ function harness(preferences = {}) {
   };
   const monaco = {
     Uri: { from: value => JSON.stringify(value) },
-    KeyCode:{F12:59},languages: { getLanguages: () => [{ id: 'plaintext' },{id:'typescript'}],registerDefinitionProvider:()=>({dispose(){}}) },
+    KeyMod:{CtrlCmd:2048,Alt:512},KeyCode:{F12:59,KeyB:32},languages: { getLanguages: () => [{ id: 'plaintext' },{id:'typescript'}],registerDefinitionProvider:()=>({dispose(){}}),registerImplementationProvider:()=>({dispose(){}}) },
     editor: {
       create: () => editor,MouseTargetType:{CONTENT_TEXT:6},
       registerEditorOpener: () => ({dispose(){}}),
@@ -76,14 +76,14 @@ function harness(preferences = {}) {
   };
   const context = vm.createContext({
     el: (tag, attrs, ...children) => new Element(tag, attrs, children),
-    window: { addEventListener() {}, removeEventListener() {}, confirm: () => true },
+    window: { addEventListener() {}, removeEventListener() {}, confirm: () => confirmClose },
     document: { body:new Element('body'),documentElement: {dataset: {}}, addEventListener: (name, callback) => {listeners[name] = callback;}, removeEventListener: name => {delete listeners[name];} },
     localStorage: {getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value)},
     setTimeout: fn => {timers.set(++timerId, fn); return timerId;}, clearTimeout: id => timers.delete(id),
     requestAnimationFrame: fn => fn(),
     loadWorkspaceMonaco: async () => monaco,
     workspaceCodeLanguage: (_monaco,path) => path.endsWith('.tsx')||path.endsWith('.ts') ? 'typescript' : 'plaintext',
-    createLanguageClient:()=>client,AbortController,
+    createLanguageClient:options=>{languageOptions=options;return client;},AbortController,
     workspaceLanguageFamily:language=>language==='typescript'||language==='typescriptreact'?'typescript':null,
     console,
   });
@@ -100,13 +100,15 @@ function harness(preferences = {}) {
   const find = text => {
     let found;
     function walk(element) {
-      if (element.text === text) found = element;
+      if ((element.textContent ?? element.text) === text) found = element;
       for (const child of element.children || []) walk(child);
     }
     walk(root);
     return found;
   };
   return { api, requests, editor, models, find, root, listeners, timers, locations, errors, languageCalls, client, actions, cursors, selected: () => selected,
+    analysisStatus: value=>languageOptions.onStatus(value),
+    setConfirm:value=>{confirmClose=value;},
     fireTimers() {const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn());} };
 }
 const data = content => ({ content, revision: 'a'.repeat(64), read_only: false, encoding: 'utf-8', eol: 'LF' });
@@ -250,6 +252,35 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
     h.find('后退').onclick();await tick();assert.equal(h.selected().value,'a','Superseded target does not enter history');
     h.find('b.txt').onclick();await tick();assert.equal(h.selected().value,'b');assert.equal(h.find('前进').disabled,true);
     h.api.dispose();
+  } else if (process.argv[2] === 'tab-hide-draft') {
+    const h=harness({defaultEditing:true});
+    const op=h.api.open({id:'p',name:'P'},'a.ts');h.requests.shift()(data('disk'));await op;
+    h.selected().value='draft';h.selected().change();
+    h.api.hide();assert.equal(h.root.children[0].hidden,true);
+    h.api.suspend();h.api.resume();assert.equal(h.root.children[0].hidden,true,'Route resume does not cover the selected workspace Tab again');
+    await h.api.open({id:'p',name:'P'},'a.ts');
+    assert.equal(h.root.children[0].hidden,false);assert.equal(h.selected().value,'draft');
+    assert.equal(h.requests.length,0,'Reopening a hidden editor preserves models');
+    const late=h.api.openTarget('p','b.ts');h.api.hide();
+    h.requests.shift()(data('late target'));assert.equal(await late,false,'A late file load cannot cover the selected terminal Tab');
+    assert.equal(h.root.children[0].hidden,true);assert.equal(h.selected().value,'draft');
+    h.api.dispose();
+  } else if (process.argv[2] === 'tab-close-progress') {
+    const h=harness();
+    for(let i=0;i<12;i++){const op=h.api.open({id:'p',name:'P'},i+'.ts');h.requests.shift()(data(String(i)));await op;}
+    const tabs=h.root.children[0].children.find(item=>item.role==='tablist');
+    const pressedClose=tabs.children[0].children[1];
+    h.analysisStatus({projectId:'p',family:'typescript',message:'Indexing project'});
+    assert.equal(tabs.children[0].children[1],pressedClose,'Progress between pointerdown and click must keep the pressed close button mounted');
+    h.selected().value='draft';h.selected().change();
+    assert.equal(tabs.children[0].children[1],pressedClose,'Draft updates must preserve every close button');
+    h.setConfirm(false);tabs.children[11].children[1].onclick();
+    assert.equal(h.models.size,12,'Cancelled confirmation preserves the active draft');
+    assert.equal(h.selected().value,'draft');
+    pressedClose.onclick();
+    assert.equal(h.models.size,11,'Closing an inactive tab frees a file slot');
+    const op=h.api.open({id:'p',name:'P'},'new.ts');h.requests.shift()(data('new'));await op;
+    assert.equal(h.models.size,12);h.api.dispose();
   } else if (process.argv[2] === 'language-sync') {
     const h=harness();const a=h.api.open({id:'p',name:'P'},'a.tsx');h.requests.shift()(data('disk'));await a;
     assert.equal(h.languageCalls.find(c=>c[0]==='open')[1].language,'typescriptreact');

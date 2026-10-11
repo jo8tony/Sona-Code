@@ -8,7 +8,8 @@ function workspaceLanguageFamily(language) {
 function createLanguageClient({urlFor, onStatus, onError}) {
   const groups = new Map(), listeners = new Set(), editorId = crypto.randomUUID();
   const failure = (code, message) => Object.assign(new Error(message), {code});
-  const aborted = () => Object.assign(new Error("定义查询已取消"), {name: "AbortError", code: "cancelled"});
+  const aborted = () => Object.assign(new Error("导航查询已取消"), {name: "AbortError", code: "cancelled"});
+  const isNavigation = kind => kind === "definition" || kind === "implementation";
   function waitForSync(promise, signal) {
     return new Promise((resolve, reject) => {
       const finish = (fn, value) => {clearTimeout(timer); signal?.removeEventListener("abort", cancel); fn(value);};
@@ -24,7 +25,7 @@ function createLanguageClient({urlFor, onStatus, onError}) {
   function report(g, state, message) { if (!disposed) onStatus?.({projectId: g.projectId, family: g.family, state, message}); }
   function changed(g) {
     ++g.revision;
-    for (const [id, p] of g.pending) if (p.kind === "definition") {
+    for (const [id, p] of g.pending) if (isNavigation(p.kind)) {
       fire(g, {type: "cancel", request_id: id}); p.reject(failure("stale", "草稿已变化，请重新查询"));
     }
     for (const listener of listeners) listener(g.projectId, g.family);
@@ -35,7 +36,7 @@ function createLanguageClient({urlFor, onStatus, onError}) {
     if (!g) {
       g = {key, projectId, family, documents: new Map(), epochs: new Map(), pending: new Map(),
         revision: 0, connection: 0, generation: null, id: 0, socket: null, ready: false,
-        active: active === key, retryDelay: 1000, state: "initializing"};
+        active: active === key, retryDelay: 1000, state: "initializing", implementation: false};
       groups.set(key, g); if (!g.active) scheduleIdle(g);
     }
     return g;
@@ -57,7 +58,7 @@ function createLanguageClient({urlFor, onStatus, onError}) {
       const cancel = () => { fire(g, {type: "cancel", request_id: id}); finish(reject, aborted()); };
       const p = {kind: message.type, message, resolve: value => finish(resolve, value), reject: error => finish(reject, error)};
       p.timer = setTimeout(() => {
-        if (message.type === "definition") fire(g, {type: "cancel", request_id: id});
+        if (isNavigation(message.type)) fire(g, {type: "cancel", request_id: id});
         p.reject(failure("timeout", "语言服务请求超时，请重新分析"));
       }, timeout);
       g.pending.set(id, p); signal?.addEventListener("abort", cancel, {once: true});
@@ -84,7 +85,7 @@ function createLanguageClient({urlFor, onStatus, onError}) {
   }
   function connect(g) {
     if (disposed || g.socket) return;
-    clearTimeout(g.retry); ++g.connection; g.generation = null; g.id = 0; g.ready = false;
+    clearTimeout(g.retry); ++g.connection; g.generation = null; g.id = 0; g.ready = false; g.implementation = false;
     g.state = "initializing"; g.epochs.clear();
     for (const entry of g.documents.values()) { entry.sent = null; entry.ack = null; entry.error = null; }
     let socket;
@@ -106,6 +107,7 @@ function createLanguageClient({urlFor, onStatus, onError}) {
           rejectPending(g, failure("stale", "语言服务已重新启动")); changed(g);
         }
         g.generation = message.generation; g.state = message.state;
+        g.implementation = message.capabilities?.implementation === true;
         if (message.state === "initializing" || message.state === "unavailable" || message.state === "closed") g.ready = false;
         if (message.state === "ready") { g.ready = true; g.retryDelay = 1000; }
         if (message.state === "unavailable") rejectPending(g, failure("unavailable", message.message || "语言服务不可用"));
@@ -123,8 +125,8 @@ function createLanguageClient({urlFor, onStatus, onError}) {
       }
       if (g.generation === null || message.generation !== g.generation) return;
       const p = g.pending.get(message.id); if (!p) return;
-      if (p.kind === "definition" && message.type === "definition-result") p.resolve(message);
-      else if (p.kind !== "definition" && message.type === "ack" &&
+      if (isNavigation(p.kind) && message.type === p.kind + "-result") p.resolve(message);
+      else if (!isNavigation(p.kind) && message.type === "ack" &&
           (p.message.version === undefined || message.path === p.message.path && message.version === p.message.version)) p.resolve(message);
     });
     socket.addEventListener("close", () => {
@@ -191,34 +193,37 @@ function createLanguageClient({urlFor, onStatus, onError}) {
     const g = groups.get(keyFor(snapshot.projectId, workspaceLanguageFamily(snapshot.language)));
     return g ? `${g.revision}:${g.connection}:${g.generation}` : "";
   }
-  async function definition(snapshot, position, signal) {
+  async function navigation(kind, snapshot, position, signal) {
     const family = workspaceLanguageFamily(snapshot.language);
     const g = groups.get(keyFor(snapshot.projectId, family));
-    if (disposed || !g) throw failure("unsupported", "此语言暂不支持定义跳转");
+    if (disposed || !g) throw failure("unsupported", "此语言暂不支持项目跳转");
     if (g.documents.get(snapshot.path)?.tooLarge) throw failure("document_limit", "当前草稿超过语义分析容量，缩小后可恢复分析");
     if (!g.ready) throw failure(g.state === "unavailable" ? "unavailable" : "indexing", "语言服务尚未就绪，请稍后重试或重新分析");
+    if (kind === "implementation" && !g.implementation) throw failure("unsupported_implementation", "此语言服务暂不支持转到实现");
     const entry = g.documents.get(snapshot.path), revision = stamp(snapshot);
     const valid = () => !disposed && revision === stamp(snapshot) && entry === g.documents.get(snapshot.path) &&
       entry?.snapshot.version === snapshot.version && entry.snapshot.epoch === snapshot.epoch;
     if (!valid()) throw failure("stale", "草稿版本已变化");
-    if (Array.from(g.pending.values()).filter(p => p.kind === "definition").length >= 8) throw failure("request_limit", "待处理定义查询已达上限");
+    if (Array.from(g.pending.values()).filter(p => isNavigation(p.kind)).length >= 8) throw failure("request_limit", "待处理导航查询已达上限");
     const deadline = Date.now() + 15000;
     await waitForSync(Promise.all(Array.from(g.documents.values(), d => flush(g, d))), signal);
     if (signal?.aborted) throw aborted();
     if (!valid()) throw failure("stale", "草稿已变化，请重新查询");
     const syncError = Array.from(g.documents.values()).find(d => !d.tooLarge && d.error)?.error; if (syncError) throw syncError;
-    if (Array.from(g.pending.values()).filter(p => p.kind === "definition").length >= 8) throw failure("request_limit", "待处理定义查询已达上限");
+    if (Array.from(g.pending.values()).filter(p => isNavigation(p.kind)).length >= 8) throw failure("request_limit", "待处理导航查询已达上限");
     const remaining = deadline - Date.now();
-    if (remaining <= 0) throw failure("timeout", "定义查询超时，请重新分析");
-    const result = await request(g, {type: "definition", path: snapshot.path, version: snapshot.version, position}, remaining, signal);
+    if (remaining <= 0) throw failure("timeout", "导航查询超时，请重新分析");
+    const result = await request(g, {type: kind, path: snapshot.path, version: snapshot.version, position}, remaining, signal);
     if (!valid() || result.version !== snapshot.version || result.path !== snapshot.path || result.epoch !== entry.wireEpoch)
-      throw failure("stale", "定义结果已过期");
+      throw failure("stale", "导航结果已过期");
     const targets = (result.targets || []).filter(target => !g.documents.get(target.path)?.tooLarge);
-    if (!targets.length && result.targets?.length) throw failure("document_limit", "定义目标草稿超过语义分析容量，缩小后可恢复分析");
-    if (!targets.length && result.rejected?.length) throw failure("unsupported_target", "定义位于项目外、依赖源码或不可打开的文件");
+    if (!targets.length && result.targets?.length) throw failure("document_limit", "目标草稿超过语义分析容量，缩小后可恢复分析");
+    if (!targets.length && result.rejected?.length) throw failure("unsupported_target", "目标位于项目外、依赖源码或不可打开的文件");
     return targets;
   }
-  return {open: snapshot => update(snapshot, true), change: snapshot => update(snapshot, false), close, definition, stamp,
+  return {open: snapshot => update(snapshot, true), change: snapshot => update(snapshot, false), close,
+    definition: (snapshot, position, signal) => navigation("definition", snapshot, position, signal),
+    implementation: (snapshot, position, signal) => navigation("implementation", snapshot, position, signal), stamp,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     saved(projectId, path, revision) {
       for (const g of groups.values()) if (g.projectId === projectId && g.documents.has(path)) {
