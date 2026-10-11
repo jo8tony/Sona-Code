@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from sona_code.language_services.bundle import ENTRIES, VERSIONS, LanguageBundle, digest
 
-INPUTS = ['packaging/language-services.json', 'packaging/language-services-package/package.json',
+INPUTS = ['THIRD_PARTY_NOTICES.md', 'packaging/language-services.json', 'packaging/language-services-package/package.json',
           'packaging/language-services-package/package-lock.json', 'scripts/prepare-language-services.py']
 
 
@@ -127,7 +127,7 @@ def prepare(output: Path) -> dict:
     if os.name != 'nt':
         raise RuntimeError('The initial language-service bundle targets Windows x64')
     output = _build_path(output)
-    inputs = json.loads((ROOT / INPUTS[0]).read_text(encoding='utf-8'))
+    inputs = json.loads((ROOT / 'packaging/language-services.json').read_text(encoding='utf-8'))
     if inputs['versions'] != VERSIONS:
         raise RuntimeError('Language component pins differ from runtime')
     cache = ROOT / 'build/language-services-cache'; cache.mkdir(parents=True, exist_ok=True)

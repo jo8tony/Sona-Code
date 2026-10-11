@@ -492,7 +492,7 @@ addAction 注册应用F12动作；canvas capture Ctrl＋primary click 用 getTar
 
 **Interfaces:** Electron resource 路径 `resources/tools/language-services`；启动 sidecar 设置 `SONACODE_BUNDLED_LANGUAGE_SERVICES`。开发用 build/language-services。组件不嵌入 PyInstaller onefile，避免每次启动解压大型JDK；sidecar包含后端Python代码，Electron extraResources复制固定组件。
 
-- [ ] **Step 1：red 包校验测试。** fixture 小目录与manifest测试 verifyLanguageServicesBundle 缺/坏node.exe/java.exe/Pyright入口/JDT launcher/对应源码时抛错；offline INPUTS必须包含新manifest/lock/preparer且LF归档hash一致。
+- [x] **Step 1：red 包校验测试。** fixture 小目录与manifest测试 verifyLanguageServicesBundle 缺/坏node.exe/java.exe/Pyright入口/JDT launcher/对应源码时抛错；offline INPUTS必须包含新manifest/lock/preparer且LF归档hash一致。
 
 ```python
 # 在 Task 2 已有完整小组件fixture上创建缺件/篡改矩阵，
@@ -510,7 +510,7 @@ def test_after_pack_rejects_missing_language_entry(language_payload, missing):
 
 language_payload fixture在此文件定义：复用 Task 2 manifest结构创建入口文件和hash，并以 subprocess.run(Node, '-e', script, root, capture_output=True,text=True) 执行。Run `.venv/Scripts/python.exe -m pytest tests/test_language_packaging.py tests/test_desktop_package.py tests/test_offline_kit.py -q`。
 
-- [ ] **Step 2：接外网构建。** build-sidecar 在已有SDK/原组件流程旁调用 prepare-language-services --prepare；package增加语言组件 prepare/check快捷命令。electron-builder新增extraResources，main env增加固定路径；verifyDesktopPackage同时校验新资源和source manifest。
+- [x] **Step 2：接外网构建。** build-sidecar 在已有SDK/原组件流程旁调用 prepare-language-services --prepare；package增加语言组件 prepare/check快捷命令。electron-builder新增extraResources，main env增加固定路径；verifyDesktopPackage同时校验新资源和source manifest。
 
 ```yaml
 # 加到 electron-builder.yml extraResources
@@ -525,9 +525,9 @@ SONACODE_BUNDLED_LANGUAGE_SERVICES: app.isPackaged
   : path.join(__dirname,'..','build','language-services'),
 ```
 
-- [ ] **Step 3：接内网重建。** offline-kit.py INPUTS加入新manifest/Node锁/prepare脚本；sources复制language-services和source archives，校验器检查这些来源。build-offline-windows.ps1 使用现有checked Copy-PreparedDirectory复制kit组件到build；只运行 --check，禁止在此路径 --prepare/npm install。冻结 source-input LF规则，所有输入在commit后的干净git archive上核对。
-- [ ] **Step 4：green。** Task 7测试及旧openspec/native-sdk打包测试通过；`npm run editor:check`和准备脚本--check通过。手动从新bundle复制一个测试副本，删启动入口确认打包失败，不能删正在用的真实bundle。
-- [ ] **Step 5：commit。** 按Files列表逐项stage；`git commit -m "feat(packaging): ship verified offline navigation runtimes"`。
+- [x] **Step 3：接内网重建。** offline-kit.py INPUTS加入新manifest/Node锁/prepare脚本；sources复制language-services和source archives，校验器检查这些来源。build-offline-windows.ps1 使用现有checked Copy-PreparedDirectory复制kit组件到build；只运行 --check，禁止在此路径 --prepare/npm install。冻结 source-input LF规则，所有输入在commit后的干净git archive上核对。
+- [x] **Step 4：green。** Task 7测试及旧openspec/native-sdk打包测试通过；`npm run editor:check`和准备脚本--check通过。手动从新bundle复制一个测试副本，删启动入口确认打包失败，不能删正在用的真实bundle。
+- [x] **Step 5：commit。** 按Files列表逐项stage；`git commit -m "feat(packaging): ship verified offline navigation runtimes"`。
 
 ## Task 8：六语言真实验收、离线重打包和交付
 

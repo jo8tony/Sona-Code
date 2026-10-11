@@ -13,11 +13,18 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from sona_code.language_services.bundle import LanguageBundle
+from sona_code.language_services.errors import NavigationError
+
+LANGUAGE_INPUTS = ['packaging/language-services.json', 'packaging/language-services-package/package.json',
+                   'packaging/language-services-package/package-lock.json', 'scripts/prepare-language-services.py',
+                   'THIRD_PARTY_NOTICES.md']
 INPUTS = ["package-lock.json", "pyproject.toml", "packaging/opencode.json", "packaging/openspec.json",
           "scripts/prepare-opencode.py", "packaging/opencode-locale-plugin.mjs", "scripts/prepare-openspec.py",
           "packaging/openspec-package/package.json", "packaging/openspec-package/package-lock.json",
           "packaging/openspec-launcher/main.go", "packaging/openspec-launcher/offline.cjs", "packaging/command-runner/main.go",
-          "packaging/opencode-sdk/package.json", "packaging/opencode-sdk/package-lock.json", "scripts/prepare-native-sdk.py"]
+          "packaging/opencode-sdk/package.json", "packaging/opencode-sdk/package-lock.json", "scripts/prepare-native-sdk.py"] + LANGUAGE_INPUTS
 
 
 def digest(path: Path) -> str:
@@ -39,6 +46,8 @@ def checked_path(root: Path, name: str) -> Path:
 
 def verify_kit(kit: Path, source: Path) -> dict:
     manifest = json.loads((kit / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get('platform') != 'windows-x64' or set(manifest.get('source_inputs', {})) != set(INPUTS):
+        raise RuntimeError('Offline kit platform or source input inventory is incomplete')
     for section, base in (("files", kit), ("source_inputs", source)):
         if not manifest.get(section):
             raise RuntimeError(f"Empty offline kit section: {section}")
@@ -46,6 +55,20 @@ def verify_kit(kit: Path, source: Path) -> dict:
             path = checked_path(base, name)
             if not path.is_file() or digest(path) != expected:
                 raise RuntimeError(f"Offline kit missing or mismatched: {name}")
+    if 'language-services/manifest.json' not in manifest['files']:
+        raise RuntimeError('Offline kit missing language-services/manifest.json')
+    try:
+        languages = LanguageBundle(kit / 'language-services').check()
+    except NavigationError as exc:
+        raise RuntimeError('Offline language resources incomplete: ' + exc.detail) from exc
+    for name, expected in languages['files'].items():
+        if manifest['files'].get('language-services/' + name) != expected:
+            raise RuntimeError('Offline kit language inventory incomplete: ' + name)
+    if set(languages.get('inputs', {})) != set(LANGUAGE_INPUTS):
+        raise RuntimeError('Offline language input inventory is incomplete')
+    for name, expected in languages['inputs'].items():
+        if manifest['source_inputs'].get(name) != expected:
+            raise RuntimeError('Offline language source input differs from kit: ' + name)
     return manifest
 
 
@@ -62,10 +85,11 @@ def prepare(destination: Path, python: str) -> None:
         raise RuntimeError("Node.js is required for preparation")
     subprocess.run([node, str(ROOT / "scripts/build-editor.mjs"), "--check"], check=True)
     subprocess.run([python, str(ROOT / 'scripts/prepare-native-sdk.py'), '--check'], check=True)
+    subprocess.run([python, str(ROOT / 'scripts/prepare-language-services.py'), '--check'], check=True)
     sources = {"node_modules": ROOT / "node_modules", "openspec": ROOT / "build/openspec",
                "binaries/opencode.exe": ROOT / "src-tauri/binaries/opencode-x86_64-pc-windows-msvc.exe",
                "tools/node.exe": Path(node), "electron-builder-cache": ROOT / ".runtime/electron-builder-cache",
-               "opencode-sdk": ROOT / 'build/opencode-sdk'}
+               "opencode-sdk": ROOT / 'build/opencode-sdk', 'language-services': ROOT / 'build/language-services'}
     required = [ROOT / "node_modules/electron/dist/electron.exe", ROOT / "node_modules/esbuild/bin/esbuild",
                 ROOT / "build/openspec/manifest.json", ROOT / "build/openspec/bin/sona-command-runner.exe",
                 sources["binaries/opencode.exe"], sources["electron-builder-cache"]]

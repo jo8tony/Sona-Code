@@ -134,6 +134,9 @@ if (!app.requestSingleInstanceLock()) {
       PYTHONIOENCODING: "utf-8", SONACODE_DESKTOP_INSTANCE_ID: instanceId,
       SONACODE_SHUTDOWN_TOKEN: shutdownToken,
       SONACODE_BUNDLED_OPENCODE: opencodeFile,
+      SONACODE_BUNDLED_LANGUAGE_SERVICES: app.isPackaged
+        ? path.join(process.resourcesPath, "tools", "language-services")
+        : path.join(__dirname, "..", "build", "language-services"),
       SONACODE_BUNDLED_OPENSPEC: app.isPackaged
         ? path.join(process.resourcesPath, "tools", "openspec")
         : path.join(__dirname, "..", "build", "openspec"),

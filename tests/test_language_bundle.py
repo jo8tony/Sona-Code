@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,18 @@ def bundle_dir(tmp_path):
         manifest['sources'].append({'component': name, 'version': version, 'path': source, 'sha256': digest})
     (tmp_path / 'servers/jdtls/config_win').mkdir()
     manifest['source_coverage'][ENTRIES['jdtls'][1]] = 'sources/jdtls.zip'
+    for entry in ['runtime/jdk/bin/server/jvm.dll', 'runtime/jdk/lib/modules', 'runtime/jdk/release',
+                  'servers/jdtls/config_win/config.ini',
+                  'servers/node/node_modules/pyright/dist/pyright-langserver.js',
+                  'servers/node/node_modules/typescript/lib/_tsserver.js', 'servers/node/node_modules/typescript/lib/typescript.js',
+                  'licenses/node/LICENSE', 'licenses/temurin/java.base/LICENSE', 'licenses/jdtls/LICENSE',
+                  'licenses/pyright/LICENSE.txt', 'licenses/typescript/LICENSE.txt', 'licenses/typescript-language-server/LICENSE',
+                  'licenses/SONA_THIRD_PARTY_NOTICES.md']:
+        path = tmp_path / entry; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(b'fixture')
+        manifest['files'][entry] = hashlib.sha256(b'fixture').hexdigest()
+    index = json.dumps({'sources': manifest['sources'], 'coverage': manifest['source_coverage'], 'eclipse': []}).encode()
+    (tmp_path / 'sources/manifest.json').write_bytes(index)
+    manifest['files']['sources/manifest.json'] = hashlib.sha256(index).hexdigest()
     (tmp_path / 'manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
     return tmp_path
 
@@ -42,6 +55,17 @@ def test_complete_bundle_and_fixed_launch_paths(bundle_dir):
     assert bundle.check()['components']['node']['version'] == '22.23.3'
     assert bundle.launch_paths('python')['pyright'].name == 'langserver.index.js'
     assert bundle.launch_paths('java')['java'].name == 'java.exe'
+
+
+@pytest.mark.parametrize('relative', ['runtime/jdk/bin/server/jvm.dll',
+                                     'servers/jdtls/config_win/config.ini', 'sources/manifest.json',
+                                     'licenses/temurin/java.base/LICENSE'])
+def test_runtime_rejects_omitted_transitive_components(bundle_dir, relative):
+    path = bundle_dir / 'manifest.json'; manifest = json.loads(path.read_text())
+    del manifest['files'][relative]; (bundle_dir / relative).unlink()
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(NavigationError):
+        LanguageBundle(bundle_dir).check()
 
 
 @pytest.mark.parametrize('failure', ['removed', 'modified', 'omitted', 'traversal', 'ads', 'version', 'source', 'source-version', 'source-coverage'])
@@ -81,3 +105,22 @@ def test_prepare_check_never_downloads_and_rejects_unsafe_archives(tmp_path):
         with pytest.raises((NavigationError, RuntimeError)):
             module.extract(archive, tmp_path / 'stage')
         assert not (tmp_path / 'escape').exists()
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows preparation entry point')
+def test_prepare_reads_component_manifest_independently_of_input_inventory_order(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location('prepare_languages', Path(__file__).parents[1] / 'scripts/prepare-language-services.py')
+    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    monkeypatch.setattr(module, 'ROOT', tmp_path)
+    monkeypatch.setattr(module, 'INPUTS', ['THIRD_PARTY_NOTICES.md', 'packaging/language-services.json'])
+    (tmp_path / 'packaging').mkdir()
+    (tmp_path / 'THIRD_PARTY_NOTICES.md').write_text('License notice, not component JSON')
+    (tmp_path / 'packaging/language-services.json').write_text(json.dumps({
+        'versions': module.VERSIONS, 'archives': {'node.zip': {'url': 'https://example.invalid/pinned'}}}))
+    class DownloadReached(Exception):
+        pass
+    def download(*args):
+        raise DownloadReached()
+    monkeypatch.setattr(module, 'download', download)
+    with pytest.raises(DownloadReached):
+        module.prepare(tmp_path / 'build/languages')

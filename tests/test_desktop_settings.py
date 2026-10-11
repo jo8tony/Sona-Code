@@ -193,6 +193,7 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), "sona-desktop-package-test-")
         files[relative] = require("node:crypto").createHash("sha256").update(data).digest("hex");
       }
       fs.writeFileSync(path.join(bundle, "manifest.json"), JSON.stringify({platform: "windows_x64", files}));
+      require('./tests/helpers/language-bundle.cjs').languageBundleFixture(path.join(out, 'resources', 'tools', 'language-services'));
       if (scenario === "current") verifyDesktopPackage(out);
       else assert.throws(() => verifyDesktopPackage(out), scenario === "missing" ? /缺少.*desktop-settings/ : /desktop-settings.*源码不同/);
     }

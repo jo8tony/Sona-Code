@@ -46,6 +46,7 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), "sona-command-package-"));
     }
     const manifest = path.join(bundle, "manifest.json");
     fs.writeFileSync(manifest, JSON.stringify({platform: "windows_x64", files}));
+    require('./tests/helpers/language-bundle.cjs').languageBundleFixture(path.join(out,'resources','tools','language-services'));
     verifyDesktopPackage(out);
     const runner = path.join(bundle, "bin", "sona-command-runner.exe");
     const scenario = SCENARIO;

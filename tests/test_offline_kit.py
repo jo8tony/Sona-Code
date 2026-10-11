@@ -2,9 +2,12 @@
 import hashlib
 import importlib.util
 import json
+import shutil
+import sys
 from pathlib import Path
 
 import pytest
+from tests.test_language_bundle import bundle_dir
 
 
 def kit_module():
@@ -20,14 +23,31 @@ def test_source_inputs_exist_in_repository():
     assert all((root / path).is_file() for path in module.INPUTS)
 
 
+def test_offline_inputs_include_language_pins_and_license_producer():
+    assert {'packaging/language-services.json', 'packaging/language-services-package/package.json',
+            'packaging/language-services-package/package-lock.json', 'scripts/prepare-language-services.py',
+            'THIRD_PARTY_NOTICES.md'} <= set(kit_module().INPUTS)
+
+
 @pytest.fixture
-def payload(tmp_path):
+def payload(tmp_path, bundle_dir):
     kit, source = tmp_path / "kit", tmp_path / "source"
     kit.mkdir(); source.mkdir()
     (kit / "asset").write_bytes(b"pinned dependency")
-    (source / "package-lock.json").write_bytes(b"lock")
-    manifest = {"files": {"asset": hashlib.sha256(b"pinned dependency").hexdigest()},
-                "source_inputs": {"package-lock.json": hashlib.sha256(b"lock").hexdigest()}}
+    for name in kit_module().INPUTS:
+        path = source / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(b'lock')
+    target = kit / 'language-services'; target.mkdir()
+    for name in ['runtime', 'servers', 'sources', 'licenses']:
+        shutil.copytree(bundle_dir / name, target / name)
+    language_manifest = json.loads((bundle_dir / 'manifest.json').read_text())
+    language_manifest['inputs'] = {name: hashlib.sha256(b'lock').hexdigest() for name in [
+        'packaging/language-services.json', 'packaging/language-services-package/package.json',
+        'packaging/language-services-package/package-lock.json', 'scripts/prepare-language-services.py', 'THIRD_PARTY_NOTICES.md']}
+    (target / 'manifest.json').write_text(json.dumps(language_manifest))
+    manifest = {'platform': 'windows-x64', 'python': list(sys.version_info[:2]),
+                'files': {path.relative_to(kit).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                          for path in kit.rglob('*') if path.is_file()},
+                'source_inputs': {name: hashlib.sha256(b'lock').hexdigest() for name in kit_module().INPUTS}}
     (kit / "manifest.json").write_text(json.dumps(manifest))
     return kit, source, manifest
 
@@ -45,6 +65,27 @@ def test_changed_dependency_lock_requires_new_kit(payload):
     kit, source, _ = payload
     (source / "package-lock.json").write_bytes(b"new lock")
     with pytest.raises(RuntimeError, match="package-lock"):
+        kit_module().verify_kit(kit, source)
+
+
+@pytest.mark.parametrize('section,name', [
+    ('source_inputs', 'packaging/language-services.json'),
+    ('files', 'language-services/manifest.json'), ('files', 'language-services/sources/jdk.zip')])
+def test_offline_manifest_cannot_omit_language_inputs_or_payload(payload, section, name):
+    kit, source, manifest = payload
+    del manifest[section][name]
+    (kit / 'manifest.json').write_text(json.dumps(manifest))
+    with pytest.raises(RuntimeError):
+        kit_module().verify_kit(kit, source)
+
+
+def test_language_producer_inputs_must_match_outer_kit_inputs(payload):
+    kit, source, manifest = payload
+    name = 'packaging/language-services.json'
+    (source / name).write_bytes(b'new pin')
+    manifest['source_inputs'][name] = hashlib.sha256(b'new pin').hexdigest()
+    (kit / 'manifest.json').write_text(json.dumps(manifest))
+    with pytest.raises(RuntimeError, match='input'):
         kit_module().verify_kit(kit, source)
 
 
