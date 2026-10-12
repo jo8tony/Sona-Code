@@ -9,7 +9,7 @@ function createLanguageClient({urlFor, onStatus, onError}) {
   const groups = new Map(), listeners = new Set(), editorId = crypto.randomUUID();
   const failure = (code, message) => Object.assign(new Error(message), {code});
   const aborted = () => Object.assign(new Error("导航查询已取消"), {name: "AbortError", code: "cancelled"});
-  const isNavigation = kind => kind === "definition" || kind === "implementation";
+  const isNavigation = kind => ["definition", "implementation", "references"].includes(kind);
   function waitForSync(promise, signal) {
     return new Promise((resolve, reject) => {
       const finish = (fn, value) => {clearTimeout(timer); signal?.removeEventListener("abort", cancel); fn(value);};
@@ -36,7 +36,7 @@ function createLanguageClient({urlFor, onStatus, onError}) {
     if (!g) {
       g = {key, projectId, family, documents: new Map(), epochs: new Map(), pending: new Map(),
         revision: 0, connection: 0, generation: null, id: 0, socket: null, ready: false,
-        active: active === key, retryDelay: 1000, state: "initializing", implementation: false};
+        active: active === key, retryDelay: 1000, state: "initializing", implementation: false, references: false};
       groups.set(key, g); if (!g.active) scheduleIdle(g);
     }
     return g;
@@ -85,7 +85,7 @@ function createLanguageClient({urlFor, onStatus, onError}) {
   }
   function connect(g) {
     if (disposed || g.socket) return;
-    clearTimeout(g.retry); ++g.connection; g.generation = null; g.id = 0; g.ready = false; g.implementation = false;
+    clearTimeout(g.retry); ++g.connection; g.generation = null; g.id = 0; g.ready = false; g.implementation = g.references = false;
     g.state = "initializing"; g.epochs.clear();
     for (const entry of g.documents.values()) { entry.sent = null; entry.ack = null; entry.error = null; }
     let socket;
@@ -108,6 +108,7 @@ function createLanguageClient({urlFor, onStatus, onError}) {
         }
         g.generation = message.generation; g.state = message.state;
         g.implementation = message.capabilities?.implementation === true;
+        g.references = message.capabilities?.references === true;
         if (message.state === "initializing" || message.state === "unavailable" || message.state === "closed") g.ready = false;
         if (message.state === "ready") { g.ready = true; g.retryDelay = 1000; }
         if (message.state === "unavailable") rejectPending(g, failure("unavailable", message.message || "语言服务不可用"));
@@ -200,6 +201,7 @@ function createLanguageClient({urlFor, onStatus, onError}) {
     if (g.documents.get(snapshot.path)?.tooLarge) throw failure("document_limit", "当前草稿超过语义分析容量，缩小后可恢复分析");
     if (!g.ready) throw failure(g.state === "unavailable" ? "unavailable" : "indexing", "语言服务尚未就绪，请稍后重试或重新分析");
     if (kind === "implementation" && !g.implementation) throw failure("unsupported_implementation", "此语言服务暂不支持转到实现");
+    if (kind === "references" && !g.references) throw failure("unsupported_references", "此语言服务暂不支持查找引用");
     const entry = g.documents.get(snapshot.path), revision = stamp(snapshot);
     const valid = () => !disposed && revision === stamp(snapshot) && entry === g.documents.get(snapshot.path) &&
       entry?.snapshot.version === snapshot.version && entry.snapshot.epoch === snapshot.epoch;
@@ -224,6 +226,7 @@ function createLanguageClient({urlFor, onStatus, onError}) {
   return {open: snapshot => update(snapshot, true), change: snapshot => update(snapshot, false), close,
     definition: (snapshot, position, signal) => navigation("definition", snapshot, position, signal),
     implementation: (snapshot, position, signal) => navigation("implementation", snapshot, position, signal), stamp,
+    references: (snapshot, position, signal) => navigation("references", snapshot, position, signal),
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     saved(projectId, path, revision) {
       for (const g of groups.values()) if (g.projectId === projectId && g.documents.has(path)) {

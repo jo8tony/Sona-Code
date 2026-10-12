@@ -26,6 +26,22 @@ def test_uri_location_links_dedup_and_percent_names(tmp_path):
         assert normalize_definitions(tmp_path, {'uri': uri.upper().replace('FILE:', 'file:'), 'range': SPAN})[0][0]['path'] == '中文 % space.py'
 
 
+def test_references_read_each_target_file_only_once(tmp_path, monkeypatch):
+    from sona_code.language_services import paths
+    (tmp_path / 'a.py').write_text('value + value', encoding='utf-8')
+    original = paths.read_file
+    reads = []
+    def read(root, relative):
+        reads.append(relative)
+        return original(root, relative)
+    monkeypatch.setattr(paths, 'read_file', read)
+    uri = file_uri(tmp_path, 'a.py')
+    second = {'start': {'line': 0, 'character': 8}, 'end': {'line': 0, 'character': 13}}
+    targets, rejected = normalize_definitions(tmp_path, [{'uri': uri, 'range': span} for span in (SPAN, SPAN, second)])
+    assert len(targets) == 2 and not rejected
+    assert reads == ['a.py']
+
+
 def test_outside_virtual_and_unsafe_paths_do_not_open(tmp_path):
     root = tmp_path / 'project'; root.mkdir()
     outside = tmp_path / 'secret.py'; outside.write_text('secret', encoding='utf-8')

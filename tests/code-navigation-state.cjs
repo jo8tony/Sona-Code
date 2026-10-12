@@ -10,10 +10,10 @@ async function advance(ms){now+=ms;for(const [id,t] of [...timers])if(t.at<=now)
 class FakeSocket {
   static OPEN=1;static instances=[];
   constructor(url){this.url=url;this.readyState=1;this.sent=[];this.handlers={};this.generation=1;this.epochs={};
-    FakeSocket.instances.push(this);queueMicrotask(()=>{this.handlers.open?.({});this.receive({type:'status',state:'ready',generation:1,capabilities:{implementation:true}});});}
+    FakeSocket.instances.push(this);queueMicrotask(()=>{this.handlers.open?.({});this.receive({type:'status',state:'ready',generation:1,capabilities:{implementation:true,references:true}});});}
   addEventListener(name,fn){this.handlers[name]=fn;}
   send(text){const m=JSON.parse(text);this.sent.push(m);if(m.type==='open')this.epochs[m.path]=(this.epochs[m.path]||0)+1;
-    if(['definition','implementation'].includes(m.type))return;
+    if(['definition','implementation','references'].includes(m.type))return;
     queueMicrotask(()=>this.receive({type:m.type==='ping'?'pong':'ack',id:m.id,generation:this.generation,path:m.path,version:m.version}));}
   result(m,extra={}){this.receive({type:m.type+'-result',id:m.id,generation:this.generation,path:m.path,
     version:m.version,epoch:this.epochs[m.path],targets:[target('b.ts')],...extra});}
@@ -39,27 +39,79 @@ globalThis.el=(tag,attrs,...children)=>new Element(tag,attrs,children);
 const find=(root,text)=>{if(root.text===text||root.textContent===text)return root;for(const c of root.children||[]){const r=find(c,text);if(r)return r;}};
 (async()=>{
   const implementation=process.argv[2].startsWith('implementation-');
-  const kind=implementation?'implementation':'definition';
-  const scenario=implementation?process.argv[2].slice(15):process.argv[2];
+  const references=process.argv[2].startsWith('references-');
+  const kind=implementation?'implementation':references?'references':'definition';
+  const scenario=implementation?process.argv[2].slice(15):references?process.argv[2].slice(11):process.argv[2];
+  if(scenario.startsWith('auto-')) {
+    load('workspace-code-navigation');const canvas=new Element('canvas'),opened=[],errors=[],queries=[];
+    let current=doc('a.ts',1),position={lineNumber:3,column:5},cursor;
+    const client={stamp:()=> '1',subscribe:()=>()=>{}};
+    for(const kind of ['definition','implementation','references'])client[kind]=(_source,_point,signal)=>
+      new Promise((resolve,reject)=>queries.push({kind,resolve,reject,signal}));
+    const editor={getModel:()=>({getWordAtPosition:()=>({word:'value'})}),getPosition:()=>position,
+      setPosition:p=>{position=p;cursor?.();},getTargetAtClientPoint:()=>({type:6,position}),
+      addAction:()=>({dispose(){}}),onDidChangeCursorPosition:fn=>{cursor=fn;return {dispose(){}};},
+      onDidChangeModel:()=>({dispose(){}}),focus(){}};
+    const monaco={KeyCode:{F12:59,KeyB:32},KeyMod:{CtrlCmd:2048,Alt:512,Shift:1024},editor:{MouseTargetType:{CONTENT_TEXT:6}},Uri:{from:p=>p},
+      languages:Object.fromEntries(['registerDefinitionProvider','registerImplementationProvider','registerReferenceProvider'].map(k=>[k,()=>({dispose(){}})]))};
+    const nav=createCodeNavigation({monaco,editor,canvas,client,snapshot:()=>current,openTarget:async(...args)=>{opened.push(args);return true;},onError:m=>errors.push(m)});
+    const event=extra=>({ctrlKey:true,button:0,preventDefault(){},stopImmediatePropagation(){},...extra});
+    if(scenario==='auto-modifiers') {
+      for(const extra of [{shiftKey:true},{altKey:true},{isComposing:true},{button:2},{ctrlKey:false}])canvas.handlers.mousedown(event(extra));
+      assert.equal(queries.length,0);
+    } else {
+      canvas.handlers.mousedown(event());assert.equal(queries[0].kind,'definition');
+      if(scenario==='auto-stale'){current=doc('a.ts',2);cursor();assert.ok(queries[0].signal.aborted);}
+      queries[0].resolve(scenario==='auto-use'?[{...target('a.ts'),range:{start:{line:0,character:3},end:{line:0,character:8}}}]:[target('a.ts')]);
+      await tick();
+      if(scenario==='auto-stale')assert.equal(queries.length,1,'No reference query after stale definition result');
+      else if(scenario==='auto-use') {
+        assert.equal(queries.length,1,'A use in the same file still goes to its definition');
+        assert.equal(opened[0][1],'a.ts');assert.equal(opened[0][2].startLineNumber,1);
+      } else {
+        assert.equal(queries[1].kind,'references');assert.equal(opened.length,0,'Do not navigate back to the declaration');
+        if(scenario==='auto-reference-stale'){current={...current,projectId:'other'};cursor();assert.ok(queries[1].signal.aborted);}
+        if(scenario==='auto-unsupported')queries[1].reject(Object.assign(new Error('此语言服务暂不支持查找引用'),{code:'unsupported_references'}));
+        else queries[1].resolve(scenario==='auto-empty'?[]:[target('use-one.ts'),target('use-two.ts')]);
+        await tick();
+        if(scenario==='auto-declaration') {
+          const menu=canvas.children.find(c=>c.role==='listbox');assert.equal(menu['aria-label'],'选择引用');
+          assert.equal(menu.children[0].text,'引用位置（2）');
+          menu.handlers.keydown({key:'ArrowDown',preventDefault(){}});menu.handlers.keydown({key:'Enter',preventDefault(){}});await tick();
+          assert.equal(opened[0][1],'use-two.ts');assert.equal(opened[0][3].recordHistory,true);
+        } else {
+          assert.equal(opened.length,0);
+          assert.equal(canvas.children.length,0);
+          if(scenario==='auto-empty')assert.equal(errors[0],'未找到可打开的引用');
+          if(scenario==='auto-unsupported')assert.match(errors[0],/不支持查找引用/);
+          if(scenario==='auto-reference-stale')assert.equal(errors.length,0);
+        }
+      }
+    }
+    nav.dispose();completed=true;return;
+  }
   if(['provider','click','candidates','intent'].includes(scenario)) {
-    load('workspace-code-navigation');const canvas=new Element('canvas');const opened=[],errors=[],providers=[],implementations=[];
+    load('workspace-code-navigation');const canvas=new Element('canvas');const opened=[],errors=[],providers=[],implementations=[],referenceProviders=[];
     let current=doc('a.ts',1),resolve;let calls=0,lastKind;const revision={value:1},subscribers=[];
     const client={stamp:()=>String(revision.value),subscribe:fn=>{subscribers.push(fn);return()=>{};},
-      definition:()=>{calls++;lastKind='definition';return new Promise(r=>resolve=r);},implementation:()=>{calls++;lastKind='implementation';return new Promise(r=>resolve=r);}};
+      definition:()=>{calls++;lastKind='definition';return new Promise(r=>resolve=r);},implementation:()=>{calls++;lastKind='implementation';return new Promise(r=>resolve=r);},references:()=>{calls++;lastKind='references';return new Promise(r=>resolve=r);}};
     const actions=[];let action,position={lineNumber:1,column:2},cursor,focusCalls=0;
     const model={uri:{toString:()=> 'inmemory://p/a.ts'},getWordAtPosition:()=>({word:'value'}),getLanguageId:()=> 'typescript'};
     const editor={getModel:()=>model,getPosition:()=>position,hasTextFocus:()=>true,
       getTargetAtClientPoint:()=>({type:6,position}),addAction:a=>{actions.push(a);if(a.id==='sona-code.goto-definition')action=a;return {dispose(){}};},
       onDidChangeCursorPosition:fn=>{cursor=fn;return {dispose(){}};},onDidChangeModel:()=>({dispose(){}}),focus(){focusCalls++;}};
-    const monaco={KeyCode:{F12:59,KeyB:32},KeyMod:{CtrlCmd:2048,Alt:512},editor:{MouseTargetType:{CONTENT_TEXT:6}},Uri:{from:parts=>parts},
-      languages:{registerImplementationProvider:(language,provider)=>{implementations.push(provider);return {dispose(){}};},registerDefinitionProvider:(language,provider)=>{providers.push(provider);return {dispose(){}};}}};
+    const monaco={KeyCode:{F12:59,KeyB:32},KeyMod:{CtrlCmd:2048,Alt:512,Shift:1024},editor:{MouseTargetType:{CONTENT_TEXT:6}},Uri:{from:parts=>parts},
+      languages:{registerImplementationProvider:(language,provider)=>{implementations.push(provider);return {dispose(){}};},registerDefinitionProvider:(language,provider)=>{providers.push(provider);return {dispose(){}};},registerReferenceProvider:(language,provider)=>{referenceProviders.push(provider);return {dispose(){}};}}};
     const nav=createCodeNavigation({monaco,editor,canvas,client,snapshot:()=>current,
       openTarget:async(...args)=>{opened.push(args);return true;},onError:m=>errors.push(m)});
     if(implementation){action=actions.find(a=>a.id==='sona-code.goto-implementation');assert.ok(action,'implementation context action is registered');assert.equal(action.label,'\u8f6c\u5230\u5b9e\u73b0');assert.equal(action.contextMenuGroupId,'navigation');assert.deepEqual(action.keybindings,[2048|512|32]);}
+    if(references){action=actions.find(a=>a.id==='sona-code.find-references');assert.equal(action.label,'查找项目引用');assert.deepEqual(action.keybindings,[1024|59]);}
+    const provide=()=>references?referenceProviders[0].provideReferences(model,position,{includeDeclaration:false},{isCancellationRequested:false,onCancellationRequested:()=>({dispose(){}})}):
+      (implementation?implementations[0].provideImplementation:providers[0].provideDefinition)(model,position,{isCancellationRequested:false,onCancellationRequested:()=>({dispose(){}})});
     if(scenario==='provider') {
-      const p=(implementation?implementations[0].provideImplementation:providers[0].provideDefinition)(model,position,{isCancellationRequested:false,onCancellationRequested:()=>({dispose(){}})});
+      const p=provide();
       resolve([target('unopened.ts')]);const locations=await p;assert.equal(locations[0].uri.path,'/unopened.ts');assert.equal(opened.length,0);assert.equal(errors.length,0);
-      const late=(implementation?implementations[0].provideImplementation:providers[0].provideDefinition)(model,position,{isCancellationRequested:false,onCancellationRequested:()=>({dispose(){}})});
+      const late=provide();
       revision.value++;resolve([target('stale-target.ts')]);assert.deepEqual(await late,[],'provider drops results after a sibling draft changes');
     } else if(scenario==='click') {
       let stopped=0;canvas.handlers.mousedown({ctrlKey:true,button:0,clientX:1,clientY:1,preventDefault(){stopped++;},stopImmediatePropagation(){stopped++;}});
@@ -68,7 +120,7 @@ const find=(root,text)=>{if(root.text===text||root.textContent===text)return roo
     } else if(scenario==='candidates') {
       const run=action.run();resolve([target('one.ts'),target('two.ts')]);await tick();
       const menu=canvas.children.find(c=>c.role==='listbox');assert.ok(menu);assert.equal(opened.length,0);
-      assert.equal(menu['aria-label'],implementation?'选择实现':'选择定义');
+      assert.equal(menu['aria-label'],implementation?'选择实现':references?'选择引用':'选择定义');
       menu.handlers.keydown({key:'ArrowDown',preventDefault(){}});menu.handlers.keydown({key:'Enter',preventDefault(){}});await run;
       assert.equal(opened[0][1],'two.ts');assert.ok(menu.removed);
       const again=action.run();resolve([target('one.ts'),target('two.ts')]);await tick();
@@ -99,13 +151,13 @@ const find=(root,text)=>{if(root.text===text||root.textContent===text)return roo
   let socket=FakeSocket.instances[0];assert.match(socket.url,/custom\/api\/p\/typescript/);
   const query=async(source=a)=>{const pending=client[kind](source,{line:0,character:1});await tick();return {pending,m:socket.sent.filter(m=>m.type===kind).at(-1)};};
   if(scenario==='unsupported') {
-    socket.receive({type:'status',state:'ready',generation:1,capabilities:{implementation:false}});
-    assert.equal((await client.implementation(a,{line:0,character:1}).catch(e=>e)).code,'unsupported_implementation');
-    assert.equal(socket.sent.filter(m=>m.type==='implementation').length,0);
+    socket.receive({type:'status',state:'ready',generation:1,capabilities:{implementation:false,references:false}});
+    assert.equal((await client[kind](a,{line:0,character:1}).catch(e=>e)).code,'unsupported_'+kind);
+    assert.equal(socket.sent.filter(m=>m.type===kind).length,0);
     const q=client.definition(a,{line:0,character:1});await tick();socket.result(socket.sent.filter(m=>m.type==='definition').at(-1));await q;
   } else if(scenario==='mixed-requests') {
-    const results=Array.from({length:9},(_,i)=>client[i%2?'definition':'implementation'](a,{line:0,character:1}).catch(e=>e));await tick();
-    const queries=socket.sent.filter(m=>['definition','implementation'].includes(m.type));assert.equal(queries.length,8);
+    const results=Array.from({length:9},(_,i)=>client[['definition','implementation','references'][i%3]](a,{line:0,character:1}).catch(e=>e));await tick();
+    const queries=socket.sent.filter(m=>['definition','implementation','references'].includes(m.type));assert.equal(queries.length,8);
     queries.forEach(m=>socket.result(m));assert.equal((await results.at(-1)).code,'request_limit');await Promise.all(results);
   } else if(scenario==='flush') {
     const aa=doc('a.ts',2,'changed a'),bb=doc('b.ts',2,'changed b');client.change(aa);client.change(bb);

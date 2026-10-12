@@ -12,6 +12,7 @@ from .errors import NavigationError
 
 MAX_HEADER = 8192
 MAX_FRAME = 16 * 1024 * 1024
+WRITE_TIMEOUT = 15
 
 
 def encode_frame(message: dict) -> bytes:
@@ -87,7 +88,10 @@ class JsonRpcPeer:
             if self._failure:
                 raise self._failure
             try:
-                await asyncio.wait_for(asyncio.to_thread(self._write_bytes, data), 3)
+                # JDT can briefly stop reading during initial project indexing.
+                # The Windows stdin pipe then fills after a few opened files;
+                # allow the same bounded budget as an ordinary RPC request.
+                await asyncio.wait_for(asyncio.to_thread(self._write_bytes, data), WRITE_TIMEOUT)
             except TimeoutError as exc:
                 error = NavigationError('service_unresponsive', '语言服务无法接收消息')
                 self._fail(error)

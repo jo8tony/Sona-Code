@@ -143,3 +143,16 @@ async def test_request_deadline_includes_a_blocked_stdin_write():
         if task:
             task.cancel(); await asyncio.gather(task, return_exceptions=True)
         await rpc.close()
+
+
+@pytest.mark.asyncio
+async def test_transient_indexing_backpressure_does_not_poison_connection():
+    rpc = peer()
+    try:
+        await rpc.request('test/pause-reading', {})
+        payload = 'x' * (2 * 1024 * 1024)
+        assert await rpc.request('echo', {'value': payload}, timeout=12) == payload
+        assert rpc._failure is None
+        assert await rpc.request('echo', {'value': 'still ready'}) == 'still ready'
+    finally:
+        await rpc.close()

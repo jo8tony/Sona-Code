@@ -48,7 +48,7 @@ function harness(preferences = {}, {realClient = false} = {}) {
   };
   const monaco = {
     Uri: { from: value => JSON.stringify(value) },
-    KeyMod:{CtrlCmd:2048,Alt:512},KeyCode:{F12:59,KeyB:32},languages: { getLanguages: () => [{ id: 'plaintext' },{id:'typescript'}],registerDefinitionProvider:()=>({dispose(){}}),registerImplementationProvider:()=>({dispose(){}}) },
+    KeyMod:{CtrlCmd:2048,Alt:512,Shift:1024},KeyCode:{F12:59,KeyB:32},languages: { getLanguages: () => [{ id: 'plaintext' },{id:'typescript'}],registerDefinitionProvider:()=>({dispose(){}}),registerImplementationProvider:()=>({dispose(){}}),registerReferenceProvider:()=>({dispose(){}}) },
     editor: {
       create: () => editor,MouseTargetType:{CONTENT_TEXT:6},
       registerEditorOpener: value => {opener=value;return {dispose(){}};},

@@ -74,6 +74,7 @@ def _relative(root: Path, uri: str) -> str:
 def normalize_definitions(root: Path, result: object) -> tuple[list[dict], list[str]]:
     items = result if isinstance(result, list) else [result] if result is not None else []
     targets, rejected, seen = [], [], set()
+    paths = {}
     for item in items[:1000]:
         try:
             if not isinstance(item, dict):
@@ -81,7 +82,11 @@ def normalize_definitions(root: Path, result: object) -> tuple[list[dict], list[
             uri = item.get('targetUri', item.get('uri'))
             if not isinstance(uri, str):
                 raise NavigationError('invalid_result', '定义地址无效')
-            path = _relative(root, uri)
+            # Reference queries often return hundreds of uses in one file.
+            # Validate/read each URI once per response, not once per use.
+            if uri not in paths:
+                paths[uri] = _relative(root, uri)
+            path = paths[uri]
             span = _range(item.get('targetSelectionRange', item.get('range', item.get('targetRange'))))
             origin = item.get('originSelectionRange')
             if origin is not None:

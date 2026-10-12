@@ -10,6 +10,7 @@ import time
 mode = argparse.ArgumentParser()
 mode.add_argument('--mode', default='normal')
 mode.add_argument('--no-implementation', action='store_true')
+mode.add_argument('--no-references', action='store_true')
 args = mode.parse_args()
 lock = threading.Lock()
 documents = {}
@@ -42,6 +43,14 @@ def definition(message):
         result = [{'targetUri': root + '/implementation.py', 'targetRange': span, 'targetSelectionRange': span},
                   {'uri': root + '/../../outside.py', 'range': span},
                   {'uri': 'jdt://dependency', 'range': span}]
+    elif message['method'] == 'textDocument/references':
+        if message['params'].get('context') != {'includeDeclaration': False}:
+            send({'jsonrpc': '2.0', 'id': message['id'], 'error': {'code': -32602, 'message': 'invalid reference context'}})
+            return
+        result = [{'uri': root + '/target.py', 'range': span},
+                  {'uri': root + '/target.py', 'range': span},
+                  {'uri': root + '/../../outside.py', 'range': span},
+                  {'uri': 'jdt://dependency', 'range': span}]
     else:
         result = [{'uri': root + '/target.py', 'range': span}]
     send({'jsonrpc': '2.0', 'id': message['id'], 'result': result})
@@ -62,7 +71,7 @@ while True:
         initialize_id = message['id']
         send({'jsonrpc': '2.0', 'id': 'config', 'method': 'workspace/configuration', 'params': {'items': [{}]}})
     elif message.get('id') == 'config':
-        send({'jsonrpc': '2.0', 'id': initialize_id, 'result': {'capabilities': {'textDocumentSync': 2 if args.mode == 'analysis' else 1, 'definitionProvider': True, 'implementationProvider': not args.no_implementation}, 'configuration': message.get('result')}})
+        send({'jsonrpc': '2.0', 'id': initialize_id, 'result': {'capabilities': {'textDocumentSync': 2 if args.mode == 'analysis' else 1, 'definitionProvider': True, 'implementationProvider': not args.no_implementation, 'referencesProvider': not args.no_references}, 'configuration': message.get('result')}})
     elif message.get('id') in client_requests:
         response = {'error': message['error']} if 'error' in message else {'result': message.get('result')}
         send({'jsonrpc': '2.0', 'id': client_requests.pop(message['id']), **response})
@@ -73,7 +82,7 @@ while True:
         doc['text'] = params['contentChanges'][0]['text']; doc['version'] = params['textDocument']['version']
     elif method == 'textDocument/didClose':
         documents.pop(message['params']['textDocument']['uri'], None)
-    elif method in ('textDocument/definition', 'textDocument/implementation'):
+    elif method in ('textDocument/definition', 'textDocument/implementation', 'textDocument/references'):
         threading.Thread(target=definition, args=(message,), daemon=True).start()
     elif method == 'test/documents':
         send({'jsonrpc': '2.0', 'id': message['id'], 'result': documents})
@@ -85,6 +94,9 @@ while True:
     elif method == 'test/stop-reading':
         send({'jsonrpc': '2.0', 'id': message['id'], 'result': None})
         time.sleep(30)
+    elif method == 'test/pause-reading':
+        send({'jsonrpc': '2.0', 'id': message['id'], 'result': None})
+        time.sleep(4)
     elif method in ('test/client-applyEdit', 'test/client-command'):
         client_id = 'client-' + str(message['id']); client_requests[client_id] = message['id']
         requested = 'workspace/applyEdit' if method.endswith('applyEdit') else 'workspace/executeCommand'

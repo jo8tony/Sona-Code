@@ -90,6 +90,7 @@ class NavigationSession:
         self._sync_kind = 1
         self._save_text = False
         self._implementation = False
+        self._references = False
         self._versions, self._epochs, self._pending_acks, self._queries = {}, {}, {}, {}
         self._last_id = 0
         self._last_heartbeat = self._last_activity = manager.clock()
@@ -106,7 +107,7 @@ class NavigationSession:
         elif state == 'ready' and self._build_errors:
             state, message = 'import_failed', '离线构建导入失败，可检查缓存或切回源码模式：' + next(iter(self._build_errors.values()))
         await self.emit({'type': 'status', 'state': state, 'message': str(message)[:512], 'generation': self.generation,
-                         'capabilities': {'implementation': self._implementation}})
+                         'capabilities': {'implementation': self._implementation, 'references': self._references}})
 
     async def _initialize(self):
         try:
@@ -126,6 +127,8 @@ class NavigationSession:
             capabilities = result.get('capabilities', {})
             implementation = capabilities.get('implementationProvider', False)
             self._implementation = implementation is True or isinstance(implementation, dict)
+            references = capabilities.get('referencesProvider', False)
+            self._references = references is True or isinstance(references, dict)
             if not capabilities.get('definitionProvider'):
                 raise NavigationError('unsupported_service', '语言服务未提供定义查询')
             sync = capabilities.get('textDocumentSync', 0)
@@ -280,7 +283,7 @@ class NavigationSession:
             self._restart_task = asyncio.create_task(self._restart())
             await self._ack(request_id)
             return
-        if kind not in {'open', 'change', 'close', 'saved', 'definition', 'implementation'}:
+        if kind not in {'open', 'change', 'close', 'saved', 'definition', 'implementation', 'references'}:
             raise NavigationError('invalid_message', '不支持此导航消息')
         path = message.get('path')
         if not isinstance(path, str) or len(path) > 4096:
@@ -357,11 +360,13 @@ class NavigationSession:
                     if self.watcher:
                         await self.watcher.saved(path)
                 await self._ack(request_id)
-            elif kind in {'definition', 'implementation'}:
+            elif kind in {'definition', 'implementation', 'references'}:
                 if not self.ready.is_set():
                     raise self._failure or NavigationError('indexing', '语言服务仍在初始化，请稍后重试')
                 if kind == 'implementation' and not self._implementation:
                     raise NavigationError('unsupported_implementation', '此语言服务暂不支持转到实现')
+                if kind == 'references' and not self._references:
+                    raise NavigationError('unsupported_references', '此语言服务暂不支持查找引用')
                 if document.version != message.get('version'):
                     raise NavigationError('stale_version', '导航查询的文档版本已过期')
                 validate_position(document.text, message.get('position'))
@@ -374,7 +379,10 @@ class NavigationSession:
     async def _navigation(self, kind, request_id, document, position, stamp):
         try:
             async with asyncio.timeout(15):
-                result = await self.rpc.request('textDocument/' + kind, {'textDocument': {'uri': file_uri(self.root, document.path)}, 'position': position})
+                params = {'textDocument': {'uri': file_uri(self.root, document.path)}, 'position': position}
+                if kind == 'references':
+                    params['context'] = {'includeDeclaration': False}
+                result = await self.rpc.request('textDocument/' + kind, params)
                 targets, rejected = await asyncio.to_thread(normalize_definitions, self.root, result)
             current = self.documents.get(document.path)
             if current is None or stamp != (current.epoch, current.version, self.revision, self.generation):
@@ -412,6 +420,7 @@ class NavigationSession:
         self.revision += 1
         self._failure = None
         self._implementation = False
+        self._references = False
         self._build_errors.clear()
         self._notification_error = None
         self._init_task = asyncio.create_task(self._initialize())

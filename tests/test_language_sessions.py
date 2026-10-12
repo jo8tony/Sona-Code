@@ -16,7 +16,7 @@ from sona_code.language_services.manager import LanguageServiceManager
 
 def fake_launch(bundle, family, root, settings, cache):
     return ServerLaunch([sys.executable, '-u', str(Path(__file__).parent / 'helpers/navigation-lsp.py'), '--mode', 'analysis'],
-                        dict(os.environ), {'rootUri': root.as_uri(), 'capabilities': {}}, {'python': {'safe': True}}, 3)
+                        dict(os.environ), {'rootUri': root.as_uri(), 'capabilities': {}}, {'python': {'safe': True}}, 10)
 
 
 @pytest_asyncio.fixture
@@ -36,7 +36,10 @@ async def service(tmp_path):
 async def connect(service, editor='window-one'):
     manager, project, messages, emit = service
     session = await manager.connect('p', project, editor, 'python', emit)
-    await asyncio.wait_for(session.ready.wait(), 4)
+    # Process startup may contend with Windows packaging/antivirus. This is a
+    # semantic test, not a four-second startup benchmark.
+    await asyncio.wait_for(session._init_task, 15)
+    assert session.ready.is_set(), messages
     return session
 
 
@@ -89,7 +92,7 @@ async def test_unsaved_buffers_are_isolated_and_never_written(service):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('kind', ['definition', 'implementation'])
+@pytest.mark.parametrize('kind', ['definition', 'implementation', 'references'])
 async def test_ordered_changes_reopen_versions_and_target_staleness(service, kind):
     session = await connect(service)
     await session.handle(opened('中文😀\nfoo'))
@@ -103,22 +106,23 @@ async def test_ordered_changes_reopen_versions_and_target_staleness(service, kin
     after = list((await session.rpc.request('test/documents', {})).values())[0]
     assert after['version'] > before['version']
     await session.handle({'type': kind, 'id': 6, 'path': 'a.py', 'version': 3, 'position': {'line': 0, 'character': 1}})
+    query = session._queries[6]
     await session.handle({'type': 'change', 'id': 7, 'path': 'a.py', 'version': 4, 'text': 'changed during query'})
-    await asyncio.sleep(.3)
+    await asyncio.wait_for(query, 5)
     assert not any(m.get('id') == 6 and m['type'] == kind + '-result' for m in service[2])
     assert any(m.get('id') == 6 and m.get('code') == 'stale' for m in service[2])
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('kind', ['definition', 'implementation'])
+@pytest.mark.parametrize('kind', ['definition', 'implementation', 'references'])
 async def test_definition_targets_and_cancellation_are_real(service, kind):
     session = await connect(service)
     await session.handle(opened())
     await session.handle({'type': kind, 'id': 2, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
-    await asyncio.sleep(.3)
+    await asyncio.wait_for(session._queries[2], 5)
     result = next(m for m in service[2] if m.get('id') == 2 and m['type'] == kind + '-result')
     assert result['targets'][0]['path'] == ('implementation.py' if kind == 'implementation' else 'target.py')
-    if kind == 'implementation':
+    if kind in {'implementation', 'references'}:
         assert len(result['targets']) == 1
         assert len(result['rejected']) == 2
     assert result['generation'] == session.generation
@@ -130,7 +134,7 @@ async def test_definition_targets_and_cancellation_are_real(service, kind):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('kind', ['definition', 'implementation'])
+@pytest.mark.parametrize('kind', ['definition', 'implementation', 'references'])
 async def test_limits_and_invalid_messages_leave_snapshot_intact(service, kind):
     session = await connect(service)
     await session.handle(opened())
@@ -287,7 +291,7 @@ async def test_missing_implementation_capability_preserves_definitions(service):
         await session.handle({'type': 'implementation', 'id': 2, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
     assert error.value.code == 'unsupported_implementation'
     await session.handle({'type': 'definition', 'id': 3, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
-    await asyncio.sleep(.3)
+    await asyncio.wait_for(session._queries[3], 5)
     assert next(m for m in messages if m.get('id') == 3)['targets'][0]['path'] == 'target.py'
 
 
@@ -296,7 +300,25 @@ async def test_definitions_and_implementations_share_request_limit(service):
     session = await connect(service)
     await session.handle(opened())
     for request_id in range(2, 10):
-        await session.handle({'type': 'definition' if request_id % 2 else 'implementation', 'id': request_id, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
+        await session.handle({'type': ('definition', 'implementation', 'references')[request_id % 3], 'id': request_id, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
     with pytest.raises(NavigationError) as error:
         await session.handle({'type': 'implementation', 'id': 10, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
     assert error.value.code == 'request_limit'
+
+
+@pytest.mark.asyncio
+async def test_missing_references_capability_preserves_definitions(service):
+    def without_references(*args):
+        launch = fake_launch(*args)
+        launch.argv.append('--no-references')
+        return launch
+    service[0].launch = without_references
+    session = await connect(service)
+    await session.handle(opened())
+    assert next(m for m in reversed(service[2]) if m['type'] == 'status')['capabilities']['references'] is False
+    with pytest.raises(NavigationError) as error:
+        await session.handle({'type': 'references', 'id': 2, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
+    assert error.value.code == 'unsupported_references'
+    await session.handle({'type': 'definition', 'id': 3, 'path': 'a.py', 'version': 1, 'position': {'line': 0, 'character': 1}})
+    await asyncio.wait_for(session._queries[3], 5)
+    assert next(m for m in service[2] if m.get('id') == 3)['targets'][0]['path'] == 'target.py'

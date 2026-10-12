@@ -34,6 +34,95 @@ def test_real_six_language_offline_navigation(tmp_path):
 
 
 @pytest.mark.skipif(os.environ.get('SONACODE_TEST_LANGUAGE_NATIVE') != '1', reason='opt-in real local language services')
+@pytest.mark.parametrize('language', ['java', 'python', 'javascript', 'javascriptreact', 'typescript', 'typescriptreact'])
+@pytest.mark.asyncio
+async def test_real_references_from_declarations_and_local_variables(tmp_path, language):
+    import asyncio
+    import time
+    from types import SimpleNamespace
+    from sona_code.language_services.adapters import build_launch
+    from sona_code.language_services.bundle import LanguageBundle
+    from sona_code.language_services.manager import LanguageServiceManager
+    from sona_code.language_services.settings import AnalysisSettings
+
+    smoke = smoke_module()
+    case = next(c for c in smoke.fixture_cases() if c['language'] == language)
+    if language == 'java':
+        declaration, needle = 'public int run() { int value = 42; return value + value; }', 'run('
+        case['files'][case['target']] = 'package a; public class Base { ' + declaration + ' }\n'
+    elif language == 'python':
+        needle = 'run('
+        case['files'][case['target']] = 'class Worker:\n    def run(self):\n        value = 42\n        return value + value\n'
+    else:
+        needle = 'Card(' if language.endswith('react') else 'answer('
+        body = 'return <div>{value + value}</div>;' if language.endswith('react') else 'return value + value;'
+        case['files'][case['target']] = 'export function ' + needle + ') { const value = 42; ' + body + ' }\n'
+    project = smoke.write_fixture(tmp_path, case)
+    home = tmp_path / 'home'
+    home.mkdir()
+    def launch(*args):
+        result = build_launch(*args)
+        result.env.update(USERPROFILE=str(home), HOME=str(home))
+        if args[1] == 'java':
+            result.argv.insert(1, '-Duser.home=' + str(home))
+        return result
+    messages = []
+    async def emit(message):
+        messages.append(message)
+    manager = LanguageServiceManager(tmp_path / 'cache', LanguageBundle(ROOT / 'build/language-services'),
+                                    SimpleNamespace(get=lambda _: AnalysisSettings()), launch=launch)
+    heartbeat = None
+    try:
+        session = await manager.connect('references', project, 'test', case['family'], emit)
+        async def ping():
+            while True:
+                await asyncio.sleep(10)
+                session._last_heartbeat = manager.clock()
+        heartbeat = asyncio.create_task(ping())
+        await asyncio.wait_for(session._init_task, 125)
+        assert session.ready.is_set(), messages
+        assert messages[-1]['capabilities']['references'] is True
+        text = case['files'][case['target']]
+        sequence = 1
+        await session.handle({'type': 'open', 'id': sequence, 'path': case['target'], 'language': language, 'version': 1, 'text': text})
+        async def query(kind, position):
+            nonlocal sequence
+            sequence += 1
+            request_id = sequence
+            await session.handle({'type': kind, 'id': request_id, 'path': case['target'], 'version': 1, 'position': position})
+            async with asyncio.timeout(16):
+                while not any(m.get('id') == request_id for m in messages):
+                    await asyncio.sleep(.02)
+            response = next(m for m in messages if m.get('id') == request_id)
+            assert response['type'] == kind + '-result', response
+            return response['targets']
+        position = smoke.symbol_position(text, needle)
+        deadline = time.monotonic() + 45
+        while True:
+            definitions = await query('definition', position)
+            references = await query('references', position)
+            if case['source'] in {t['path'] for t in references} or time.monotonic() >= deadline:
+                break
+            await asyncio.sleep(.4)
+        # This is the semantic signal used by Ctrl+click to choose references.
+        assert any(t['path'] == case['target'] and t['range']['start']['line'] == position['line'] and
+                   t['range']['start']['character'] <= position['character'] < t['range']['end']['character'] for t in definitions), definitions
+        assert case['source'] in {t['path'] for t in references}, references
+        assert case['target'] not in {t['path'] for t in references}, 'Do not return the declaration itself'
+        assert not any(t['path'].startswith(('other/', 'other.', 'src/main/java/b/Base')) for t in references), 'Exclude unrelated same-named symbols'
+        prefix = text[:text.index('value =')]
+        variable = {'line': prefix.count('\n'), 'character': len(prefix.rsplit('\n', 1)[-1].encode('utf-16-le')) // 2}
+        uses = await query('references', variable)
+        assert len(uses) == 2 and {t['path'] for t in uses} == {case['target']}, uses
+        assert all((project / name).read_bytes() == content.encode('utf-8') for name, content in case['files'].items())
+    finally:
+        if heartbeat:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
+        await manager.shutdown()
+
+
+@pytest.mark.skipif(os.environ.get('SONACODE_TEST_LANGUAGE_NATIVE') != '1', reason='opt-in real local language services')
 @pytest.mark.asyncio
 async def test_real_java_interface_and_abstract_implementations(tmp_path):
     import asyncio

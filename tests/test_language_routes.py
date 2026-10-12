@@ -86,7 +86,7 @@ def until(socket, predicate):
     raise AssertionError('Expected reply missing')
 
 
-@pytest.mark.parametrize('kind', ['definition', 'implementation'])
+@pytest.mark.parametrize('kind', ['definition', 'implementation', 'references'])
 def test_socket_drafts_definition_and_project_removal(analysis_client, kind):
     client, root, runtime, base = analysis_client
     with client.websocket_connect(base + '/code-navigation/python?editor_id=' + EDITOR, headers={'origin': 'http://testserver'}) as socket:
