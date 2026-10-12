@@ -82,8 +82,11 @@ class ShutdownGate:
         self.shutdown_path = shutdown_path
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if (scope["type"] == "http" and self.runtime.closing
-                and scope["path"] != self.shutdown_path):
+        if (scope["type"] in {"http", "websocket"} and self.runtime.closing
+                and scope["path"] not in {self.shutdown_path, "/__sona_commands/event"}):
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1012})
+                return
             response = JSONResponse(status_code=503, content={"detail": "应用正在退出"})
             await response(scope, receive, send)
             return
@@ -105,7 +108,10 @@ class RuntimeState:
         self.sona_refresh_lock = asyncio.Lock()
         self.sona_site.startup_refreshing = (
             config.model_settings.source == "sona" and self.sona_site.session(config.sona_site) is not None)
-        self.workspace = WorkspaceManager(self.provider_config)
+        self.workspace = WorkspaceManager(
+            self.provider_config,
+            chat_directory=str(Path(config_path).expanduser().resolve().parent / "chat-workspace"),
+        )
         self.ledger = ExecutionLedger(config_path)
         self.commands = CommandManager(self.ledger, config.server.port)
         self.workspace.commands = self.commands
@@ -140,10 +146,10 @@ class RuntimeState:
             except SonaSiteError as exc:
                 if exc.status == 401:
                     async with self.config_lock:
-                        await self.workspace.update_configuration(lambda: apply(None), "网站登录")
+                        await self.workspace.update_catalog(lambda: apply(None))
                 raise
             async with self.config_lock:
-                await self.workspace.update_configuration(lambda: apply(updated), "网站模型")
+                await self.workspace.update_catalog(lambda: apply(updated))
 
     def provider_config(self) -> AppConfig:
         """Combine editable local providers with the current website catalog in memory."""
@@ -177,6 +183,9 @@ class RuntimeState:
             await self.workspace.shutdown()
 
     async def aclose(self) -> None:
+        # A failed cleanup remains closed to new work but can be retried.
+        if self._close_task is not None and self._close_task.done() and self._close_task.exception():
+            self._close_task = None
         if self._close_task is None:
             self.closing = True
             self.workspace.closing = True
@@ -194,13 +203,13 @@ class RuntimeState:
             except Exception as exc:
                 failures.append(exc)
                 logger.exception("Application cleanup failed")
+        if failures:
+            raise RuntimeError("Application cleanup failed") from failures[0]
         for runs in self.ledger.runs.values():
             for run in runs:
                 if run["state"] in {"running", "stopping"}:
                     run.update(state="interrupted", end=int(time.time() * 1000))
         self.ledger.save()
-        if failures:
-            raise RuntimeError("Application cleanup failed") from failures[0]
 
 
 def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
@@ -254,12 +263,10 @@ def create_app(cfg: AppConfig, config_path: str | None = None) -> FastAPI:
         if (not token or not secrets.compare_digest(token, submitted) or request.client is None
                 or request.client.host != "127.0.0.1"):
             raise HTTPException(403, "Invalid desktop owner")
-        try:
-            await runtime.aclose()
-        finally:
-            stop = getattr(app.state, "stop_server", None)
-            if stop is not None:
-                stop()
+        await runtime.aclose()
+        stop = getattr(app.state, "stop_server", None)
+        if stop is not None:
+            stop()
         return {"ok": True}
     app.state.config = cfg  # 兼容旧引用
     app.state.config_path = config_path or CONFIG_PATH

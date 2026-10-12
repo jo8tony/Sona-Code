@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sona-code"
-version = "2.3.1"
+version = "2.3.2"
 description = "Sona Code：透明转发并记录大模型 API 调用"
 requires-python = ">=3.10"
 dependencies = [
@@ -37,7 +37,12 @@ exclude = ["tests*"]
 [tool.setuptools.package-data]
 sona_code = [
     "web/static/*",
+    "web/static/avatars/*",
     "web/static/vendor/*",
+    "web/static/vendor/pdfjs/*",
+    "web/static/vendor/pdfjs/cmaps/*",
+    "web/static/vendor/pdfjs/standard_fonts/*",
+    "web/static/vendor/pdfjs/wasm/*",
     "workspace/*.js",
 ]
 

@@ -23,6 +23,7 @@ from sona_code.workspace.diagnostics import (
     ProcessOutput, StartupRedactor, failure_detail, is_locale_error,
 )
 from sona_code.workspace.history import HistoryNotFound, read_history, session_catalog
+from sona_code.workspace.chat import chat_environment
 from sona_code.terminal.manager import (
     _build_argv,
     _build_env,
@@ -60,7 +61,9 @@ def _free_port() -> int:
 class WorkspaceManager:
     """One OpenCode service per project; sessions remain in OpenCode storage."""
 
-    def __init__(self, config_supplier: Callable[[], AppConfig] | None = None) -> None:
+    def __init__(self, config_supplier: Callable[[], AppConfig] | None = None, *,
+                 chat_directory: str | None = None) -> None:
+        self.chat_directory = str(Path(chat_directory).resolve()) if chat_directory else None
         self._config_supplier = config_supplier
         self._servers: dict[str, OpenCodeServer] = {}
         self._starting: dict[str, asyncio.Task[OpenCodeServer]] = {}
@@ -75,6 +78,12 @@ class WorkspaceManager:
         self.ledger = None
         self.closing = False
         self._stopping: set[tuple[str, str]] = set()
+        self._stale_catalog_servers: set[str] = set()
+
+    def is_chat(self, project: str) -> bool:
+        return (self.chat_directory is not None and
+                os.path.normcase(str(Path(project).resolve())) ==
+                os.path.normcase(self.chat_directory))
 
     async def ensure(self, project: str, config: AppConfig) -> OpenCodeServer:
         path = str(Path(project).expanduser().resolve())
@@ -85,6 +94,8 @@ class WorkspaceManager:
         if self.closing:
             raise WorkspaceError("应用正在退出", 503)
         path = str(Path(project).expanduser().resolve())
+        if self.is_chat(path):
+            Path(path).mkdir(parents=True, exist_ok=True)
         if not Path(path).is_dir():
             raise WorkspaceError(f"项目目录不存在：{path}", 404)
         async with self._lock:
@@ -106,9 +117,10 @@ class WorkspaceManager:
 
     async def _start_server(self, path: str, config: AppConfig) -> OpenCodeServer:
         try:
-            existing = self._servers.pop(path, None)
+            existing = self._servers.get(path)
             if existing:
                 await self._close_server(existing)
+                self._servers.pop(path, None)
             if self.commands is not None:
                 await self.commands.stop_owner(path)
 
@@ -122,6 +134,8 @@ class WorkspaceManager:
             env = await asyncio.to_thread(_build_env, config, "opencode")
             if self.environment is not None:
                 env = await asyncio.to_thread(self.environment, path, "opencode", env)
+            if self.is_chat(path):
+                env = chat_environment(env)
             password = secrets.token_urlsafe(32)
             env["OPENCODE_SERVER_USERNAME"] = "sona-code"
             env["OPENCODE_SERVER_PASSWORD"] = password
@@ -220,15 +234,15 @@ class WorkspaceManager:
             path = str(Path(project).resolve())
             if self.closing or (path, session) in self._stopping:
                 raise WorkspaceError("会话正在停止或应用正在退出", 409)
-            if self.ledger is not None:
-                self.ledger.begin(path, session)
-            async with self.task_dispatch(project):
-                try:
-                    return await self._request(project, config, method, endpoint, body=body, params=params)
-                except BaseException:
+            try:
+                async with self.task_dispatch(project):
                     if self.ledger is not None:
-                        self.ledger.finish(path, session, "interrupted")
-                    raise
+                        self.ledger.begin(path, session)
+                    return await self._request(project, config, method, endpoint, body=body, params=params)
+            except BaseException:
+                if self.ledger is not None:
+                    self.ledger.finish(path, session, "interrupted")
+                raise
         return await self._request(project, config, method, endpoint, body=body, params=params)
 
     @asynccontextmanager
@@ -238,6 +252,8 @@ class WorkspaceManager:
         async with self._skill_changes:
             if path in self._changing:
                 raise WorkspaceError("当前项目正在准备 OpenSpec，请完成后重试", 409)
+            if path in self._stale_catalog_servers and not self._project_requests.get(path, 0):
+                await self._recycle_catalog_server(path)
             self._task_requests += 1
             self._project_requests[path] = self._project_requests.get(path, 0) + 1
         try:
@@ -341,6 +357,37 @@ class WorkspaceManager:
             return await asyncio.to_thread(operation)
         return await self.update_configuration(apply, "技能")
 
+    async def update_catalog(self, operation: Callable[[], Awaitable[dict]]) -> dict:
+        """Publish subscriptions immediately; running tasks keep their native cache."""
+        async with self._skill_changes, self._lock:
+            result = await operation()
+            self._stale_catalog_servers.update(self._servers)
+            self._stale_catalog_servers.update(self._starting)
+            return result
+
+    async def _recycle_catalog_server(self, path: str) -> None:
+        # Called before dispatch while _skill_changes excludes new task requests.
+        async with self._lock:
+            pending = self._starting.get(path)
+            if pending:
+                await asyncio.shield(pending)
+            server = self._servers.get(path)
+            if server and server.process.poll() is None:
+                try:
+                    response = await server.client.get("/session/status", params={"directory": path})
+                    response.raise_for_status()
+                    statuses = response.json()
+                except (httpx.HTTPError, ValueError):
+                    return  # A failed status probe must never interrupt a task.
+                if not isinstance(statuses, dict) or any(
+                    not isinstance(status, dict) or status.get("type") != "idle"
+                    for status in statuses.values()
+                ):
+                    return
+                await self._close_server(server)
+                self._servers.pop(path, None)
+            self._stale_catalog_servers.discard(path)
+
     async def update_configuration(self, operation: Callable[[], Awaitable[dict]], noun: str = "模型配置") -> dict:
         """Serialize config changes with task preflight; recycle idle native caches."""
         async with self._skill_changes, self._lock:
@@ -387,16 +434,19 @@ class WorkspaceManager:
             pending = self._starting.get(path)
             if pending is not None:
                 await asyncio.gather(pending, return_exceptions=True)
-            server = self._servers.pop(path, None)
+            server = self._servers.get(path)
             if server:
                 await self._close_server(server)
+                self._servers.pop(path, None)
 
     async def shutdown(self) -> None:
         async with self._lock:
             await self._wait_for_starts()
             servers = list(self._servers.values())
-            self._servers.clear()
             results = await asyncio.gather(*(self._close_server(server) for server in servers), return_exceptions=True)
+            for server, result in zip(servers, results):
+                if not isinstance(result, BaseException):
+                    self._servers.pop(server.project, None)
             for result in results:
                 if isinstance(result, BaseException):
                     raise result
@@ -409,29 +459,40 @@ class WorkspaceManager:
     async def stop_session(self, project: str, config: AppConfig, session: str) -> dict:
         path = str(Path(project).resolve())
         key = (path, session)
-        self._stopping.add(key)
+        async with self._project_changes.setdefault(path, asyncio.Lock()):
+            self._stopping.add(key)
+            pending = self._starting.get(path)
+            if pending is not None:
+                await asyncio.shield(pending)
+        stopped = False
         try:
-            server = await self.ensure(path, config)
+            server = self._servers.get(path)
+            if server is None or server.process.poll() is not None:
+                if self.commands is not None:
+                    await self.commands.stop_session(path, session)
+                if self.ledger is not None:
+                    self.ledger.cancel(path, session)
+                stopped = True
+                return {"ok": True}
             try:
                 await self._abort_native(server, session)
+            except OSError as exc:
+                raise WorkspaceError("会话进程清理失败，请重试停止", 503) from exc
             except (httpx.HTTPError, WorkspaceError, ValueError) as exc:
                 if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
                     raise WorkspaceError("OpenCode 无法停止该会话", exc.response.status_code) from exc
-                # An unresponsive native runner must not keep executing after
-                # Stop. Escalate to the owned project server as a last resort.
-                self._servers.pop(path, None)
-                await self._close_server(server)
-                raise WorkspaceError("会话已强制停止，项目服务已关闭，可重新发送任务", 503) from exc
+                # Keep this session gated for retry; other sessions share this server.
+                raise WorkspaceError("命令已清理，但无法确认会话停止，请重试停止", 503) from exc
+            stopped = True
             return {"ok": True}
         finally:
-            self._stopping.discard(key)
-            if self.commands is not None:
-                self.commands.blocked.discard(key)
+            if stopped:
+                self._stopping.discard(key)
+                if self.commands is not None:
+                    self.commands.blocked.discard(key)
 
     async def _abort_native(self, server: OpenCodeServer, session: str) -> None:
         path = server.project
-        if self.ledger is not None:
-            self.ledger.finish(path, session, "stopped")
         if self.commands is not None:
             self.commands.blocked.add((path, session))
         try:
@@ -446,14 +507,17 @@ class WorkspaceManager:
             response = await server.client.get("/session/status", params={"directory": path}, timeout=min(2, max(.1, deadline - time.monotonic())))
             response.raise_for_status()
             statuses = response.json()
-            if not isinstance(statuses, dict):
+            if not isinstance(statuses, dict) or not isinstance(statuses.get(session, {}), dict):
                 raise WorkspaceError("会话状态无法确认", 503)
             if statuses.get(session, {}).get("type", "idle") == "idle":
+                if self.ledger is not None:
+                    self.ledger.cancel(path, session)
                 return
             await asyncio.sleep(.1)
         raise WorkspaceError("会话停止超时", 503)
 
     async def _close_server(self, server: OpenCodeServer) -> None:
+        closed = False
         try:
             if self.commands is not None and server.project:
                 try:
@@ -479,8 +543,9 @@ class WorkspaceManager:
                             await asyncio.to_thread(server.scope.close)
                         else:
                             await self._stop_process(server.process)
+                closed = True
             finally:
-                if self.ledger is not None and server.project:
+                if closed and self.ledger is not None and server.project:
                     self.ledger.finish_project(server.project)
                 if server.output is not None:
                     await asyncio.to_thread(server.output.close)

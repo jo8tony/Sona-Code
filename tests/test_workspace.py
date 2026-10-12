@@ -46,7 +46,7 @@ def test_workspace_projects_and_session_routes(tmp_path):
         if endpoint == "/session" and method == "POST":
             return {"id": "ses_new", "title": body.get("title")}
         if endpoint.endswith("/message"):
-            return [{"info": {"id": "msg_1", "role": "user"}, "parts": [{"type": "text", "text": "hello"}]}]
+            return [{"info": {"id": "msg_1", "role": "assistant", "time": {"completed": 1}}, "parts": [{"type": "text", "text": "hello"}]}]
         if endpoint == "/agent":
             return [{"name": "build", "mode": "primary"}]
         if endpoint == "/command":
@@ -200,11 +200,13 @@ def test_message_fork_includes_selected_reply(tmp_path, message_id, expected_ids
     project_dir = tmp_path / "project"
     project_dir.mkdir()
     app.state.runtime.terminal_projects.add(str(project_dir), "opencode")
-    messages = [{"info": {"id": f"msg_{i}", "role": "user" if i % 2 else "assistant"}}
+    messages = [{"info": {"id": f"msg_{i}", "role": "user" if i % 2 else "assistant", "time": {"completed": 1}}}
                 for i in range(1, 5)]
     fork_payloads = []
 
     async def fake_request(project, cfg, method, endpoint, *, body=None, params=None):
+        if method == "GET" and endpoint == "/session/status":
+            return {}
         if method == "GET" and endpoint.endswith("/message"):
             return messages
         if method == "POST" and endpoint.endswith("/fork"):
@@ -229,6 +231,43 @@ def test_message_fork_includes_selected_reply(tmp_path, message_id, expected_ids
         invalid = client.post(endpoint, json={"message_id": "bad.id"})
         assert invalid.status_code == 400
         assert len(fork_payloads) == 1
+
+
+@pytest.mark.parametrize("status, finish, completed, expected", [
+    ("busy", "stop", 1, 409),
+    ("retry", "stop", 1, 409),
+    ("idle", "tool-calls", 1, 409),
+    ("idle", "stop", None, 409),
+    ("idle", "stop", 1, 200),
+])
+def test_fork_rejects_running_or_unfinished_source_sessions(tmp_path, status, finish, completed, expected):
+    config = AppConfig(default_upstream="", recording={"dir": str(tmp_path / "records")})
+    app = create_app(config, config_path=str(tmp_path / "config.json"))
+    project = tmp_path / "project"
+    project.mkdir()
+    app.state.runtime.terminal_projects.add(str(project), "opencode")
+    forked = []
+
+    async def native(path, cfg, method, endpoint, *, body=None, params=None):
+        if endpoint == "/session/status":
+            assert params == {"directory": str(project)}
+            return {"current": {"type": status}, "other": {"type": "busy"}}
+        if endpoint.endswith("/message"):
+            return [{"info": {"id": "user", "role": "user"}},
+                    {"info": {"id": "reply", "role": "assistant", "finish": finish,
+                              "time": {"completed": completed}}}]
+        if endpoint.endswith("/fork"):
+            forked.append(endpoint)
+            return {"id": "new"}
+        raise AssertionError(endpoint)
+
+    app.state.runtime.workspace.request = native
+    with TestClient(app) as client:
+        prefix = "/__recorder/api/workspace/projects"
+        project_id = client.get(prefix).json()["items"][0]["id"]
+        response = client.post(f"{prefix}/{project_id}/sessions/current/fork", json={"message_id": "reply"})
+        assert response.status_code == expected
+        assert bool(forked) == (expected == 200)
 
 
 @pytest.mark.parametrize("failed", [False, True])
@@ -466,7 +505,7 @@ const update = source.slice(source.indexOf("  function updateSkillInput() {"), s
 const input = {dataset: {}, setAttribute() {}};
 let highlights = 0;
 const context = {
-  input, composingInput: false, state: {skills: [], commands: []}, builtInCommands: [],
+  input, composingInput: false, state: {skills: [], commands: []}, builtInCommands: [], availableBuiltInCommands: () => [],
   composer: {value: "", fileReferences: [], highlightSkill() {highlights++;}},
   view: {querySelector() {return {};}}
 };
@@ -539,6 +578,11 @@ function el(tag, props = {}, ...children) {
       this.children.splice(index,0,item); item.parent=this;},
     remove() {if (this.parent) {this.parent.children.splice(this.parent.children.indexOf(this),1);this.parent=null;}},
     setAttribute(key,value) {this[key]=value;},
+    querySelector(selector) {const name = selector.slice(1);
+      for (const child of this.children) {
+        if ((child.className || child.class || "").split(" ").includes(name)) return child;
+        const found = child.querySelector(selector); if (found) return found;
+      } return null;},
     replaceChildren(...items) {for (const item of [...this.children]) item.remove(); this.append(...items);}};
   node.append(...children); return node;
 }
@@ -547,17 +591,22 @@ const project = {id: "project", name: "Project", path: "/project"};
 const state = {
   projects: [project], sessions: new Map([[project.id, Array.from({length: 14}, (_, i) => ({id: `session-${i}`, title: `Session ${i}`}))]]),
   projectId: project.id, sessionId: "session-9", search: "", collapsedProjects: new Set(),
-  sessionLimits: new Map(), errors: new Map(), projectStatuses: new Map(),
+  sessionLimits: new Map(), errors: new Map(), projectStatuses: new Map(), sessionDetails: new Map(),
+  messages: [], permissions: [], questions: [],
 };
-const context = vm.createContext({state, sideList, el, closeRowMenus() {}, sidebarDrag: null, bindSidebarDrag() {},
-  workspaceUnreadCompletions: new Set(),
+const context = vm.createContext({state, WORKSPACE_CHAT_ID: "chat", sideList, el, closeRowMenus() {}, sidebarDrag: null, subagentPopover: null, bindSidebarDrag() {},
+  workspaceUnreadCompletions: new Set(), workspaceMarkSessionRead() {}, conversationViews: new Map(),
+  unreadIndicator: () => el("span", {class: "wsp-unread-dot"}),
   sidebarSections: new Map(), sidebarRows: new Map(), workspaceConversationKey: (p,s) => JSON.stringify([p,s]), statusIcon: () => el("svg"),
-  view: {querySelector() {return {}; }}, rowMenu: () => el("div"),
+  view: {querySelector() {return {setAttribute() {}}; }, querySelectorAll: () => []}, rowMenu: () => el("div"),
   sessionTitle: s => s.title, shortStamp: () => "", stamp: () => ""});
 const icons = fs.readFileSync("sona_code/web/static/workspace-tree.js", "utf8");
 vm.runInContext(icons.slice(0, icons.indexOf("function createWorkspaceTree(")), context);
 const sidebarSource = source.slice(source.indexOf("  function renderSidebar() {"), source.indexOf("  function renderHeader() {"));
 vm.runInContext(source.slice(source.indexOf("function workspaceProjectMark("), source.indexOf("function workspaceOrderItems(")), context);
+const sessionTreeSource = source.slice(source.indexOf("function workspaceSessionTree("), source.indexOf("const workspaceUnreadCompletions"));
+vm.runInContext(sessionTreeSource, context);
+vm.runInContext(source.slice(source.indexOf("  function knownSession("), source.indexOf("  let locatingSession =")), context);
 vm.runInContext(source.slice(source.indexOf("function workspaceSyncChildren("), source.indexOf("function renderWorkspace(")) + sidebarSource, context);
 const render = () => vm.runInContext("renderSidebar()", context);
 const threads = () => sideList.children[0].children.find(node => node.class === "wsp-threads");
@@ -597,17 +646,54 @@ render();
 assert.equal(rows().length, 1);
 assert.equal(more(), undefined);
 
+// Descendants never consume root pagination slots, including children listed
+// before their parent. Search reveals a nested result with its root context.
+const originalSessions = state.sessions.get(project.id);
+state.sessions.set(project.id, [{id: "nested", parentID: "child", title: "Nested result"},
+  {id: "child", parentID: "session-0", title: "Child result"}, ...originalSessions]);
+state.search = ""; state.sessionLimits.delete(project.id);
+state.projectStatuses.set(project.id, {child: {type: "busy"}});
+context.workspaceUnreadCompletions.add(JSON.stringify([project.id, "nested"]));
+render(); assert.equal(rows().length, 6);
+assert.equal(context.sidebarRows.has(JSON.stringify([project.id, "child"])), false);
+const rootRow = context.sidebarRows.get(JSON.stringify([project.id, "session-0"]));
+assert.equal(rootRow.subagentTrigger.querySelector(".wsp-subagent-count").textContent, "2");
+assert(rootRow.subagentTrigger.title.includes("1 运行中"));
+assert(!rootRow.subagentTrigger.title.includes("未读"));
+assert.equal(rootRow.subagentKind, "idle");
+assert(!rootRow.subagentTrigger.className.includes("busy"));
+assert.equal(rootRow.subagentTrigger.querySelector(".wsp-unread-dot"), null);
+state.search = "Nested result"; render();
+assert.equal(rows().length, 2);
+const nestedRow = context.sidebarRows.get(JSON.stringify([project.id, "nested"]));
+assert(nestedRow.preview.textContent.includes("来自 Session 0"));
+assert.equal(more(), undefined);
+state.sessionId = "session-9";
+
+// Ordinary chat uses an exclusive flat list, preserving all project space.
+state.projects.push({id: "chat", name: "普通对话", path: ""});
+state.sessions.set("chat", [{id: "ordinary", title: "Ordinary chat"}]);
+state.search = ""; state.sidebarMode = "project"; render();
+assert.equal(sideList.children.length, 1);
+assert.equal(context.sidebarRows.has(JSON.stringify(["chat", "ordinary"])), false);
+state.sidebarMode = "chat"; render();
+assert.equal(sideList.children.length, 1);
+assert.equal(sideList.children[0].children[0].class, "wsp-threads");
+assert.equal(context.sidebarRows.has(JSON.stringify([project.id, "session-0"])), false);
+assert.equal(context.sidebarRows.has(JSON.stringify(["chat", "ordinary"])), true);
+state.sidebarMode = "project"; render();
+
 let refreshes = 0;
 const loadContext = vm.createContext({state, workspaceOrderItems: items => items, workspaceConversationKey: (p,s) => JSON.stringify([p,s]), workspaceSelection: {sessionId: "session-9"},
-  sessionLoads: new Map(), selectedRefresh: null,
+  sessionLoads: new Map(), selectedRefresh: null, workspaceMarkSessionRead() {},
   api: async () => ({items: state.sessions.get(project.id)}), alive: () => true,
   scrollToLatestOnLoad: false, lastSessionListRefresh: 0,
   saveDraft() {}, restoreDraft() {}, saveConversationView() {}, restoreConversationView() {}, cancelSelectedRefresh() {},
-  persistWorkspaceSelection() {}, refreshSelected() {refreshes++;}, renderSidebar() {}, renderHeader() {}, renderMain() {},
+  restoreModelSelection() {}, persistWorkspaceSelection() {}, refreshSelected() {refreshes++;}, renderSidebar() {}, renderHeader() {}, renderMain() {},
 });
 state.sessionDetails = new Map();
 const loadSource = source.slice(source.indexOf("  async function loadSessions(project) {"), source.indexOf("  function modelDisplayName("));
-vm.runInContext(loadSource, loadContext);
+vm.runInContext(sessionTreeSource + loadSource, loadContext);
 (async () => {
   await vm.runInContext('loadSessions({id: "project"})', loadContext);
   assert.equal(state.sessionId, "session-9");

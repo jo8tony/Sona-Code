@@ -8,11 +8,12 @@ def test_electron_quit_waits_once_and_retries_after_cleanup_failure():
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
 const source = fs.readFileSync("electron/main.js", "utf8").replace(/\r\n/g, "\n");
 const begin = source.indexOf('app.on("before-quit",');
-const end = source.indexOf('\n}\n\nasync function stopBackend', begin);
+const end = source.indexOf('\n}\n\nfunction requestJson', begin);
 let handler, resolve, reject, calls = 0, quits = 0, failures = 0, prevented = 0;
 const context = vm.createContext({quitting: false, quitReady: false, shutdownPromise: undefined,
   app: {on(name, fn) {handler = fn;}, quit() {quits++;}},
-  stopBackend() {calls++; return new Promise((yes, no) => {resolve = yes; reject = no;});},
+  sidecar: {}, origin: "http://local", shutdownToken: "test", showWindow() {},
+  shutdownOwnedChild() {calls++; return new Promise((yes, no) => {resolve = yes; reject = no;});},
   dialog: {showErrorBox() {failures++;}},
 });
 vm.runInContext(source.slice(begin, end), context);
@@ -40,6 +41,7 @@ function el(tag, attrs = {}, ...children) {
 function texts(node) {return [node.text || "", ...(node.children || []).flatMap(texts)].join(" ");}
 const context = vm.createContext({el, Date, state: {expandedTools: new Map()},
   skillForTool: () => null, workspaceIcon: () => el("icon"), toolDuration: () => "1s"});
+vm.runInContext(source.slice(source.indexOf("function workspaceTaskSessionId("), source.indexOf("function workspaceSubagentStatus(")), context);
 vm.runInContext(source.slice(source.indexOf("  function toolPart("), source.indexOf("  function questionCard(")), context);
 const stopped = {id: "part", tool: "bash", state: {status: "error", error: "任务已停止", metadata: {interrupted: true}}};
 const card = context.toolPart(stopped), group = context.toolGroup([stopped]);

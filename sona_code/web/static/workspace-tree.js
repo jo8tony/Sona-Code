@@ -3,9 +3,11 @@
 // Lucide SVG subset, ISC license. Source: lucide-icons/lucide@5a92b9ba262de5bf10e864219883267672c05db8.
 // Keep the original geometry; size and stroke are controlled by workspace.css.
 const WORKSPACE_ICONS = {
+  chat: [["path", {"d": "M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"}]],
   undo: [["path", {"d": "M9 14 4 9l5-5"}], ["path", {"d": "M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"}]],
   busy: [["path", {"d": "M21 12a9 9 0 1 1-6.219-8.56"}]],
   fork: [["path", {"d": "M15 6a9 9 0 0 0-9 9V3"}], ["circle", {"cx": "18", "cy": "6", "r": "3"}], ["circle", {"cx": "6", "cy": "18", "r": "3"}]],
+  agent: [["path", {"d": "M12 8V4H8"}], ["rect", {"x": "4", "y": "8", "width": "16", "height": "12", "rx": "2"}], ["path", {"d": "M2 14h2"}], ["path", {"d": "M20 14h2"}], ["path", {"d": "M9 13v2"}], ["path", {"d": "M15 13v2"}]],
   pencil: [["path", {"d": "M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"}], ["path", {"d": "m15 5 4 4"}]],
   folder: [["path", {"d": "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"}]],
   folderOpen: [["path", {"d": "m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"}]],
@@ -24,6 +26,11 @@ const WORKSPACE_ICONS = {
   search: [["path", {"d": "m21 21-4.34-4.34"}], ["circle", {"cx": "11", "cy": "11", "r": "8"}]],
   settings: [["path", {"d": "M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"}], ["circle", {"cx": "12", "cy": "12", "r": "3"}]],
   plus: [["path", {"d": "M5 12h14"}], ["path", {"d": "M12 5v14"}]],
+  maximize: [["path", {"d": "M8 3H5a2 2 0 0 0-2 2v3"}], ["path", {"d": "M16 3h3a2 2 0 0 1 2 2v3"}], ["path", {"d": "M21 16v3a2 2 0 0 1-2 2h-3"}], ["path", {"d": "M8 21H5a2 2 0 0 1-2-2v-3"}]],
+  restore: [["path", {"d": "M8 3v3a2 2 0 0 1-2 2H3"}], ["path", {"d": "M21 8h-3a2 2 0 0 1-2-2V3"}], ["path", {"d": "M3 16h3a2 2 0 0 1 2 2v3"}], ["path", {"d": "M16 21v-3a2 2 0 0 1 2-2h3"}]],
+  image: [["rect", {"x": "3", "y": "3", "width": "18", "height": "18", "rx": "2"}], ["circle", {"cx": "9", "cy": "9", "r": "2"}], ["path", {"d": "m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"}]],
+  chevronLeft: [["path", {"d": "m15 18-6-6 6-6"}]],
+  chevronUp: [["path", {"d": "m18 15-6-6-6 6"}]],
   send: [["path", {"d": "m5 12 7-7 7 7"}], ["path", {"d": "M12 19V5"}]],
   stop: [["rect", {"width": "18", "height": "18", "x": "3", "y": "3", "rx": "2"}]],
   terminal: [["path", {"d": "M12 19h8"}], ["path", {"d": "m4 17 6-6-6-6"}]],
@@ -88,13 +95,14 @@ function createWorkspaceTree(pane, callbacks) {
     closeMenu();
     menu = el("div", { class: "wsp-tree-menu", role: "menu" });
     const actions = [
-      ["打开", () => callbacks.open(project.id, item.path, "default")],
+      ...(item.directory ? [] : [["在应用内打开", () => callbacks.preview(project.id, item.path)]]),
+      [item.directory ? "打开" : "用系统应用打开", () => callbacks.open(project.id, item.path, "default")],
       ["在文件管理器中显示", () => callbacks.open(project.id, item.path, "reveal")],
       ...(item.directory || !browserFile(item.path) ? [] :
         [["在浏览器中打开", () => callbacks.open(project.id, item.path, "browser")]]),
       ["添加到对话引用", () => callbacks.reference(item.path)],
     ];
-    const icons = { "打开": "open", "在文件管理器中显示": "reveal",
+    const icons = { "打开": "open", "在应用内打开": "fileCode", "用系统应用打开": "open", "在文件管理器中显示": "reveal",
       "在浏览器中打开": "globe", "添加到对话引用": "reference" };
     for (const [label, action] of actions) menu.append(el("button", {
       type: "button", role: "menuitem",
@@ -117,15 +125,19 @@ function createWorkspaceTree(pane, callbacks) {
       "aria-expanded": item.directory ? String(expanded.has(item.path)) : null,
       title: item.path, draggable: true,
       onclick: () => {
-        if (results) { void locate(project, item.path); return; }
+        if (results) { void locate(project, item.path); void callbacks.preview(project.id, item.path); return; }
         selected = item.path;
         if (item.directory) {
           if (expanded.has(item.path)) expanded.delete(item.path);
           else { expanded.add(item.path); void load(item.path); }
         }
         render();
+        if (!item.directory) void callbacks.preview(project.id, item.path);
       },
-      ondblclick: () => { if (!item.directory) void callbacks.open(project.id, item.path, "default"); },
+      onkeydown: event => {
+        if (event.key === "Enter" && !item.directory) { event.preventDefault(); void callbacks.preview(project.id, item.path); }
+      },
+      tabindex: selected === item.path ? "0" : "-1",
       oncontextmenu: (event) => showMenu(event, item),
       ondragstart: (event) => {
         event.dataTransfer.setData("application/x-sona-project-reference",
@@ -222,7 +234,13 @@ function createWorkspaceTree(pane, callbacks) {
   search.addEventListener("input", () => { void runSearch(); });
   search.addEventListener("keydown", event => {
     if (event.key === "Escape") { search.value = ""; void runSearch(); }
-    if (event.key === "Enter" && results?.[0]) { event.preventDefault(); void locate(project, results[0]); }
+    if (event.key === "Enter" && results?.[0]) {
+      event.preventDefault();
+      const current = project, path = results[0];
+      void locate(current, path).then(() => {
+        if (current.id === project?.id) void callbacks.preview(current.id, path);
+      });
+    }
   });
   function setSide(value) {
     finishResize();

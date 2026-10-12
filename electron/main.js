@@ -8,6 +8,7 @@ const net = require("node:net");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { createDesktopSettings } = require("./desktop-settings.cjs");
+const { shutdownOwnedChild } = require("./shutdown.cjs");
 
 const origin = "http://127.0.0.1:8117";
 const workspaceUrl = `${origin}/__recorder/#/workspace`;
@@ -103,7 +104,7 @@ if (!app.requestSingleInstanceLock()) {
       },
     });
     window.on("close", (event) => {
-      if (!quitting) { event.preventDefault(); window.hide(); }
+      if (!quitReady) { event.preventDefault(); if (!quitting) window.hide(); }
     });
     window.on("focus", () => window.flashFrame(false));
     window.webContents.on("will-navigate", (event, url) => {
@@ -166,11 +167,13 @@ if (!app.requestSingleInstanceLock()) {
           // same config and speaks the same application version.
           const replacement = await probeBackend(configPath);
           if (replacement.state !== "sona" || replacement.version !== app.getVersion()) throw error;
+          await shutdownOwnedChild(sidecar, origin, shutdownToken);
           sidecar = null;
         }
       }
       if (!quitting) await window.loadURL(workspaceUrl);
     } catch (error) {
+      if (quitting) return;
       dialog.showErrorBox("Sona Code 启动失败", `${error}\n诊断日志：${path.join(logDir, "electron-desktop.log")}`);
       app.quit();
     }
@@ -180,42 +183,17 @@ if (!app.requestSingleInstanceLock()) {
     quitting = true;
     if (quitReady) return;
     event.preventDefault();
-    shutdownPromise ||= stopBackend().then(() => {
+    shutdownPromise ||= shutdownOwnedChild(sidecar, origin, shutdownToken).then(() => {
+      sidecar = null;
       quitReady = true;
       app.quit();
-    }).catch((error) => {
+    }).catch(error => {
       shutdownPromise = null;
       quitting = false;
+      showWindow();
       dialog.showErrorBox("Sona Code 退出失败", String(error));
     });
   });
-}
-
-async function stopBackend() {
-  const child = sidecar;
-  if (!child?.pid) return;
-  const exited = () => child.exitCode !== null || child.signalCode !== null;
-  if (!exited()) {
-    await new Promise((resolve) => {
-      const request = http.request(`${origin}/__recorder/api/shutdown`, {
-        method: "POST", timeout: 20000,
-        headers: { Authorization: `Bearer ${shutdownToken}`, "Content-Length": "0" },
-      }, (response) => { response.resume(); response.on("end", resolve); });
-      request.on("timeout", () => request.destroy());
-      request.on("error", resolve);
-      request.end();
-    });
-    const deadline = Date.now() + 5000;
-    while (!exited() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  if (!exited()) {
-    const result = spawnSync("taskkill", ["/F", "/T", "/PID", String(child.pid)], { windowsHide: true, timeout: 10000 });
-    if (result.status !== 0 && processIsAlive(child.pid)) throw new Error("后台服务无法终止，请重试退出。");
-    const deadline = Date.now() + 3000;
-    while (processIsAlive(child.pid) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
-    if (processIsAlive(child.pid)) throw new Error("后台服务仍在退出，请重试。");
-  }
-  sidecar = null;
 }
 
 function requestJson(route) {

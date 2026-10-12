@@ -39,6 +39,7 @@ global.el = (tag, props, ...children) => { const element = new Element(tag, prop
 global.content = new Element("main");
 global.state = {projectId: "p", sessionId: "s", messages: [], permissions: [], questions: [], statuses: {}, sending: false,
   expandedTools: new Map()};
+global.conversationMessages = () => state.messages;
 global.changeTriggers = new Map();
 global.messageDay = () => "今天";
 global.activeProject = () => ({path: "/project"});
@@ -97,6 +98,28 @@ state.sending = false;
 const prompt = {info: {id: "u", role: "user"}, parts: [{type: "text", text: "question"}]};
 const assistant = {info: {id: "a", role: "assistant", parentID: "u"}, parts: []};
 const descendants = node => [node, ...node.children.flatMap(descendants)];
+// A first-send preview must render before a session exists, without invented
+// compaction/reply states or native-history actions.
+state.messages = []; state.sessionId = null; state.compactingSessionId = null; state.statuses = {};
+const outgoing = {id: "local", key: "p:null", baselineIds: new Set(),
+  message: {info: {id: "local", role: "user"}, parts: [{type: "text", text: "first send"}]}};
+global.outgoingMessages = new Map([[outgoing.id, outgoing]]);
+global.conversationMessages = () => workspaceOutgoingProjection(state.messages, [outgoing]).messages;
+const beforePreview = actionsBuilt;
+const preview = render()[0];
+assert(descendants(preview).some(node => node.text === "first send"));
+assert(descendants(preview).some(node => node.text === "发送中…"));
+assert(!content.children.some(node => node.class === "wsp-compaction busy"));
+assert.equal(actionsBuilt, beforePreview);
+assert.equal(render()[0], preview, "An unchanged pending message should retain its DOM");
+state.sessionId = "other"; state.statuses = {other: {type: "busy"}};
+assert.equal(render().length, 1, "A local preview cannot manufacture a native assistant reply");
+outgoing.error = "offline";
+const failed = render()[0];
+assert(descendants(failed).some(node => node.text === "发送失败：offline"));
+assert(descendants(failed).some(node => node.text === "恢复到输入框"));
+global.conversationMessages = () => state.messages;
+state.sessionId = "other"; state.compactingSessionId = undefined; state.statuses = {};
 const progress = row => descendants(row).filter(node => node.class === "wsp-thinking");
 const label = row => progress(row)[0]?.children.at(-1)?.text;
 // Metadata-only and damaged history rows must explain missing content.
@@ -159,6 +182,15 @@ assert.equal(render().length, 1);
 state.statuses.other = {type: "busy"};
 state.messages = [prompt, {...assistant, parts: [{type: "text", text: "Streaming", time: {start: 1}}]}];
 assert.equal(label(render().at(-1)), "正在回复…");
+// An appended user message must not stop the previous assistant's streaming UI.
+const correction = {...prompt, info: {...prompt.info, id: "correction"}, parts: [{type: "text", text: "adjust direction"}]};
+state.messages.push(correction);
+let steeredRows = render();
+assert.equal(label(steeredRows[1]), "正在回复…");
+assert.equal(steeredRows.length, 3, "A continuation must not invent a second active assistant");
+assert(descendants(steeredRows.at(-1)).some(node => node.text === "已加入对话 · 后续步骤处理"));
+assert.equal(state.messages.length, 3, "Waiting UI must not modify native history");
+state.messages.pop();
 state.messages[1].parts[0].time.end = 2;
 assert.equal(label(render().at(-1)), "正在思考…");
 state.messages[1].parts = [{type: "tool", state: {status: "running"}}];
@@ -220,6 +252,7 @@ const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:a
 const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
 vm.runInThisContext(source);
 vm.runInThisContext(source.slice(source.indexOf("  function renderMessages("), source.indexOf("  function panelIntro(")));
+global.conversationMessages = () => state.messages;
 class Element {
   constructor(tag, props = {}) { this.tag = tag; Object.assign(this, props); this.childNodes = []; this.listeners = {}; }
   get children() { return this.childNodes; }

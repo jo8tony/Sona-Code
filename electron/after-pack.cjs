@@ -9,7 +9,8 @@ module.exports = async ({ appOutDir, packager, electronPlatformName }) => {
   // signAndEditExecutable is disabled because electron-builder's winCodeSign
   // archive requires symlink privileges on some Windows build machines. Its
   // resource-editing step would otherwise set the EXE (and taskbar) icon.
-  const { rcedit } = await import("rcedit");
+  const rceditModule = await import("rcedit");
+  const rcedit = rceditModule.rcedit || rceditModule.default;
   const executable = path.join(appOutDir, `${packager.appInfo.productFilename}.exe`);
   const icon = path.resolve(__dirname, "..", "src-tauri", "icons", "icon.ico");
   const version = packager.appInfo.version;

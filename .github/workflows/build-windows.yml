@@ -84,17 +84,20 @@ jobs:
             build/opencode/*/models.json
           key: opencode-windows-x64-patched-${{ steps.opencode-recipe.outputs.sha256 }}
 
-      - name: Run tests
-        run: python -m pytest tests/ -q
-
       - name: Build Python sidecar
         shell: pwsh
         run: ./scripts/build-sidecar.ps1
 
+      - name: Run tests
+        run: python -m pytest tests/ -q
+
       - name: Verify patched OpenCode V1 compatibility
         env:
           OPENCODE_TEST_BINARIES: ${{ github.workspace }}/src-tauri/binaries/opencode-x86_64-pc-windows-msvc.exe
-        run: python -m pytest tests/test_models_native.py tests/test_workspace_queue_native.py -q
+        run: >-
+          python -m pytest tests/test_models_native.py tests/test_workspace_queue_native.py
+          tests/test_workspace_steering_native.py tests/test_workspace_chat.py
+          tests/test_optional_managed_tools.py tests/test_managed_lifecycle.py -q
 
       - name: Build Windows installer
         run: npm exec tauri build -- --bundles nsis

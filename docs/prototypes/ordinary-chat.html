@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Sona Code · 普通对话原型</title>
+  <style>
+    :root { --blue: #3975e9; --blue-dark: #285fc9; --blue-soft: #edf3ff; --ink: #202939; --muted: #788396; --line: #e7ebf1; --side: #f8f9fb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 14px; color: var(--ink); background: #fff; }
+    button, input, textarea { font: inherit; }
+    button { cursor: pointer; }
+    button { color: inherit; }
+    button:disabled { cursor: default; opacity: .4; }
+    button, input, textarea { -webkit-tap-highlight-color: transparent; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+    [hidden] { display: none !important; }
+    .icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .icon-btn { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 8px; color: var(--muted); background: transparent; }
+    .icon-btn:hover { background: #edf0f5; color: var(--ink); }
+    .app { height: 100dvh; min-height: 560px; display: flex; flex-direction: column; }
+    .topbar { height: 53px; flex: none; padding: 0 22px; display: flex; align-items: center; border-bottom: 1px solid var(--line); gap: 32px; background: #fff; }
+    .top-brand { display: flex; align-items: center; gap: 9px; font-weight: 650; font-size: 14px; letter-spacing: -.3px; white-space: nowrap; }
+    .brand-mark { width: 27px; height: 27px; display: grid; place-items: center; color: #fff; border-radius: 8px; background: linear-gradient(145deg, #598cf5, #3164d0); font-size: 20px; font-weight: 650; }
+    .top-nav { display: flex; height: 100%; gap: 24px; align-items: stretch; }
+    .nav-item { border: 0; padding: 0 2px; background: transparent; color: #7b8391; font-size: 13px; border-bottom: 2px solid transparent; }
+    .nav-item.active { color: var(--blue); border-bottom-color: var(--blue); font-weight: 600; }
+    .prototype { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 11px; color: #8790a0; white-space: nowrap; }
+    .prototype-dot { width: 6px; height: 6px; border-radius: 50%; background: #b2bdcc; }
+    .shell { flex: 1; min-height: 0; display: grid; grid-template-columns: 268px minmax(0, 1fr); }
+    .sidebar { background: var(--side); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+    .side-top { padding: 16px 16px 12px; }
+    .side-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 6px; margin-bottom: 12px; }
+    .side-heading span { font-size: 15px; font-weight: 650; }
+    .new-chat { display: flex; gap: 9px; justify-content: center; align-items: center; width: 100%; height: 42px; border: 1px solid var(--blue); border-radius: 9px; background: var(--blue); color: #fff; font-weight: 550; box-shadow: 0 3px 7px #3975e918; }
+    .new-chat:hover { background: var(--blue-dark); }
+    .side-switch { display: flex; gap: 3px; padding: 3px; margin: 0 0 10px; border: 1px solid #e3e8f0; border-radius: 8px; background: #edf1f6; }
+    .side-switch button { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 8px; border: 0; border-radius: 5px; background: transparent; color: #8a95a6; font-size: 12px; }
+    .side-switch button[aria-pressed="true"] { color: #315eac; background: #fff; box-shadow: 0 1px 4px #243c6010; font-weight: 600; }
+    .side-switch .icon { width: 14px; height: 14px; }
+    .return-projects { display: flex; align-items: center; gap: 6px; margin-right: 9px; padding: 7px 10px; border: 1px solid #e3e9f4; border-radius: 7px; background: #f8faff; color: #6480ad; font-size: 11px; white-space: nowrap; }
+    .return-projects:hover { color: var(--blue); border-color: #c6d6f0; }
+    .return-projects .icon { width: 14px; height: 14px; }
+    .search { display: flex; align-items: center; margin-top: 15px; height: 36px; border: 1px solid #e3e7ee; border-radius: 8px; padding: 0 10px; background: #fff; gap: 7px; color: #929bad; }
+    .search .icon { width: 15px; height: 15px; }
+    .search input { width: 100%; min-width: 0; outline: none; border: 0; font-size: 12px; background: transparent; color: var(--ink); }
+    .search input::placeholder { color: #929bad; }
+    .search kbd { font-family: inherit; font-size: 10px; padding: 2px 4px; border: 1px solid #edf0f4; border-radius: 3px; white-space: nowrap; }
+    .side-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 10px 24px; scrollbar-width: thin; }
+    .section-heading { height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 7px; padding: 0 12px; color: #6b7687; font-size: 12px; font-weight: 550; }
+    .section-heading .heading-copy { display: flex; align-items: center; gap: 8px; }
+    .section-heading .icon { width: 15px; height: 15px; }
+    .section-heading .count { font-size: 11px; color: #9aa3b1; font-weight: 400; }
+    .day-label { margin: 11px 13px 7px; font-size: 11px; color: #9aa3b1; }
+    .thread { width: 100%; display: flex; align-items: center; gap: 9px; padding: 10px 12px; margin-bottom: 3px; background: transparent; border: 1px solid transparent; border-radius: 8px; text-align: left; min-height: 43px; }
+    .thread > .icon { width: 15px; height: 15px; color: #9aa5b5; }
+    .thread:hover { background: #edf0f5; }
+    .thread.active { background: #eaf1ff; color: #2e62bd; border-color: #dae6fc; }
+    .thread.active > .icon { color: #4e7bce; }
+    .thread-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; font-size: 12.5px; }
+    .pin { width: 12px; height: 12px; color: #8997ae; }
+    .side-divider { height: 1px; background: var(--line); margin: 20px 12px 12px; }
+    .project { margin-top: 3px; }
+    .project-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 11px; background: transparent; border: 0; border-radius: 8px; text-align: left; }
+    .project-head:hover { background: #edf0f5; }
+    .project-head > .icon { width: 13px; height: 13px; color: #99a3b4; transition: transform .15s; }
+    .project-head[aria-expanded="true"] > .icon { transform: rotate(90deg); }
+    .folder { width: 25px; height: 25px; display: grid; place-items: center; border-radius: 7px; color: #5e7ab3; background: #eaf0fc; }
+    .folder .icon { width: 15px; height: 15px; }
+    .project-name { flex: 1; font-size: 12.5px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .project-count { font-size: 11px; color: #99a3b4; }
+    .project-threads { margin: 5px 0 10px 26px; border-left: 1px solid #dfe5ef; padding-left: 7px; }
+    .project-threads .thread { padding: 9px; min-height: 37px; }
+    .add-project { font-size: 11px; padding: 4px 0; display: flex; gap: 3px; align-items: center; background: transparent; border: 0; color: #8995a7; }
+    .add-project:hover { color: var(--blue); }
+    .add-project .icon { width: 13px; height: 13px; }
+    .empty-search { color: var(--muted); text-align: center; padding: 25px 12px; font-size: 12px; }
+    .side-bottom { padding: 15px 18px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
+    .avatar { width: 31px; height: 31px; flex: none; background: #e6ebf4; border: 1px solid #dde4ef; border-radius: 50%; display: grid; place-items: center; color: #607490; font-size: 11px; font-weight: 600; }
+    .account { flex: 1; font-size: 12px; font-weight: 550; }
+    .account small { display: block; color: #939dac; font-size: 10px; font-weight: 400; margin-top: 3px; }
+    .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+    .main-header { height: 80px; flex: none; border-bottom: 1px solid var(--line); padding: 0 32px; display: flex; align-items: center; gap: 12px; }
+    .header-copy { flex: 1; min-width: 0; }
+    .breadcrumb { display: flex; align-items: center; gap: 7px; color: #939cac; font-size: 11px; margin-bottom: 6px; }
+    .breadcrumb .icon { width: 12px; height: 12px; }
+    .title-row { display: flex; align-items: center; gap: 11px; min-width: 0; }
+    h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .type-badge { border-radius: 5px; background: #f0f4fa; color: #8090a6; font-size: 10px; padding: 4px 6px; white-space: nowrap; }
+    .header-actions { display: flex; align-items: center; gap: 3px; }
+    .menu-anchor { position: relative; }
+    .popover { position: absolute; z-index: 15; border: 1px solid #e2e7ef; border-radius: 11px; background: #fff; box-shadow: 0 10px 40px #243c6020; padding: 6px; width: 188px; }
+    .popover.menu { right: 0; top: 42px; }
+    .popover button { width: 100%; min-height: 36px; display: flex; align-items: center; gap: 9px; text-align: left; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; font-size: 12px; }
+    .popover button:hover { background: #f4f6fa; }
+    .popover button.danger { color: #c96060; }
+    .popover .icon { width: 15px; height: 15px; }
+    .project-tabs { display: flex; flex: none; gap: 26px; padding: 0 32px; border-bottom: 1px solid var(--line); height: 43px; }
+    .project-tabs button { border: 0; background: transparent; font-size: 12px; color: var(--muted); padding: 0 1px; border-bottom: 2px solid transparent; }
+    .project-tabs button.active { color: var(--blue); border-bottom-color: var(--blue); }
+    .conversation { flex: 1; min-height: 0; display: flex; }
+    .scroll { flex: 1; min-width: 0; overflow: auto; padding: 0 32px; scrollbar-width: thin; }
+    .welcome { max-width: 660px; margin: 0 auto; min-height: 100%; display: flex; flex-direction: column; justify-content: center; padding: 40px 0 38px; }
+    .welcome-brand { width: 48px; height: 48px; border-radius: 15px; display: grid; place-items: center; margin-bottom: 23px; color: var(--blue); background: linear-gradient(145deg, #f0f5ff, #e9f0ff); border: 1px solid #e4edff; }
+    .welcome-brand .icon { width: 27px; height: 27px; stroke-width: 1.35; }
+    .welcome h2 { font-size: 30px; font-weight: 600; letter-spacing: -1px; margin: 0 0 12px; }
+    .welcome-sub { margin: 0; color: #8791a1; font-size: 13px; line-height: 1.8; }
+    .suggestions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 32px; }
+    .suggestion { text-align: left; background: #fff; border: 1px solid var(--line); border-radius: 11px; padding: 16px 17px; position: relative; transition: border-color .15s, background .15s; }
+    .suggestion:hover { border-color: #c4d7fb; background: #fbfcff; }
+    .suggestion-title { display: flex; align-items: center; gap: 9px; font-weight: 550; font-size: 13px; }
+    .suggestion-title .icon { width: 17px; height: 17px; color: #7387ab; }
+    .suggestion-sub { display: block; color: #939cab; font-size: 11px; margin: 9px 22px 0 26px; line-height: 1.65; }
+    .suggestion > .icon { position: absolute; right: 15px; bottom: 18px; width: 13px; height: 13px; color: #bdc6d3; }
+    .welcome-foot { display: flex; align-items: center; gap: 6px; margin-top: 23px; font-size: 11px; color: #a0a9b7; }
+    .welcome-foot .icon { width: 13px; height: 13px; }
+    .messages { max-width: 740px; margin: 0 auto; padding: 25px 0 35px; }
+    .date-divider { color: #a1aabb; text-align: center; font-size: 10px; margin: 0 0 27px; }
+    .message { margin: 0 0 30px; }
+    .message.user { display: flex; flex-direction: column; align-items: flex-end; }
+    .user-bubble { max-width: 85%; padding: 13px 18px; background: #f1f4f9; border-radius: 15px 15px 4px 15px; font-size: 13px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .message-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .message-images img { max-width: 180px; max-height: 140px; border-radius: 10px; object-fit: contain; }
+    .assistant-heading { display: flex; align-items: center; gap: 9px; font-size: 12px; font-weight: 600; margin-bottom: 13px; }
+    .assistant-mark { width: 25px; height: 25px; background: var(--blue-soft); color: var(--blue); border-radius: 8px; display: grid; place-items: center; }
+    .assistant-mark .icon { width: 16px; height: 16px; }
+    .message-model { color: #9aa3b2; font-size: 10px; font-weight: 400; }
+    .assistant-body { padding-left: 34px; font-size: 13px; line-height: 1.9; overflow-wrap: anywhere; }
+    .assistant-body p { margin: 0 0 13px; white-space: pre-wrap; }
+    .assistant-body h3 { font-size: 14px; font-weight: 600; margin: 21px 0 8px; }
+    .assistant-body ul { margin: 7px 0 15px; padding-left: 20px; }
+    .assistant-body li { padding-left: 3px; margin-bottom: 5px; }
+    .assistant-body strong { font-weight: 600; }
+    .assistant-body blockquote { border-left: 2px solid #cbdaf7; padding-left: 14px; color: #77869d; margin: 18px 0; }
+    .message-actions { display: flex; align-items: center; gap: 2px; padding-left: 28px; margin-top: 12px; }
+    .message-actions .icon-btn { width: 28px; height: 28px; }
+    .message-actions .icon { width: 14px; height: 14px; }
+    .message-time { color: #a1aaba; font-size: 10px; margin-left: 8px; }
+    .typing { display: flex; gap: 5px; padding: 9px 0 15px; }
+    .typing i { width: 5px; height: 5px; border-radius: 50%; background: #a4b7d8; animation: pulse 1s ease-in-out infinite; }
+    .typing i:nth-child(2) { animation-delay: .15s; }
+    .typing i:nth-child(3) { animation-delay: .3s; }
+    @keyframes pulse { 50% { opacity: .3; transform: translateY(-3px); } }
+    .composer-dock { flex: none; padding: 12px 32px 18px; background: #fff; }
+    .composer-wrap { max-width: 740px; margin: 0 auto; }
+    .composer { border: 1px solid #dfe5ee; background: #fff; border-radius: 15px; padding: 15px 16px 11px; box-shadow: 0 3px 16px #263e6506; transition: border-color .15s, box-shadow .15s; }
+    .composer:focus-within { border-color: #a7c3f7; box-shadow: 0 0 0 3px #3975e909; }
+    .composer textarea { width: 100%; resize: none; min-height: 53px; max-height: 160px; border: 0; outline: none; background: transparent; color: var(--ink); padding: 0 1px 9px; font-size: 13px; line-height: 1.7; }
+    .composer textarea::placeholder { color: #9aa3b3; }
+    .composer-bottom { display: flex; gap: 8px; align-items: center; position: relative; }
+    .composer-bottom .icon-btn { width: 28px; height: 28px; }
+    .mode { display: flex; align-items: center; gap: 6px; border: 1px solid #e7edf7; background: #f8faff; border-radius: 6px; font-size: 11px; color: #647a9d; padding: 5px 8px; }
+    .mode .icon { width: 13px; height: 13px; }
+    .compose-spacer { flex: 1; }
+    .model-trigger { display: flex; align-items: center; gap: 6px; background: transparent; border: 0; padding: 6px; font-size: 11px; color: #667389; border-radius: 6px; }
+    .model-trigger:hover { background: #f4f6fa; }
+    .model-trigger .icon { width: 12px; height: 12px; }
+    .send { width: 32px; height: 32px; display: grid; place-items: center; background: var(--blue); border: 0; border-radius: 9px; color: #fff; }
+    .send:disabled { background: #e7edf6; color: #a0aec3; opacity: 1; }
+    .send .icon { width: 16px; height: 16px; }
+    .composer-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 10px 3px 0; color: #a1a9b6; font-size: 10px; }
+    .model-menu { bottom: 45px; right: 38px; width: 260px; }
+    .model-menu .menu-label { font-size: 10px; color: #9ba4b4; padding: 9px 10px 6px; }
+    .model-menu button { justify-content: space-between; }
+    .model-menu button.selected { background: var(--blue-soft); color: var(--blue); }
+    .model-menu small { display: block; margin-top: 4px; font-size: 10px; color: #939dac; }
+    .attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .attachment { position: relative; width: 64px; height: 54px; }
+    .attachment img { width: 100%; height: 100%; object-fit: cover; border: 1px solid var(--line); border-radius: 7px; }
+    .attachment button { position: absolute; right: -5px; top: -5px; width: 19px; height: 19px; border: 1px solid #e4e8ef; border-radius: 50%; background: #fff; font-size: 13px; display: grid; place-items: center; padding: 0; }
+    .file-tree { width: 218px; flex: none; background: #fafbfd; border-left: 1px solid var(--line); padding: 20px 16px; font-size: 11px; }
+    .file-tree strong { display: block; font-size: 12px; font-weight: 600; margin-bottom: 20px; }
+    .file-row { display: flex; align-items: center; gap: 8px; color: #73819a; margin: 15px 0; }
+    .file-row .icon { width: 14px; height: 14px; }
+    .file-row.indent { padding-left: 22px; }
+    .detail-panel { max-width: 740px; margin: 40px auto; }
+    .detail-panel h2 { font-size: 19px; font-weight: 600; }
+    .detail-panel p { color: var(--muted); font-size: 12px; line-height: 1.8; }
+    .change-row { padding: 16px; border: 1px solid var(--line); border-radius: 9px; display: flex; align-items: center; gap: 10px; margin-top: 18px; font-size: 12px; }
+    .change-row .change-count { margin-left: auto; color: #519778; }
+    .change-row .remove-count { color: #bc7272; }
+    .code { margin: 12px 0; padding: 15px; background: #f7f9fc; border: 1px solid var(--line); border-radius: 9px; font: 11px/1.9 ui-monospace, monospace; overflow-wrap: anywhere; white-space: pre-wrap; }
+    .activity-row { display: flex; align-items: center; gap: 12px; padding: 18px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+    .activity-row small { color: var(--muted); margin-left: auto; }
+    .activity-row .icon { color: #6484ba; }
+    .toast { position: absolute; left: 50%; bottom: 185px; transform: translateX(-50%); max-width: calc(100% - 30px); background: #34425a; color: #fff; font-size: 12px; padding: 10px 16px; border-radius: 8px; box-shadow: 0 6px 20px #23324d20; z-index: 30; text-align: center; }
+    dialog { padding: 0; border: 1px solid var(--line); border-radius: 16px; width: min(400px, calc(100% - 32px)); box-shadow: 0 24px 80px #15243d30; color: var(--ink); }
+    dialog::backdrop { background: #26384d35; backdrop-filter: blur(2px); }
+    .dialog-body { padding: 24px; }
+    .dialog-body h2 { margin: 0 0 12px; font-size: 18px; font-weight: 600; }
+    .dialog-body p { margin: 0 0 18px; font-size: 12px; color: var(--muted); line-height: 1.8; }
+    .dialog-body input { width: 100%; border: 1px solid #dfe5ee; border-radius: 8px; padding: 11px; margin-bottom: 20px; font-size: 13px; }
+    .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .dialog-actions button { border: 1px solid #e1e7f0; background: #fff; border-radius: 7px; padding: 8px 16px; font-size: 12px; }
+    .dialog-actions button.primary { color: #fff; background: var(--blue); border-color: var(--blue); }
+    .dialog-actions button.danger { color: #fff; background: #c96a6a; border-color: #c96a6a; }
+    .mobile-menu { display: none; }
+    .sidebar-mask { display: none; }
+    .shell.collapsed { grid-template-columns: minmax(0, 1fr); }
+    .shell.collapsed .sidebar { display: none; }
+    .shell.collapsed .mobile-menu { display: inline-flex; }
+    @media (min-width: 1500px) { .welcome { max-width: 700px; } .welcome h2 { font-size: 34px; } }
+    @media (max-height: 760px) and (min-width: 761px) { .welcome { padding: 28px 0; } .welcome-brand { margin-bottom: 16px; width: 42px; height: 42px; } .welcome h2 { font-size: 27px; } .suggestions { margin-top: 23px; gap: 9px; } .suggestion { padding: 13px; } .welcome-foot { margin-top: 17px; } .side-top { padding-top: 16px; } .side-heading { margin-bottom: 12px; } }
+    @media (max-width: 1050px) { .shell { grid-template-columns: 244px minmax(0, 1fr); } .main-header { padding: 0 24px; } .scroll { padding: 0 24px; } .composer-dock { padding-left: 24px; padding-right: 24px; } .top-nav { gap: 18px; } .file-tree { width: 180px; } }
+    @media (max-width: 760px) { .app { min-height: 500px; } .topbar { height: 49px; padding: 0 16px; gap: 20px; } .top-nav { gap: 16px; } .top-nav .nav-item:nth-child(n+3) { display: none; } .prototype { font-size: 10px; } .shell, .shell.collapsed { grid-template-columns: minmax(0, 1fr); } .sidebar { display: none; position: absolute; left: 0; top: 49px; bottom: 0; width: 268px; z-index: 40; box-shadow: 10px 0 30px #263c5720; } .shell.sidebar-open .sidebar { display: flex; } .shell.sidebar-open .sidebar-mask { display: block; position: absolute; inset: 49px 0 0; background: #23314940; z-index: 39; border: 0; width: 100%; } .mobile-menu { display: inline-flex; } .main-header { height: 74px; padding: 0 16px; gap: 8px; } .main-header h1 { font-size: 15px; } .type-badge { display: none; } .scroll { padding: 0 23px; } .welcome { padding: 24px 0; } .welcome h2 { font-size: 26px; } .welcome-brand { width: 40px; height: 40px; margin-bottom: 17px; } .suggestions { gap: 9px; margin-top: 23px; } .suggestion { padding: 13px 12px; } .suggestion-sub { margin-left: 0; margin-top: 8px; font-size: 10px; } .suggestion > .icon { display: none; } .suggestion-title { font-size: 12px; gap: 6px; } .composer-dock { padding: 9px 16px 13px; } .composer { padding: 13px 12px 10px; } .composer textarea { font-size: 16px; min-height: 48px; } .composer-meta { font-size: 9px; } .model-trigger { font-size: 10px; gap: 3px; } .composer-bottom { gap: 3px; } .mode { padding: 5px 6px; font-size: 10px; } .file-tree { display: none; } .assistant-body { padding-left: 0; } .assistant-heading { margin-bottom: 13px; } .message-actions { padding-left: 0; } .project-tabs { padding: 0 24px; } }
+    @media (max-width: 380px) { .top-nav .nav-item:nth-child(n+2) { display: none; } .prototype { margin-left: auto; } .suggestions { grid-template-columns: 1fr; } .suggestion-sub { display: none; } .welcome h2 { font-size: 24px; } .welcome-sub { font-size: 12px; } .welcome-foot { font-size: 10px; } .mode .icon { display: none; } .composer-meta span:first-child { display: none; } .composer-meta { justify-content: center; } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+  </style>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></symbol>
+      <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 11.5a8 8 0 0 1-8 8H4l1.7-4A8 8 0 1 1 20 11.5Z"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+      <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z"/></symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="m10 3 2.2 6.8L19 12l-6.8 2.2L10 21l-2.2-6.8L1 12l6.8-2.2ZM20 2v6M17 5h6"/></symbol>
+      <symbol id="i-pen" viewBox="0 0 24 24"><path d="m15 4 5 5M4 20l5-1L21 7a2.8 2.8 0 0 0-4-4L5 15Z"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 6v15M12 6C8 3 4 3 2 4v15c3-1 7-1 10 2 3-3 7-3 10-2V4c-2-1-6-1-10 2Z"/></symbol>
+      <symbol id="i-map" viewBox="0 0 24 24"><path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2ZM9 3v16M15 5v16"/></symbol>
+      <symbol id="i-code" viewBox="0 0 24 24"><path d="m7 7-5 5 5 5M17 7l5 5-5 5M14 4l-4 16"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+      <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 8 0v4"/></symbol>
+      <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+      <symbol id="i-pin" viewBox="0 0 24 24"><path d="m8 3 8 0-1 6 4 4v2H5v-2l4-4ZM12 15v7"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="white"/><circle cx="16" cy="17" r="3" fill="white"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H5v20h14V7ZM14 2v5h5M8 12h8M8 16h8"/></symbol>
+      <symbol id="i-tree" viewBox="0 0 24 24"><path d="M5 3v15h7M5 8h7"/><rect x="12" y="5" width="8" height="6" rx="1"/><rect x="12" y="15" width="8" height="6" rx="1"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    </defs>
+  </svg>
+  <div class="app">
+    <header class="topbar">
+      <div class="top-brand"><span class="brand-mark">S</span>Sona Code</div>
+      <nav class="top-nav" aria-label="主导航">
+        <button class="nav-item active" data-nav="工作区">工作区</button><button class="nav-item" data-nav="模型">模型</button><button class="nav-item" data-nav="技能">技能</button><button class="nav-item" data-nav="终端">终端</button><button class="nav-item" data-nav="轨迹">轨迹</button>
+      </nav>
+      <span class="prototype"><span class="prototype-dot"></span>交互原型</span>
+    </header>
+    <div class="shell" id="shell">
+      <button class="sidebar-mask" id="sidebar-mask" aria-label="关闭侧栏"></button>
+      <aside class="sidebar" aria-label="对话与项目">
+        <div class="side-top">
+          <div class="side-heading"><span>工作区</span><button class="icon-btn" id="collapse-side" aria-label="收起侧栏"><svg class="icon"><use href="#i-panel"/></svg></button></div>
+          <nav class="side-switch" aria-label="侧栏内容"><button id="show-projects" data-sidebar="project" aria-pressed="true"><svg class="icon"><use href="#i-folder"/></svg>项目</button><button id="show-chats" data-sidebar="chat" aria-pressed="false"><svg class="icon"><use href="#i-chat"/></svg>普通对话</button></nav>
+          <button class="new-chat" id="new-chat"><svg class="icon"><use href="#i-plus"/></svg>新建项目</button>
+          <label class="search"><svg class="icon"><use href="#i-search"/></svg><input id="search" type="search" placeholder="搜索对话和项目" aria-label="搜索对话和项目"><kbd>⌘ K</kbd></label>
+        </div>
+        <div class="side-scroll" id="side-list"></div>
+        <footer class="side-bottom"><span class="avatar">LP</span><div class="account">我的工作区<small>让想法，从这里开始</small></div><button class="icon-btn" id="settings" aria-label="设置"><svg class="icon"><use href="#i-settings"/></svg></button></footer>
+      </aside>
+      <main class="main">
+        <header class="main-header">
+          <button class="icon-btn mobile-menu" id="open-side" aria-label="展开侧栏"><svg class="icon"><use href="#i-panel"/></svg></button>
+          <div class="header-copy"><div class="breadcrumb" id="breadcrumb">工作区 <svg class="icon"><use href="#i-chevron"/></svg> 普通对话</div><div class="title-row"><h1 id="chat-title">新对话</h1><span class="type-badge" id="type-badge">普通对话</span></div></div>
+          <div class="header-actions"><button class="return-projects" id="return-projects" hidden><svg class="icon"><use href="#i-folder"/></svg>返回项目</button><button class="icon-btn" id="tree-toggle" aria-label="打开项目目录" hidden><svg class="icon"><use href="#i-tree"/></svg></button><button class="icon-btn" id="pin-current" aria-label="置顶对话" disabled><svg class="icon"><use href="#i-pin"/></svg></button><div class="menu-anchor"><button class="icon-btn" id="more" aria-label="更多对话操作" aria-expanded="false" disabled><svg class="icon"><use href="#i-more"/></svg></button><div class="popover menu" id="more-menu" hidden><button data-action="rename"><svg class="icon"><use href="#i-pen"/></svg>重命名</button><button data-action="pin"><svg class="icon"><use href="#i-pin"/></svg><span id="pin-label">置顶对话</span></button><button data-action="delete" class="danger"><svg class="icon"><use href="#i-trash"/></svg>删除对话</button></div></div></div>
+        </header>
+        <nav class="project-tabs" id="project-tabs" aria-label="项目视图" hidden><button data-tab="chat" class="active">对话</button><button data-tab="changes">文件改动 <span style="font-size:10px;margin-left:3px">1</span></button><button data-tab="activity">活动</button></nav>
+        <div class="conversation">
+          <div class="scroll" id="scroll"><section class="welcome" id="welcome">
+            <div class="welcome-brand"><svg class="icon"><use href="#i-spark"/></svg></div>
+            <h2 id="welcome-title">有什么想聊的？</h2><p class="welcome-sub" id="welcome-sub">一个问题、一段灵感，或一个还没成形的想法。<br>从这里开始，和 Sona 一起理清思路。</p>
+            <div class="suggestions" id="suggestions">
+              <button class="suggestion" data-prompt="帮我润色一封邮件，语气专业但亲切。"><span class="suggestion-title"><svg class="icon"><use href="#i-pen"/></svg>写点什么</span><span class="suggestion-sub">润色邮件，让表达更清晰</span><svg class="icon"><use href="#i-arrow"/></svg></button>
+              <button class="suggestion" data-prompt="用简单的例子解释一下，什么是大语言模型的上下文窗口？"><span class="suggestion-title"><svg class="icon"><use href="#i-book"/></svg>学点新东西</span><span class="suggestion-sub">把复杂概念，讲得简单一点</span><svg class="icon"><use href="#i-arrow"/></svg></button>
+              <button class="suggestion" data-prompt="帮我规划一个轻松的周末，不想安排得太满。"><span class="suggestion-title"><svg class="icon"><use href="#i-map"/></svg>一起做个计划</span><span class="suggestion-sub">为周末、学习或下一步做准备</span><svg class="icon"><use href="#i-arrow"/></svg></button>
+              <button class="suggestion" data-prompt="我刚开始学 Python，帮我制定一个两周的入门学习计划。"><span class="suggestion-title"><svg class="icon"><use href="#i-code"/></svg>聊聊代码</span><span class="suggestion-sub">理解代码，探索实现思路</span><svg class="icon"><use href="#i-arrow"/></svg></button>
+            </div><div class="welcome-foot" id="welcome-foot"><svg class="icon"><use href="#i-chat"/></svg>直接开始对话，也可以在左侧选择项目继续工作</div>
+          </section><section class="messages" id="messages" aria-label="对话消息" hidden></section><section class="detail-panel" id="detail-panel" hidden></section></div>
+          <aside class="file-tree" id="file-tree" aria-label="项目目录" hidden><strong>Sona Code <span style="font-weight:400;color:#a0aabb">/</span></strong><div class="file-row"><svg class="icon"><use href="#i-folder"/></svg>sona_code</div><div class="file-row indent"><svg class="icon"><use href="#i-folder"/></svg>workspace</div><div class="file-row indent"><svg class="icon"><use href="#i-folder"/></svg>web / static</div><div class="file-row indent"><svg class="icon"><use href="#i-file"/></svg>workspace.js</div><div class="file-row"><svg class="icon"><use href="#i-folder"/></svg>tests</div><div class="file-row"><svg class="icon"><use href="#i-folder"/></svg>docs</div><div class="file-row"><svg class="icon"><use href="#i-file"/></svg>pyproject.toml</div></aside>
+        </div>
+        <div class="composer-dock" id="composer-dock"><div class="composer-wrap"><form class="composer" id="composer">
+          <div class="attachments" id="attachments" hidden></div><textarea id="input" rows="2" aria-label="输入消息" placeholder="发送消息，聊聊你的想法…"></textarea>
+          <div class="composer-bottom"><button class="icon-btn" type="button" id="attach" aria-label="添加图片"><svg class="icon"><use href="#i-plus"/></svg></button><span class="mode" id="mode"><svg class="icon"><use href="#i-chat"/></svg>聊天</span><span class="compose-spacer"></span><button class="model-trigger" id="model-trigger" type="button" aria-expanded="false"><span id="model-label">Sona · 默认模型</span><svg class="icon"><use href="#i-down"/></svg></button><button class="send" id="send" type="submit" aria-label="发送消息" disabled><svg class="icon"><use href="#i-up"/></svg></button><div class="popover model-menu" id="model-menu" hidden><div class="menu-label">选择模型 · 示例选项</div><button type="button" data-model="Sona · 默认模型" class="selected"><span>Sona · 默认模型<small>日常问答与写作</small></span><svg class="icon"><use href="#i-check"/></svg></button><button type="button" data-model="Sona · 深度思考"><span>Sona · 深度思考<small>复杂分析与规划</small></span></button><button type="button" data-model="Sona · 快速回复"><span>Sona · 快速回复<small>轻量任务与快速交流</small></span></button></div></div>
+        </form><div class="composer-meta"><span id="input-hint">Enter 发送 · Shift + Enter 换行</span><span id="composer-status">示例交互 · 不连接真实模型</span></div></div></div>
+        <div class="toast" id="toast" role="status" hidden></div>
+      </main>
+    </div>
+  </div>
+  <input type="file" id="file-input" accept="image/*" multiple hidden>
+  <dialog id="dialog"><form id="dialog-form" class="dialog-body"><h2 id="dialog-title"></h2><p id="dialog-description"></p><input id="dialog-input" aria-label="名称" maxlength="60"><div class="dialog-actions"><button type="button" id="dialog-cancel">取消</button><button type="submit" id="dialog-confirm" class="primary">保存</button></div></form></dialog>
+  <script>
+    (() => {
+      const $ = id => document.getElementById(id);
+      const icon = name => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+      const escapeHtml = value => String(value).replace(/[&<>"']/g, character => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[character]));
+      const projects = [{id: 'sona', name: 'Sona Code', open: true}, {id: 'website', name: '个人网站', open: false}, {id: 'api', name: 'API 服务', open: false}, {id: 'data', name: '数据分析', open: false}, {id: 'docs', name: '文档工具', open: false}, {id: 'desktop', name: '桌面客户端', open: false}];
+      const chatReply = `<p>可以把这个周末的目标定为：<strong>恢复精力，再留一点时间做喜欢的事。</strong>每天安排一件主要的事，剩下的时间留白。</p><h3>周六 · 出去走走</h3><ul><li><strong>上午：</strong>自然醒，慢慢吃一顿早餐。</li><li><strong>下午：</strong>去附近的公园散步，带一本书，找个舒服的地方坐一会儿。</li><li><strong>晚上：</strong>选一家想尝试的小店，或者在家做一道简单的菜。</li></ul><h3>周日 · 把时间留给自己</h3><ul><li><strong>上午：</strong>花半小时整理房间，再做一点轻量运动。</li><li><strong>下午：</strong>看电影、读书，或者继续一个搁置的小兴趣。</li><li><strong>晚上：</strong>用 15 分钟写下下周最重要的三件事，然后早点休息。</li></ul><blockquote>每一天都留一段没有安排的时间。计划的作用，是让你更轻松。</blockquote><p>你更喜欢出门走走，还是待在家里？可以按你的偏好再调整。</p>`;
+      const sessions = [
+        {id: 'weekend', title: '规划一个松弛的周末', kind: 'chat', day: '今天', pinned: false, model: 'Sona · 默认模型', messages: [{role: 'user', text: '帮我规划一个轻松的周末，不想安排得太满。'}, {role: 'assistant', html: chatReply}]},
+        {id: 'mail', title: '让邮件表达更自然', kind: 'chat', day: '今天', pinned: false, model: 'Sona · 默认模型', messages: [{role: 'user', text: '想给同事发一封项目进度邮件，怎么写得专业又不生硬？'}, {role: 'assistant', html: '<p>可以按「当前进度 → 需要协作的事项 → 下一步」来组织。先让对方快速了解情况，再说明需要什么支持。</p><h3>一封简洁的示例</h3><blockquote>大家好，<br><br>同步一下本周的项目进展：核心功能已完成，目前正在进行联调。我们计划下周三完成这一轮验证。<br><br>还需要大家协助确认两项内容：接口字段定义，以及测试环境的访问权限。方便的话，请在周一前给我反馈。<br><br>如有需要调整的地方，我们可以随时沟通。谢谢大家！</blockquote><p>如果你贴出草稿，我可以帮你保留原意，调整措辞和结构。</p>'}]},
+        {id: 'context', title: '理解大模型的上下文窗口', kind: 'chat', day: '昨天', pinned: true, model: 'Sona · 深度思考', messages: [{role: 'user', text: '用简单的例子解释一下，什么是大语言模型的上下文窗口？'}, {role: 'assistant', html: '<p>可以把上下文窗口想成一张<strong>大小有限的工作桌</strong>。模型回答问题时，只能参考摆在这张桌子上的材料。</p><ul><li>你发来的问题、前面的对话和相关资料，都会占用桌面。</li><li>窗口越大，一次能放下的材料就越多。</li><li>材料太多时，就需要摘要、删减，或重新选择相关内容。</li></ul><p>它决定的是一次处理的信息范围，不等于模型会永久记住这些内容。</p>'}]},
+        {id: 'python', title: 'Python 入门，从哪里开始', kind: 'chat', day: '昨天', pinned: false, model: 'Sona · 默认模型', messages: [{role: 'user', text: '我刚开始学 Python，应该从哪里开始？'}, {role: 'assistant', html: '<p>先用一个小目标带着学：<strong>写一个能整理日常待办的小程序。</strong></p><h3>第一周 · 学会表达逻辑</h3><ul><li>变量、字符串和列表。</li><li>条件判断、循环和函数。</li><li>用命令行输入待办，并打印列表。</li></ul><h3>第二周 · 做一个能用的小工具</h3><ul><li>学习文件读写，把待办保存下来。</li><li>加入完成、删除和搜索功能。</li><li>遇到错误时，练习读报错信息。</li></ul><p>每天练习 30 分钟，比一次读完很多教程更容易坚持。</p>'}]},
+        {id: 'workspace', title: '优化工作区的侧栏交互', kind: 'project', project: 'sona', day: '今天', pinned: false, model: 'Sona · 默认模型', messages: [{role: 'user', text: '让侧栏里的项目和对话更容易区分，同时保留当前会话的定位能力。'}, {role: 'assistant', html: '<p>侧栏默认完整展示项目树。普通对话通过顶部切换进入，并记住上次打开的对话；返回项目时恢复原来的工作内容。</p><h3>这次调整的重点</h3><ul><li>项目标题采用文件夹图标，对话使用气泡图标。</li><li>当前会话使用浅蓝背景，展开所属项目。</li><li>侧栏收起后，在对话顶部保留展开入口。</li></ul><p>可以从上方的「文件改动」查看示例，也可以点击右上角的目录按钮浏览项目文件。</p>'}]},
+        {id: 'model', title: '模型选择器的细节调整', kind: 'project', project: 'sona', day: '昨天', pinned: false, model: 'Sona · 默认模型', messages: [{role: 'user', text: '调整模型选择器的层级和说明文案。'}, {role: 'assistant', html: '<p>把模型名称放在第一行，能力说明放在第二行。当前选择用勾选图标标记，并保持菜单宽度稳定。</p><p>默认选择跟随应用设置，用户切换模型后，对话里保留这次选择。</p>'}]},
+        {id: 'portfolio', title: '首页布局与内容结构', kind: 'project', project: 'website', day: '昨天', pinned: false, model: 'Sona · 默认模型', messages: [{role: 'user', text: '帮我想一下个人网站的首页应该包含哪些内容。'}, {role: 'assistant', html: '<p>建议首页先回答三个问题：你是谁、做过什么、如何联系你。</p><ul><li>简短的个人介绍和当前关注的方向。</li><li>两到三个精选项目，每个附上具体成果。</li><li>文章入口和联系信息。</li></ul><p>先建立清晰的内容顺序，再决定视觉表现。</p>'}]}
+      ];
+      for (const session of sessions) {
+        for (const message of session.messages) {
+          if (message.role === 'assistant') message.model = session.model;
+        }
+      }
+      let serial = 0;
+      let active = sessions.find(session => session.id === 'workspace'), currentTab = 'chat', toastTimer, dialogAction;
+      let sidebarMode = 'project';
+      const selections = {project: active, chat: freshDraft()};
+      const searchQueries = {project: '', chat: ''};
+      const sidebarScroll = {project: 0, chat: 0};
+      const jobs = new Map();
+      function freshDraft(kind = 'chat', project = null) { return {id: `draft-${++serial}`, title: '新对话', kind, project, model: 'Sona · 默认模型', draft: '', attachments: [], messages: []}; }
+      function notify(text) { clearTimeout(toastTimer); $('toast').textContent = text; $('toast').hidden = false; toastTimer = setTimeout(() => $('toast').hidden = true, 2600); }
+      function isSaved() { return sessions.includes(active); }
+      function renderSidebar() {
+        const query = $('search').value.trim().toLowerCase();
+        $('new-chat').innerHTML = `${icon('plus')}${sidebarMode === 'project' ? '新建项目' : '新建对话'}`;
+        $('search').placeholder = sidebarMode === 'project' ? '搜索项目和项目对话' : '搜索普通对话';
+        $('search').setAttribute('aria-label', $('search').placeholder);
+        document.querySelectorAll('[data-sidebar]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.sidebar === sidebarMode)));
+        const matches = session => session.title.toLowerCase().includes(query) || session.messages.some(message => (message.text || '').toLowerCase().includes(query));
+        const ordinary = sessions.filter(session => session.kind === 'chat' && matches(session));
+        const thread = session => `<button class="thread ${active.id === session.id ? 'active' : ''}" data-session="${session.id}" ${active.id === session.id ? 'aria-current="true"' : ''} title="${escapeHtml(session.title)}">${icon('chat')}<span class="thread-name">${escapeHtml(session.title)}</span>${session.pinned ? '<svg class="icon pin"><use href="#i-pin"/></svg>' : ''}${jobs.has(session.id) ? '<span aria-label="回复中" style="color:#7b98c8">·</span>' : ''}</button>`;
+        let html = '';
+        if (sidebarMode === 'chat') {
+          html = `<div class="section-heading"><span>普通对话</span><span class="count">${sessions.filter(session => session.kind === 'chat').length} 段对话</span></div>`;
+          for (const [label, filter] of [['置顶', session => session.pinned], ['今天', session => !session.pinned && session.day === '今天'], ['昨天', session => !session.pinned && session.day === '昨天']]) {
+            const items = ordinary.filter(filter);
+            if (items.length) html += `<div class="day-label">${label}</div>${items.map(thread).join('')}`;
+          }
+          if (!ordinary.length) html += `<div class="empty-search">${query ? '没有匹配的普通对话' : '从一个新对话开始'}</div>`;
+        } else {
+          html = `<div class="section-heading"><span>我的项目</span><span class="count">${projects.length} 个项目</span></div>`;
+          let visibleProjects = 0;
+          for (const project of projects) {
+            const projectMatches = project.name.toLowerCase().includes(query);
+            const items = sessions.filter(session => session.project === project.id && (projectMatches || matches(session)));
+            if (query && !projectMatches && !items.length) continue;
+            visibleProjects++;
+            const open = query || project.open;
+            html += `<div class="project"><button class="project-head" data-project="${project.id}" aria-expanded="${Boolean(open)}">${icon('chevron')}<span class="folder">${icon('folder')}</span><span class="project-name">${escapeHtml(project.name)}</span><span class="project-count">${sessions.filter(session => session.project === project.id).length}</span></button><div class="project-threads" ${open ? '' : 'hidden'}>${items.map(thread).join('')}<button class="add-project" data-new-project-chat="${project.id}" style="padding:9px">${icon('plus')}新建项目对话</button></div></div>`;
+          }
+          if (!visibleProjects) html += '<div class="empty-search">没有匹配的项目或项目对话</div>';
+        }
+        $('side-list').innerHTML = html;
+      }
+      function renderHeader() {
+        const project = projects.find(item => item.id === active.project);
+        $('chat-title').textContent = active.title;
+        $('breadcrumb').innerHTML = `工作区 ${icon('chevron')} ${active.kind === 'chat' ? '普通对话' : escapeHtml(project?.name || '项目')}`;
+        $('type-badge').textContent = active.kind === 'chat' ? '普通对话' : '项目对话';
+        $('mode').innerHTML = `${icon(active.kind === 'chat' ? 'chat' : 'code')}${active.kind === 'chat' ? '聊天' : 'Build · 执行'}`;
+        $('input').placeholder = active.kind === 'chat' ? '发送消息，聊聊你的想法…' : '描述你的需求，也可以用 @ 引用项目文件…';
+        $('tree-toggle').hidden = active.kind !== 'project';
+        $('project-tabs').hidden = active.kind !== 'project';
+        $('return-projects').hidden = active.kind !== 'chat';
+        $('welcome-title').textContent = active.kind === 'chat' ? '有什么想聊的？' : '在这个项目里，开始新的工作';
+        $('welcome-sub').innerHTML = active.kind === 'chat' ? '一个问题、一段灵感，或一个还没成形的想法。<br>从这里开始，和 Sona 一起理清思路。' : `当前项目：${escapeHtml(project?.name || '项目')}<br>描述你的需求，让 Sona 帮你分析、实现与验证。`;
+        $('suggestions').hidden = active.kind !== 'chat';
+        $('welcome-foot').innerHTML = active.kind === 'chat' ? `${icon('chat')}普通对话独立保存，随时可以返回项目继续工作` : `${icon('folder')}项目对话可以使用目录、文件引用和执行工具`;
+        $('pin-current').disabled = !isSaved(); $('more').disabled = !isSaved();
+        $('pin-current').style.color = active.pinned ? 'var(--blue)' : '';
+        $('pin-current').setAttribute('aria-label', active.pinned ? '取消置顶' : '置顶对话');
+        $('pin-label').textContent = active.pinned ? '取消置顶' : '置顶对话';
+        $('model-label').textContent = active.model;
+        $('model-menu').querySelectorAll('[data-model]').forEach(button => {
+          const selected = button.dataset.model === active.model;
+          button.classList.toggle('selected', selected);
+          button.setAttribute('aria-pressed', String(selected));
+          button.querySelector('svg')?.remove();
+          if (selected) button.insertAdjacentHTML('beforeend', icon('check'));
+        });
+      }
+      function renderMessages(follow = false) {
+        const hasMessages = active.messages.length > 0;
+        $('welcome').hidden = hasMessages || currentTab !== 'chat';
+        $('messages').hidden = !hasMessages || currentTab !== 'chat';
+        $('detail-panel').hidden = currentTab === 'chat';
+        $('composer-dock').hidden = currentTab !== 'chat';
+        if (!hasMessages) return;
+        $('messages').innerHTML = '<div class="date-divider">' + escapeHtml(active.day || '今天') + '</div>' + active.messages.map((message, index) => {
+          if (message.role === 'user') return `<article class="message user"><div class="user-bubble">${escapeHtml(message.text)}</div>${message.images?.length ? '<div class="message-images">' + message.images.map(image => `<img src="${image.url}" alt="${escapeHtml(image.name)}">`).join('') + '</div>' : ''}</article>`;
+          return `<article class="message assistant"><div class="assistant-heading"><span class="assistant-mark">${icon('spark')}</span>Sona<span class="message-model">${escapeHtml(message.model || active.model)} · 示例回复</span></div><div class="assistant-body">${message.pending ? '<div class="typing" aria-label="正在生成示例回复"><i></i><i></i><i></i></div>' : message.html || `<p>${escapeHtml(message.text || '')}</p>`}</div>${message.pending ? '' : `<div class="message-actions"><button class="icon-btn" data-copy="${index}" aria-label="复制回复">${icon('copy')}</button><span class="message-time">${message.stopped ? '已停止' : '示例内容'}</span></div>`}</article>`;
+        }).join('');
+        if (follow) $('scroll').scrollTop = $('scroll').scrollHeight;
+      }
+      function updateSend() {
+        const running = jobs.has(active.id);
+        $('send').disabled = !running && !$('input').value.trim() && !(active.attachments || []).length;
+        $('send').setAttribute('aria-label', running ? '停止示例回复' : '发送消息');
+        $('send').innerHTML = icon(running ? 'stop' : 'up');
+        $('composer-status').textContent = running ? '正在生成示例回复…' : '示例交互 · 不连接真实模型';
+      }
+      function resizeInput() { $('input').style.height = 'auto'; $('input').style.height = Math.min($('input').scrollHeight, 160) + 'px'; }
+      function renderAttachments() {
+        const images = active.attachments || [];
+        $('attachments').hidden = images.length === 0;
+        $('attachments').innerHTML = images.map((image, index) => `<div class="attachment"><img src="${image.url}" alt="${escapeHtml(image.name)}"><button type="button" data-remove="${index}" aria-label="移除 ${escapeHtml(image.name)}">×</button></div>`).join('');
+        updateSend();
+      }
+      function selectSession(session) {
+        active.draft = $('input').value;
+        searchQueries[sidebarMode] = $('search').value;
+        sidebarScroll[sidebarMode] = $('side-list').scrollTop;
+        selections[active.kind] = active;
+        active = session; currentTab = 'chat';
+        sidebarMode = active.kind;
+        selections[sidebarMode] = active;
+        $('search').value = searchQueries[sidebarMode];
+        $('input').value = active.draft || '';
+        $('file-tree').hidden = true;
+        $('tree-toggle').setAttribute('aria-expanded', 'false');
+        closeMenus(); renderSidebar(); renderHeader(); renderMessages(); renderAttachments(); resizeInput(); updateSend();
+        $('side-list').scrollTop = sidebarScroll[sidebarMode];
+        document.querySelectorAll('[data-tab]').forEach(button => button.classList.toggle('active', button.dataset.tab === 'chat'));
+        $('shell').classList.remove('sidebar-open'); $('scroll').scrollTop = 0;
+      }
+      function newChat(kind = 'chat', project = null) { selectSession(freshDraft(kind, project)); $('input').focus(); }
+      function switchSidebar(mode) {
+        if (mode === sidebarMode) return;
+        selectSession(selections[mode]);
+      }
+      function closeMenus() { $('more-menu').hidden = true; $('model-menu').hidden = true; $('more').setAttribute('aria-expanded', 'false'); $('model-trigger').setAttribute('aria-expanded', 'false'); }
+      function cannedResponse(text) {
+        if (/周末|散步|旅行/.test(text)) return chatReply;
+        if (/邮件|润色/.test(text)) return sessions.find(session => session.id === 'mail')?.messages[1]?.html || '<p>先明确收件人、沟通目的和需要对方采取的行动，再调整语气。</p>';
+        if (/上下文|窗口/.test(text)) return sessions.find(session => session.id === 'context')?.messages[1]?.html || '<p>上下文窗口决定模型一次可以参考多少内容。</p>';
+        if (/Python|学习计划/i.test(text)) return sessions.find(session => session.id === 'python')?.messages[1]?.html || '<p>可以先选一个小任务，边做边学习基础语法。</p>';
+        return '<p>这是页面交互的示例回复。正式接入模型后，这里会显示根据你的消息生成的回答。</p><p>你可以继续输入，或切换到左侧的其他对话，体验不同会话之间的草稿恢复和页面布局。</p>';
+      }
+      function stopReply(session) {
+        const job = jobs.get(session.id); if (!job) return;
+        clearInterval(job.timer); job.message.pending = false; job.message.text = job.text.slice(0, job.index) || '示例回复已停止。'; job.message.stopped = true;
+        jobs.delete(session.id); renderSidebar(); if (active.id === session.id) { renderMessages(true); updateSend(); }
+      }
+      function sendMessage() {
+        if (jobs.has(active.id)) { stopReply(active); return; }
+        const text = $('input').value.trim(), images = [...(active.attachments || [])];
+        if (!text && !images.length) return;
+        const session = active;
+        if (!isSaved()) { session.id = 'chat-' + Date.now() + '-' + serial; session.day = '今天'; session.title = text.slice(0, 19) || '图片对话'; sessions.unshift(session); }
+        session.messages.push({role: 'user', text: text || '看看这张图片', images});
+        const message = {role: 'assistant', pending: true, model: session.model}; session.messages.push(message);
+        session.attachments = []; session.draft = ''; $('input').value = ''; resizeInput();
+        const replyHtml = images.length ? '<p>图片已添加到这段对话中。这个独立原型只展示附件和消息的布局，实际图片理解将在接入支持视觉的模型后提供。</p>' : cannedResponse(text);
+        const scratch = document.createElement('div'); scratch.innerHTML = replyHtml;
+        const job = {message, index: 0, text: scratch.textContent, timer: null}; jobs.set(session.id, job);
+        let ticks = 0;
+        job.timer = setInterval(() => {
+          ticks++;
+          if (ticks < 5) return;
+          message.pending = false; job.index += 12; message.text = job.text.slice(0, job.index);
+          if (job.index >= job.text.length) { message.html = replyHtml; jobs.delete(session.id); clearInterval(job.timer); renderSidebar(); }
+          if (active.id === session.id) { renderMessages(true); updateSend(); }
+        }, 70);
+        renderSidebar(); renderHeader(); renderMessages(true); renderAttachments(); updateSend();
+      }
+      function pinSession() { if (!isSaved()) return; active.pinned = !active.pinned; renderSidebar(); renderHeader(); notify(active.pinned ? '已置顶对话' : '已取消置顶'); }
+      function openDialog(action) {
+        closeMenus(); dialogAction = action;
+        $('dialog-input').hidden = action === 'delete';
+        $('dialog-confirm').className = action === 'delete' ? 'danger' : 'primary';
+        $('dialog-title').textContent = action === 'rename' ? '重命名对话' : action === 'delete' ? '删除这段对话？' : '新建项目';
+        $('dialog-description').textContent = action === 'rename' ? '用一个容易找到的名字，记录这段对话。' : action === 'delete' ? '这段示例对话将从当前原型中移除。' : '填写项目名称，预览项目在侧栏中的展示效果。';
+        $('dialog-input').value = action === 'rename' ? active.title : '';
+        $('dialog-input').placeholder = '例如：个人网站';
+        $('dialog-input').required = action !== 'delete';
+        $('dialog-confirm').textContent = action === 'delete' ? '删除' : action === 'project' ? '创建' : '保存';
+        $('dialog').showModal();
+        if (action !== 'delete') { $('dialog-input').focus(); $('dialog-input').select(); }
+      }
+      function switchTab(tab) {
+        currentTab = tab;
+        document.querySelectorAll('[data-tab]').forEach(button => button.classList.toggle('active', button.dataset.tab === tab));
+        if (tab === 'changes') $('detail-panel').innerHTML = '<h2>文件改动</h2><p>当前项目对话的改动摘要 · 示例</p><div class="change-row">' + icon('file') + '<span>sona_code/web/static/workspace.js</span><span class="change-count">+ 18</span><span class="remove-count">− 6</span></div><pre class="code">  function renderSidebar() {\n<span style="color:#4a946e">+   renderChatSection();\n+   renderProjectSection();</span>\n  }</pre>';
+        if (tab === 'activity') $('detail-panel').innerHTML = '<h2>活动</h2><p>本轮对话的工具与模型步骤 · 示例</p><div class="activity-row">' + icon('check') + '读取 workspace.js<small>已完成</small></div><div class="activity-row">' + icon('check') + '调整侧栏结构<small>已完成</small></div><div class="activity-row">' + icon('check') + '生成回复<small>已完成</small></div>';
+        renderMessages(); $('scroll').scrollTop = 0;
+      }
+      $('side-list').addEventListener('click', event => {
+        const button = event.target.closest('button'); if (!button) return;
+        if (button.dataset.session) { const session = sessions.find(item => item.id === button.dataset.session); if (session.kind === 'project') projects.find(item => item.id === session.project).open = true; selectSession(session); }
+        else if (button.dataset.project) { const project = projects.find(item => item.id === button.dataset.project); project.open = !project.open; renderSidebar(); }
+        else if (button.dataset.newProjectChat) newChat('project', button.dataset.newProjectChat);
+        else if (button.id === 'add-project') openDialog('project');
+      });
+      $('new-chat').addEventListener('click', () => sidebarMode === 'project' ? openDialog('project') : newChat());
+      document.querySelectorAll('[data-sidebar]').forEach(button => button.addEventListener('click', () => switchSidebar(button.dataset.sidebar)));
+      $('return-projects').addEventListener('click', () => switchSidebar('project'));
+      $('search').addEventListener('input', renderSidebar);
+      $('input').addEventListener('input', () => { active.draft = $('input').value; resizeInput(); updateSend(); });
+      $('input').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); sendMessage(); } });
+      $('composer').addEventListener('submit', event => { event.preventDefault(); sendMessage(); });
+      document.querySelectorAll('[data-prompt]').forEach(button => button.addEventListener('click', () => { $('input').value = button.dataset.prompt; active.draft = $('input').value; resizeInput(); updateSend(); $('input').focus(); }));
+      $('pin-current').addEventListener('click', pinSession);
+      $('more').addEventListener('click', event => { event.stopPropagation(); const open = $('more-menu').hidden; closeMenus(); $('more-menu').hidden = !open; $('more').setAttribute('aria-expanded', String(open)); });
+      $('more-menu').addEventListener('click', event => { const action = event.target.closest('[data-action]')?.dataset.action; if (action === 'pin') { closeMenus(); pinSession(); } else if (action) openDialog(action); });
+      $('model-trigger').addEventListener('click', event => { event.stopPropagation(); const open = $('model-menu').hidden; closeMenus(); $('model-menu').hidden = !open; $('model-trigger').setAttribute('aria-expanded', String(open)); });
+      $('model-menu').addEventListener('click', event => { const button = event.target.closest('[data-model]'); if (!button) return; active.model = button.dataset.model; renderHeader(); closeMenus(); });
+      document.addEventListener('click', event => { if (!event.target.closest('.popover')) closeMenus(); });
+      document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeMenus(); $('shell').classList.remove('sidebar-open'); } if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); $('shell').classList.remove('collapsed'); $('shell').classList.add('sidebar-open'); $('search').focus(); } });
+      $('dialog-cancel').addEventListener('click', () => $('dialog').close());
+      $('dialog-form').addEventListener('submit', event => {
+        event.preventDefault(); const name = $('dialog-input').value.trim();
+        if (dialogAction !== 'delete' && !name) { $('dialog-input').focus(); return; }
+        if (dialogAction === 'rename') { active.title = name; renderSidebar(); renderHeader(); }
+        if (dialogAction === 'delete') { const kind = active.kind, project = active.project; stopReply(active); sessions.splice(sessions.indexOf(active), 1); newChat(kind, project); }
+        if (dialogAction === 'project') { const project = {id: 'project-' + Date.now(), name, open: true}; projects.push(project); newChat('project', project.id); }
+        $('dialog').close();
+      });
+      $('open-side').addEventListener('click', () => { $('shell').classList.remove('collapsed'); $('shell').classList.toggle('sidebar-open'); });
+      $('collapse-side').addEventListener('click', () => { if (window.innerWidth <= 760) $('shell').classList.remove('sidebar-open'); else $('shell').classList.add('collapsed'); });
+      $('sidebar-mask').addEventListener('click', () => $('shell').classList.remove('sidebar-open'));
+      $('tree-toggle').addEventListener('click', () => { $('file-tree').hidden = !$('file-tree').hidden; $('tree-toggle').setAttribute('aria-expanded', String(!$('file-tree').hidden)); if (window.innerWidth <= 760) notify('项目目录在桌面宽度下展示'); });
+      document.querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => switchTab(button.dataset.tab)));
+      $('attach').addEventListener('click', () => $('file-input').click());
+      $('file-input').addEventListener('change', async event => {
+        const target = active;
+        for (const file of [...event.target.files]) {
+          if (!file.type.startsWith('image/')) { notify('请选择图片文件'); continue; }
+          if (file.size > 8 * 1024 * 1024) { notify('单张图片请控制在 8 MB 内'); continue; }
+          if ((target.attachments || []).length >= 4) { notify('最多添加 4 张图片'); break; }
+          const url = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file); }).catch(() => null);
+          if (url) { target.attachments ||= []; target.attachments.push({name: file.name, url}); }
+        }
+        event.target.value = ''; if (target === active) renderAttachments();
+      });
+      $('attachments').addEventListener('click', event => { const button = event.target.closest('[data-remove]'); if (button) { active.attachments.splice(Number(button.dataset.remove), 1); renderAttachments(); } });
+      $('messages').addEventListener('click', async event => {
+        const button = event.target.closest('[data-copy]'); if (!button) return;
+        const message = active.messages[Number(button.dataset.copy)], element = document.createElement('div'); element.innerHTML = message.html || escapeHtml(message.text || '');
+        try { await navigator.clipboard.writeText(element.innerText || element.textContent); notify('回复已复制'); } catch { notify('当前浏览器不支持自动复制，可选中回复文字复制'); }
+      });
+      document.querySelectorAll('[data-nav]').forEach(button => button.addEventListener('click', event => { if (button.dataset.nav === '模型') { event.stopPropagation(); closeMenus(); $('model-menu').hidden = false; $('model-trigger').setAttribute('aria-expanded', 'true'); } else if (button.dataset.nav !== '工作区') notify(`${button.dataset.nav}入口沿用现有应用，此原型只展示工作区`); }));
+      $('settings').addEventListener('click', () => notify('独立页面原型 · 所有对话与图片仅保留在当前页面'));
+      renderSidebar(); renderHeader(); renderMessages(); updateSend();
+    })();
+  </script>
+</body>
+</html>

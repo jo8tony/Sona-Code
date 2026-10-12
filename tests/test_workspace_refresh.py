@@ -308,6 +308,19 @@ const info = {id: "reply", role: "assistant", sessionID: "a", tokens: {output: 1
   for (let i = 0; i < 10; i++) { state.sessionId = String(i); state.messagesLoaded = true; context.saveConversationView(); }
   assert.equal(context.conversationViews.size, 6);
   assert.equal(context.conversationViews.has(JSON.stringify(["p", "a"])), false);
+  // Visiting more than six siblings must retain the parent's reading position
+  // while keeping the cache bounded.
+  state.sessionId = "parent"; state.messagesLoaded = true; context.scroll.scrollTop = 88;
+  context.saveConversationView();
+  for (let i = 0; i < 10; i++) {
+    state.sessionId = `child-${i}`; state.messagesLoaded = true;
+    state.sessionDetails.set(JSON.stringify(["p", state.sessionId]), {id: state.sessionId, parentID: "parent"});
+    context.saveConversationView();
+  }
+  assert.equal(context.conversationViews.size, 6);
+  assert.equal(context.conversationViews.get(JSON.stringify(["p", "parent"])).scrollTop, 88);
+  state.sessionId = "parent"; context.restoreConversationView();
+  assert.equal(context.scroll.scrollTop, 88);
   clearTimeout(deadline);
 })().catch(error => {console.error(error); process.exitCode = 1;});
 '''
@@ -323,7 +336,7 @@ const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:a
 const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
 let refreshes = 0, sidebars = 0, todoRenders = 0;
 const context = vm.createContext({
-  events: null, eventProjectId: null, EventSource: class {},
+  events: null, eventProjectId: null, EventSource: class {}, WORKSPACE_CHAT_ID: "chat",
   alive: () => true, scheduleRefresh: () => refreshes++, applyMessageEvent() {},
   scheduleSelectedRender: () => todoRenders++,
   state: {projectId: "p", sessionId: "a", statuses: {}, projectStatuses: new Map(), todos: [], todoVersion: 0},
@@ -345,10 +358,12 @@ emit("message.part.updated", {part: {sessionID: "a"}});
 assert.equal(refreshes, 1);
 emit("permission.asked", {sessionID: "a"});
 assert.equal(refreshes, 2);
+emit("permission.asked", {sessionID: "b"});
+assert.equal(refreshes, 3, "Child confirmation requests must refresh the project-wide badges");
 emit("todo.updated", {sessionID: "b", todos: [{content: "unrelated", status: "completed"}]});
-assert.equal(todoRenders, 0); assert.equal(refreshes, 2);
+assert.equal(todoRenders, 0); assert.equal(refreshes, 3);
 emit("todo.updated", {sessionID: "a", todos: [{content: "first step", status: "in_progress"}]});
-assert.equal(todoRenders, 1); assert.equal(refreshes, 3);
+assert.equal(todoRenders, 1); assert.equal(refreshes, 4);
 assert.equal(context.state.todoVersion, 1);
 assert.equal(context.state.todos[0].content, "first step");
 '''

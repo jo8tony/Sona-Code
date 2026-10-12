@@ -2,6 +2,19 @@
 
 let sonaLoginPending = null;
 
+function sonaWebsiteLink(url, className = "btn") {
+  return el("a", { class: className, href: url || null, target: "_blank", rel: "noopener noreferrer",
+    title: url ? "在浏览器中打开 Sona 网站" : "请先在模型设置中配置 Sona 网站地址",
+    "aria-disabled": url ? null : "true", tabindex: url ? null : "-1",
+    onclick: async event => {
+      if (!url) { event.preventDefault(); toast("请先在模型设置中配置 Sona 网站地址", "error"); return; }
+      if (!window.__TAURI__?.core?.invoke) return;
+      event.preventDefault();
+      try { await window.__TAURI__.core.invoke("open_website", { url }); }
+      catch (error) { toast(`打开 Sona 网站失败：${error.detail || error.message || error}`, "error"); }
+    } }, el("span", { text: "订阅模型" }), el("span", { "aria-hidden": "true", text: "↗" }));
+}
+
 function sonaLoginStep(promise, signal, timeout, message) {
   return new Promise((resolve, reject) => {
     const finish = (callback, value) => {

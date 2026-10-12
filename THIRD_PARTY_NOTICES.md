@@ -32,3 +32,14 @@ unchanged. Its license is included at `licenses/OpenCode-LICENSE.txt` in the
 installed application resources. The patch and build recipe are maintained
 in this repository; release requires ordinary-user verification on an
 affected Windows computer.
+
+## Offline file previews
+
+- Prism: version 1.30.0, MIT; license at `sona_code/web/static/vendor/prism-LICENSE`.
+- PDF.js: version 5.4.624, Apache-2.0; license at `sona_code/web/static/vendor/pdfjs/LICENSE`.
+- PDF.js CMaps, standard fonts, and WASM dependencies retain their license files
+  in the corresponding vendor subdirectories.
+
+The pinned package integrity and resource SHA-256 inventory are recorded in
+`sona_code/web/static/vendor/file-preview.json`. All preview assets are bundled
+with the Python package and desktop sidecar; no runtime CDN request is needed.

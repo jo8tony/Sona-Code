@@ -1,4 +1,4 @@
-"""Durable FIFO admission for V1 servers, which have no queue delivery mode."""
+"""Durable V1 submissions with immediate steering and optional FIFO delivery."""
 
 from __future__ import annotations
 
@@ -16,10 +16,15 @@ from typing import Awaitable, Callable
 from sona_code.workspace.manager import WorkspaceError
 
 logger = logging.getLogger("sona_code")
+_last_message_tick = 0
 
 
 def native_message_id() -> str:
-    return "msg_" + format(int(time.time() * 1000) << 12, "012x") + secrets.token_hex(7)
+    global _last_message_tick
+    # Native history sorts by ID; consecutive steering in the same millisecond
+    # must retain submission order rather than relying on the random suffix.
+    _last_message_tick = max(int(time.time() * 1000) << 12, _last_message_tick + 1)
+    return "msg_" + format(_last_message_tick, "012x") + secrets.token_hex(7)
 
 
 class WorkspaceQueue:
@@ -29,7 +34,7 @@ class WorkspaceQueue:
         self._lock = asyncio.Lock()
         self._workers: dict[str, asyncio.Task] = {}
         self._step_locks: dict[str, asyncio.Lock] = {}
-        self._deliveries: dict[str, asyncio.Task] = {}
+        self._deliveries: dict[tuple[str, str], asyncio.Task] = {}
         self.dispatch: Callable[[dict, dict], Awaitable[object]] | None = None
         self.inspect: Callable[[dict], Awaitable[tuple[dict, list]]] | None = None
         self.interval = .8
@@ -96,6 +101,38 @@ class WorkspaceQueue:
             self._start(key)
             return result
 
+    async def send_now(
+        self, project_id: str, project: str, session_id: str, kind: str, payload: dict,
+    ) -> dict:
+        """Append to the native running loop without waiting for queued drafts."""
+        key = self._key(project_id, session_id)
+        async with self._step_locks.setdefault(key, asyncio.Lock()):
+            async with self._lock:
+                queue = self._queues.setdefault(key, {"project_id": project_id, "project": project,
+                    "session_id": session_id, "items": [], "paused": False, "error": ""})
+                if sum(item["status"] == "sending" for item in queue["items"]) >= 20:
+                    raise WorkspaceError("消息正在提交，请稍后再发送", 409)
+                message_id = native_message_id()
+                item = {"id": message_id, "message_id": message_id, "kind": kind,
+                        "payload": payload, "status": "sending", "delivery": "steer",
+                        "sent_at": time.time()}
+                queue["items"].append(item)
+                # Save before dispatch: a lost response must never cause an automatic retry.
+                await self._save()
+                self._start_delivery(key, queue, item)
+            await asyncio.sleep(0)
+            async with self._lock:
+                result = self.snapshot(project_id, session_id)
+                self._start(key)
+                return {**result, "submitted_id": item["id"], "message_id": message_id}
+
+    def _start_delivery(self, key: str, queue: dict, item: dict) -> None:
+        self._deliveries[(key, item["id"])] = asyncio.create_task(self._deliver(key, queue, item))
+
+    def _cancel_deliveries(self, keys: list[str]) -> list[asyncio.Task]:
+        return [self._deliveries.pop(identity) for identity in list(self._deliveries)
+                if identity[0] in keys]
+
     async def update(self, project_id: str, session_id: str, item_id: str, kind: str, payload: dict) -> dict:
         async with self._lock:
             queue = self._queues.get(self._key(project_id, session_id), {})
@@ -137,7 +174,7 @@ class WorkspaceQueue:
             keys = [key for key, queue in self._queues.items() if queue["project_id"] == project_id
                     and (session_id is None or queue["session_id"] == session_id)]
             tasks = [self._workers.pop(key) for key in keys if key in self._workers]
-            tasks.extend(self._deliveries.pop(key) for key in keys if key in self._deliveries)
+            tasks.extend(self._cancel_deliveries(keys))
             for task in tasks:
                 task.cancel()
             for key in keys:
@@ -152,7 +189,8 @@ class WorkspaceQueue:
             queue = self._queues.get(key)
             if queue:
                 queue["paused"] = True
-            tasks = [task for task in (self._workers.pop(key, None), self._deliveries.pop(key, None)) if task]
+            worker = self._workers.pop(key, None)
+            tasks = ([worker] if worker else []) + self._cancel_deliveries([key])
             for task in tasks:
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -182,7 +220,8 @@ class WorkspaceQueue:
         try:
             while True:
                 queue = self._queues.get(key)
-                if not queue or queue["paused"] or not queue["items"]:
+                if not queue or not queue["items"] or (queue["paused"] and
+                        (queue.get("error") or not self._has_steering(queue))):
                     return
                 await self._step(key)
                 await asyncio.sleep(self.interval)
@@ -199,12 +238,16 @@ class WorkspaceQueue:
         async with self._step_locks.setdefault(key, asyncio.Lock()):
             return bool(await self._step_locked(key, background=background))
 
+    @staticmethod
+    def _has_steering(queue: dict) -> bool:
+        return any(item.get("delivery") == "steer" and item["status"] == "sending"
+                   for item in queue["items"])
+
     async def _step_locked(self, key: str, *, background: bool) -> bool | None:
         queue = self._queues.get(key)
-        if not queue or queue["paused"] or not queue["items"]:
+        if not queue or not queue["items"] or (queue["paused"] and not self._has_steering(queue)):
             return
-        delivery = self._deliveries.get(key)
-        if delivery and not delivery.done():
+        if any(identity[0] == key and not task.done() for identity, task in self._deliveries.items()):
             return
         assert self.inspect is not None and self.dispatch is not None
         statuses, messages = await self.inspect(queue)
@@ -214,27 +257,19 @@ class WorkspaceQueue:
         if not isinstance(status, dict) or status.get("type") != "idle":
             return
         async with self._lock:
-            if queue["paused"] or not queue["items"]:
+            if not queue["items"]:
+                return
+            sending = [item for item in queue["items"] if item["status"] == "sending"]
+            if sending:
+                changed = self._settle(queue, sending, messages)
+                if not queue["items"] and not queue["paused"]:
+                    self._queues.pop(key)
+                if changed:
+                    await self._save()
+                return changed and not any(item["status"] == "sending" for item in queue["items"])
+            if queue["paused"]:
                 return
             item = queue["items"][0]
-            message_id = item.get("message_id", item["id"])
-            native = next((m for m in messages if m.get("info", {}).get("id") == message_id), None)
-            if item["status"] == "sending":
-                replies = [m.get("info", {}) for m in messages
-                           if m.get("info", {}).get("parentID") == message_id]
-                finished = replies and replies[-1].get("time", {}).get("completed")
-                if native and finished:
-                    queue["items"].pop(0)
-                    if replies[-1].get("error"):
-                        queue.update(paused=True, error="上一条消息执行失败，检查后继续队列")
-                    if not queue["items"] and not queue["paused"]:
-                        self._queues.pop(key)
-                    await self._save()
-                    return True
-                if time.time() - item.get("sent_at", 0) > 30:
-                    queue.update(paused=True, error="发送结果尚未确认，请检查对话后继续队列")
-                    await self._save()
-                return
             # Persist admission before HTTP dispatch. An ambiguous result is never retried automatically.
             # V1 orders history by native IDs. Mint it at delivery, after the
             # previous task's tool continuations, rather than at queue admission.
@@ -243,10 +278,40 @@ class WorkspaceQueue:
         if background:
             # V1 /command may wait for the entire answer. Admission must only
             # start delivery, so the composer becomes usable immediately.
-            self._deliveries[key] = asyncio.create_task(self._deliver(key, queue, item))
+            self._start_delivery(key, queue, item)
             await asyncio.sleep(0)
         else:
             await self._deliver(key, queue, item)
+
+    @staticmethod
+    def _settle(queue: dict, sending: list[dict], messages: list) -> bool:
+        """V1 may answer several appended user messages in one continuation."""
+        positions = {message.get("info", {}).get("id"): index for index, message in enumerate(messages)
+                     if message.get("info", {}).get("role") == "user"}
+        steering = [positions[item["message_id"]] for item in sending
+                    if item.get("delivery") == "steer" and item["message_id"] in positions]
+        boundary = max(steering, default=-1)
+        continuation_ids = {identity for identity, index in positions.items() if boundary >= 0 and index >= boundary}
+        continuation = [message.get("info", {}) for message in messages
+                        if message.get("info", {}).get("parentID") in continuation_ids]
+        final = continuation[-1] if continuation else {}
+        changed = False
+        for item in sending:
+            message_id = item.get("message_id", item["id"])
+            replies = [message.get("info", {}) for message in messages
+                       if message.get("info", {}).get("parentID") == message_id]
+            reply = replies[-1] if replies else {}
+            if not reply.get("time", {}).get("completed") and positions.get(message_id, boundary + 1) <= boundary:
+                reply = final
+            if message_id in positions and reply.get("time", {}).get("completed"):
+                queue["items"].remove(item)
+                if reply.get("error"):
+                    queue.update(paused=True, error="上一条消息执行失败，检查后继续队列")
+                changed = True
+            elif time.time() - item.get("sent_at", 0) > 30 and not queue.get("error"):
+                queue.update(paused=True, error="发送结果尚未确认，请检查对话后继续队列")
+                changed = True
+        return changed
 
     async def _deliver(self, key: str, queue: dict, item: dict) -> None:
         assert self.dispatch is not None
@@ -256,9 +321,10 @@ class WorkspaceQueue:
             async with self._lock:
                 queue.update(paused=True, error=str(getattr(exc, "detail", exc))[:500])
                 # Deterministic validation failures have not reached the native server.
-                if getattr(exc, "status_code", None) in {400, 404, 409, 413, 422}:
+                if getattr(exc, "status_code", getattr(exc, "status", None)) in {400, 404, 409, 413, 422}:
                     item["status"] = "pending"
                 await self._save()
         finally:
-            if self._deliveries.get(key) is asyncio.current_task():
-                self._deliveries.pop(key, None)
+            identity = (key, item["id"])
+            if self._deliveries.get(identity) is asyncio.current_task():
+                self._deliveries.pop(identity, None)

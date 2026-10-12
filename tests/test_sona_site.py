@@ -21,7 +21,11 @@ from sona_code.config import UpstreamConfig, UpstreamModelConfig
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("roles", [["USER"], ["USER", "RESOURCE_ADMIN"], ["USER", "SUPER_ADMIN"]])
-async def test_catalog_uses_frontend_origin_and_scene_keys(monkeypatch, roles):
+@pytest.mark.parametrize("modalities", [
+    ["image"], ["IMAGE"], ["Image"],
+    ["image", "IMAGE", None, {}, 42, "unknown"],
+])
+async def test_catalog_uses_frontend_origin_and_scene_keys(monkeypatch, roles, modalities):
     calls = []
 
     def respond(request):
@@ -37,7 +41,7 @@ async def test_catalog_uses_frontend_origin_and_scene_keys(monkeypatch, roles):
                                 {"id": 13, "name": "停用场景", "status": 0}],
             "/api/v1/scenes/12/integration-info": {
                 "sceneName": "场景 A", "apiKey": "scene-secret",
-                "availableModels": [{"modelName": "model-a", "modalities": ["image"]}],
+                "availableModels": [{"modelName": "model-a", "modalities": modalities}],
             },
         }
         return httpx.Response(200, json={"returnCode": "SUC0000", "body": bodies[request.url.path]})
@@ -51,11 +55,15 @@ async def test_catalog_uses_frontend_origin_and_scene_keys(monkeypatch, roles):
     assert session.providers[0].base_url == "https://sona.example.test/api/v1"
     assert session.providers[0].api_key == "scene-secret"
     assert session.providers[0].models[0].id == "model-a"
+    assert session.providers[0].models[0].input_modalities == ["image"]
     assert session.providers[0].models[0].context_length == 262144
     assert session.providers[0].models[0].output_length == 32768
     from sona_code.admin.models import compile_providers
     compiled = compile_providers(default_config().model_copy(update={"upstreams": session.providers}))
     assert next(iter(compiled.values()))["models"]["model-a"]["limit"] == {"context": 262144, "output": 32768}
+    native_model = next(iter(compiled.values()))["models"]["model-a"]
+    assert native_model["attachment"] is True
+    assert native_model["modalities"]["input"] == ["text", "image"]
     assert session.user == {"id": 7, "userName": "用户"}
     cfg = default_config().model_copy(update={"upstreams": session.providers})
     path = f"/managed/{route_token(session.providers[0].name)}/{route_token('model-a')}/chat/completions"
@@ -159,7 +167,10 @@ def test_refresh_fetches_new_subscriptions_and_updates_native_config(tmp_path, m
         before = client.get(prefix + "/source").json()
         assert [m["id"] for m in before["providers"][0]["models"]] == ["first"]
         generation = 1
+        # Refresh is allowed even while native prompt dispatch is in flight.
+        app.state.runtime.workspace._task_requests = 1
         result = client.post(prefix + "/sona/refresh")
+        app.state.runtime.workspace._task_requests = 0
         assert result.status_code == 200
         assert [m["id"] for m in result.json()["providers"][0]["models"]] == ["first", "new-subscription"]
         assert result.json()["updated_at"] >= before["updated_at"]

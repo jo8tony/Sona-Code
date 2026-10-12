@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sona Code - 普通对话与工作区融合设计原型</title>
+<style>
+:root {
+  --bg: #f8f9fb;
+  --panel: #ffffff;
+  --border: #e2e6ec;
+  --border-soft: #eef1f5;
+  --text: #1f2733;
+  --text-dim: #5b6572;
+  --text-faint: #8a93a2;
+  --accent: #366fe8;
+  --accent-hover: #275ec9;
+  --accent-soft: rgba(54, 111, 232, 0.08);
+  --accent-tint: #eaf1ff;
+  --green: #16a34a;
+  --green-soft: rgba(22, 163, 74, 0.09);
+  --purple: #7961c6;
+  --purple-soft: #f1edfc;
+  --orange: #d97706;
+  --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 主布局 */
+.layout {
+  display: grid;
+  grid-template-columns: 290px 1fr;
+  width: 100vw;
+  height: 100vh;
+  background: #fff;
+}
+
+/* 侧边栏 */
+.sidebar {
+  background: #f8f9fb;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.brand {
+  height: 64px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-soft);
+}
+.brand-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.brand-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #4a82f4, #2c5dc4);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 16px;
+  box-shadow: 0 3px 8px rgba(54, 111, 232, 0.25);
+}
+.brand-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+.brand-badge {
+  font-size: 11px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+/* 顶部操作与切换 */
+.side-actions {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.btn-new-chat {
+  width: 100%;
+  height: 38px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  font-size: 13.5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(54, 111, 232, 0.2);
+  transition: background 0.15s ease;
+}
+.btn-new-chat:hover { background: var(--accent-hover); }
+
+/* 模式切换胶囊 */
+.mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: #ebedf2;
+  padding: 3px;
+  border-radius: 8px;
+  gap: 2px;
+}
+.mode-tab {
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  transition: all 0.15s ease;
+}
+.mode-tab.active {
+  background: #fff;
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* 会话列表区域 */
+.conversation-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 10px;
+}
+.section-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-faint);
+  letter-spacing: 0.05em;
+  padding: 6px 8px 4px;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.conv-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  margin-bottom: 2px;
+  transition: background 0.12s ease;
+}
+.conv-item:hover { background: #edf1f7; }
+.conv-item.active {
+  background: var(--accent-tint);
+  border-color: #d9e5fb;
+}
+.conv-item .conv-icon {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.conv-item.active .conv-icon { color: var(--accent); }
+.conv-item.active .conv-title { color: var(--accent); font-weight: 600; }
+.conv-info {
+  flex: 1;
+  min-width: 0;
+}
+.conv-title {
+  font-size: 13.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+.conv-time {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  margin-top: 1px;
+}
+
+/* 侧边栏底部 */
+.side-footer {
+  padding: 12px 14px;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #f8f9fb;
+}
+.user-profile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+}
+.user-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #e2e8f0;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+.footer-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-dim);
+  padding: 6px;
+  border-radius: 6px;
+}
+.footer-btn:hover { background: #e5e9f0; color: var(--text); }
+
+/* 主对话区 */
+.main-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #fff;
+  position: relative;
+}
+
+/* 顶部导航头 */
+.chat-header {
+  height: 60px;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+  flex-shrink: 0;
+}
+.chat-header-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.chat-mode-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.chat-title-editable {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.chat-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.btn-action {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.btn-action:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: var(--text);
+}
+.btn-action.highlight {
+  border-color: #bcd1fb;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.btn-action.highlight:hover {
+  background: #dfeaff;
+}
+
+/* 对话正文滚动区 */
+.chat-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 0 40px;
+}
+.chat-content-container {
+  width: min(840px, calc(100% - 60px));
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+/* 消息项 */
+.msg-row {
+  display: flex;
+  gap: 14px;
+}
+.msg-row.user {
+  justify-content: flex-end;
+}
+.msg-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+.msg-avatar.ai {
+  background: linear-gradient(135deg, #4a82f4, #2c5dc4);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(54, 111, 232, 0.2);
+}
+.msg-body {
+  max-width: min(720px, 90%);
+  display: flex;
+  flex-direction: column;
+}
+.msg-row.user .msg-bubble {
+  background: #eef3fc;
+  border: 1px solid #dce7fa;
+  border-radius: 14px 14px 4px 14px;
+  padding: 12px 16px;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.msg-row.assistant .msg-bubble {
+  font-size: 14.5px;
+  line-height: 1.7;
+  color: var(--text);
+}
+.msg-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.msg-meta strong {
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+/* 思考过程卡片 (Sona Code 特色) */
+.reasoning-box {
+  margin: 8px 0 14px;
+  border-left: 2px solid #bcd1fb;
+  background: #fbfdff;
+  border-radius: 0 8px 8px 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.reasoning-box summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #4a6cb3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+.reasoning-text {
+  margin-top: 8px;
+  line-height: 1.65;
+  color: #627086;
+  font-size: 12.8px;
+}
+
+/* 代码块 */
+.code-block {
+  margin: 12px 0;
+  border-radius: 8px;
+  background: #f6f8fa;
+  border: 1px solid #e1e4e8;
+  overflow: hidden;
+}
+.code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: #eff2f6;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+  border-bottom: 1px solid #e1e4e8;
+}
+.code-copy-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11.5px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.code-copy-btn:hover { background: #e2e6eb; color: var(--text); }
+.code-content {
+  padding: 12px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.55;
+  color: #24292e;
+  overflow-x: auto;
+}
+
+/* 消息工具栏 (复制、重试等) */
+.msg-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.msg-action-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+.msg-action-btn:hover { color: var(--text); }
+
+/* 空状态欢迎页 (普通对话新建) */
+.welcome-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 480px;
+  text-align: center;
+  padding: 20px;
+}
+.welcome-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+.welcome-title {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.welcome-subtitle {
+  font-size: 14.5px;
+  color: var(--text-dim);
+  max-width: 480px;
+  line-height: 1.6;
+  margin-bottom: 32px;
+}
+.prompt-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  width: 100%;
+  max-width: 620px;
+}
+.prompt-card {
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.prompt-card:hover {
+  border-color: #bcd1fb;
+  box-shadow: 0 4px 14px rgba(54, 111, 232, 0.08);
+  transform: translateY(-1px);
+}
+.prompt-card-icon {
+  font-size: 18px;
+  margin-bottom: 6px;
+}
+.prompt-card-title {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+.prompt-card-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+/* 底部输入框组件 */
+.composer-dock {
+  padding: 12px 24px 20px;
+  background: transparent;
+  flex-shrink: 0;
+}
+.composer {
+  width: min(840px, 100%);
+  margin: 0 auto;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(32, 45, 65, 0.06);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.composer:focus-within {
+  border-color: #9cbbf7;
+  box-shadow: 0 4px 24px rgba(54, 111, 232, 0.12);
+}
+.composer-input {
+  width: 100%;
+  min-height: 70px;
+  max-height: 180px;
+  padding: 14px 16px 4px;
+  border: none;
+  outline: none;
+  resize: vertical;
+  font-family: var(--sans);
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--text);
+}
+.composer-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--border-soft);
+}
+.composer-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.select-pill {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #f8fafc;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.select-pill:hover {
+  background: #edf2f7;
+  color: var(--text);
+}
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.icon-btn:hover { background: #edf1f7; color: var(--text); }
+.composer-send-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.send-hint {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.btn-send {
+  height: 32px;
+  padding: 0 14px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.15s;
+}
+.btn-send:hover { background: var(--accent-hover); }
+
+/* 转为项目工作区的引导弹窗 */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(2px);
+  display: grid;
+  place-items: center;
+  z-index: 100;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.modal-overlay.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+.modal-card {
+  width: 480px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+  padding: 22px;
+}
+.modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.modal-desc {
+  font-size: 13.5px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.modal-form-group {
+  margin-bottom: 14px;
+}
+.modal-label {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+.modal-input-row {
+  display: flex;
+  gap: 8px;
+}
+.modal-input {
+  flex: 1;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13.5px;
+  outline: none;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+</style>
+</head>
+<body>
+
+<div class="layout">
+  <!-- 侧边栏 -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-left">
+        <div class="brand-mark">S</div>
+        <div>
+          <div class="brand-title">Sona Code</div>
+        </div>
+      </div>
+      <span class="brand-badge">2.3.1</span>
+    </div>
+
+    <div class="side-actions">
+      <button class="btn-new-chat" id="newChatBtn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+        <span>新建普通对话</span>
+      </button>
+
+      <!-- 模式切换：普通对话 vs 项目工作区 -->
+      <div class="mode-tabs">
+        <button class="mode-tab active" id="tabGeneral" onclick="switchMode('general')">
+          <span>💬 普通对话</span>
+        </button>
+        <button class="mode-tab" id="tabProjects" onclick="switchMode('projects')">
+          <span>📁 项目工程</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 会话列表容器 -->
+    <div class="conversation-list" id="convListContainer">
+      <!-- 普通对话列表 -->
+      <div id="generalList">
+        <div class="section-label">今天</div>
+        <div class="conv-item active" onclick="loadChat('rust')">
+          <span class="conv-icon">💬</span>
+          <div class="conv-info">
+            <div class="conv-title">Rust 生命周期与所有权深度解析</div>
+            <div class="conv-time">10:42 · DeepSeek-V3</div>
+          </div>
+        </div>
+        <div class="conv-item" onclick="loadChat('docker')">
+          <span class="conv-icon">💬</span>
+          <div class="conv-info">
+            <div class="conv-title">优化 Python 微服务 Dockerfile 分层</div>
+            <div class="conv-time">09:15 · Claude 3.7</div>
+          </div>
+        </div>
+
+        <div class="section-label" style="margin-top: 14px;">前 7 天</div>
+        <div class="conv-item" onclick="loadChat('regex')">
+          <span class="conv-icon">💬</span>
+          <div class="conv-info">
+            <div class="conv-title">复杂日志抽取的高性能正则匹配</div>
+            <div class="conv-time">前天 · Qwen 2.5</div>
+          </div>
+        </div>
+        <div class="conv-item" onclick="loadChat('arch')">
+          <span class="conv-icon">💬</span>
+          <div class="conv-info">
+            <div class="conv-title">微前端与 Monorepo 落地决策考量</div>
+            <div class="conv-time">10月8日 · DeepSeek-R1</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 项目工程列表 (模式切换后展示) -->
+      <div id="projectList" style="display: none;">
+        <div class="section-label">本地代码仓库</div>
+        <div class="conv-item">
+          <span class="conv-icon">📁</span>
+          <div class="conv-info">
+            <div class="conv-title">sonacode</div>
+            <div class="conv-time">/Users/liaopeng/.../sonacode (4个会话)</div>
+          </div>
+        </div>
+        <div class="conv-item">
+          <span class="conv-icon">📁</span>
+          <div class="conv-info">
+            <div class="conv-title">admin-portal</div>
+            <div class="conv-time">/Users/liaopeng/.../admin (2个会话)</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="side-footer">
+      <div class="user-profile">
+        <div class="user-avatar">L</div>
+        <span>Developer</span>
+      </div>
+      <button class="footer-btn" title="系统设置">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </aside>
+
+  <!-- 主对话区 -->
+  <main class="main-view">
+    <!-- 头部工具栏 -->
+    <header class="chat-header">
+      <div class="chat-header-info">
+        <span class="chat-mode-tag">
+          <span>💬 普通对话</span>
+        </span>
+        <div class="chat-title-editable" id="chatTitle">
+          <span>Rust 生命周期与所有权深度解析</span>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--text-faint);cursor:pointer;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </div>
+      </div>
+
+      <div class="chat-header-actions">
+        <!-- 核心特色：可随时转为项目工作区 -->
+        <button class="btn-action highlight" onclick="openUpgradeModal()" title="当对话涉及复杂代码落地时，可一键挂载到本地目录">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          <span>转为工程项目</span>
+        </button>
+        <button class="btn-action" title="清空当前会话上下文">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 14.14 14.14"/></svg>
+          <span>清空</span>
+        </button>
+        <button class="btn-action" title="导出为 Markdown">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>导出</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- 对话滚动容器 -->
+    <div class="chat-scroll" id="chatScroll">
+      <div class="chat-content-container" id="chatContent">
+        <!-- 用户消息 -->
+        <div class="msg-row user">
+          <div class="msg-body">
+            <div class="msg-bubble">
+              请帮我详细讲讲 Rust 的生命周期标注 <code>'a</code> 到底在告诉编译器什么？为什么结构体持有引用时必须显式标注？
+            </div>
+          </div>
+        </div>
+
+        <!-- 助手消息 -->
+        <div class="msg-row assistant">
+          <div class="msg-avatar ai">S</div>
+          <div class="msg-body">
+            <div class="msg-meta">
+              <strong>DeepSeek-V3</strong>
+              <span>耗时 1.8s · 首包 210ms · 784 tokens</span>
+            </div>
+
+            <!-- 思考过程 (保持 Sona Code 的特色) -->
+            <details class="reasoning-box" open>
+              <summary>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                <span>思考过程 · 耗时 1.2s</span>
+              </summary>
+              <div class="reasoning-text">
+                用户询问 Rust 的生命周期概念，核心考点在于理解生命周期标注并不是“改变引用的存活时间”，而是“向借用检查器（Borrow Checker）声明多个引用之间的约束关系”。需要先用通俗视角解释“悬垂指针”预防，再给出结构体持有引用的典型反例与正例对比。
+              </div>
+            </details>
+
+            <div class="msg-bubble">
+              <p>在 Rust 中，生命周期标注（如 <code>'a</code>）的一个最核心认知是：</p>
+              <p style="margin: 8px 0; font-weight: 600; color: var(--accent);">👉 生命周期标注不会改变任何值的实际存活时间，它只是在“向借用检查器描述引用之间的关联关系”。</p>
+
+              <h4 style="margin: 14px 0 6px; font-size: 15px;">1. 为什么结构体持有引用必须标明 <code>'a</code>？</h4>
+              <p>当一个结构体持有了引用，这意味着<strong>结构体实例本身并不能决定被引用数据的死活</strong>。Rust 必须确保：结构体实例的存活时间，<strong>绝不能超过</strong>它所引用的那个数据。</p>
+
+              <div class="code-block">
+                <div class="code-header">
+                  <span>rust</span>
+                  <button class="code-copy-btn" onclick="alert('已复制示例代码')">复制代码</button>
+                </div>
+                <pre class="code-content"><code>// 声明：Book 实例不能活得比它引用的 title 更久
+struct Book<'a> {
+    title: &'a str,
+    pages: u32,
+}
+
+fn main() {
+    let book;
+    {
+        let local_title = String::from("Rust 编程之道");
+        book = Book {
+            title: &local_title, // ⚠️ 借用检查器通过 'a 发现 local_title 即将被 drop
+            pages: 350,
+        };
+    } // local_title 在此销毁
+    // println!("{}", book.title); // 编译报错：借用离开作用域后仍被使用！
+}</code></pre>
+              </div>
+
+              <p>简而言之，<code>Book&lt;'a&gt;</code> 告诉编译器：<strong>“只要我还活着，我里面的 title 引用所指向的内存就绝对是有效的。”</strong></p>
+            </div>
+
+            <div class="msg-actions">
+              <button class="msg-action-btn">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>复制回复</span>
+              </button>
+              <button class="msg-action-btn">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                <span>重新生成</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 底部输入框 -->
+    <footer class="composer-dock">
+      <div class="composer">
+        <textarea class="composer-input" id="userInput" placeholder="输入任意问题或粘贴代码… (Shift+Enter 换行，Enter 发送)"></textarea>
+        <div class="composer-bottom">
+          <div class="composer-controls">
+            <!-- 模型选择 -->
+            <button class="select-pill" title="切换模型">
+              <span>🤖 DeepSeek-V3</span>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <!-- 思考模式档位 -->
+            <button class="select-pill" title="思考强度">
+              <span>⚡ 深度思考</span>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <!-- 附件 -->
+            <button class="icon-btn" title="上传附件图片或文本文件">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.5-8.5a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+            </button>
+          </div>
+
+          <div class="composer-send-group">
+            <span class="send-hint">Enter 发送</span>
+            <button class="btn-send" id="sendBtn" onclick="handleSend()">
+              <span>发送</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </main>
+</div>
+
+<!-- 升级为工程项目工作区的模态弹窗 -->
+<div class="modal-overlay" id="upgradeModal">
+  <div class="modal-card">
+    <div class="modal-title">将当前对话转为工程项目</div>
+    <div class="modal-desc">
+      当前普通会话将完整保留历史记录，并绑定到一个本地目录，以解锁 OpenCode 的完整能力（项目文件引用、Git Diff 对比、代码自动修改与终端执行）。
+    </div>
+
+    <div class="modal-form-group">
+      <label class="modal-label">项目名称</label>
+      <input type="text" class="modal-input" value="rust-study-notes" style="width: 100%;">
+    </div>
+
+    <div class="modal-form-group">
+      <label class="modal-label">绑定本地目录</label>
+      <div class="modal-input-row">
+        <input type="text" class="modal-input" placeholder="选择或输入本地项目绝对路径..." value="/Users/liaopeng/Projects/rust-notes">
+        <button class="btn-action" style="height: 36px;">浏览...</button>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-action" onclick="closeUpgradeModal()">取消</button>
+      <button class="btn-new-chat" style="width: auto; padding: 0 16px; height: 34px;" onclick="confirmUpgrade()">确认转为工作区</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// 模式切换：普通对话 vs 项目工程
+function switchMode(mode) {
+  const tabGeneral = document.getElementById('tabGeneral');
+  const tabProjects = document.getElementById('tabProjects');
+  const generalList = document.getElementById('generalList');
+  const projectList = document.getElementById('projectList');
+  const newBtn = document.getElementById('newChatBtn');
+
+  if (mode === 'general') {
+    tabGeneral.classList.add('active');
+    tabProjects.classList.remove('active');
+    generalList.style.display = 'block';
+    projectList.style.display = 'none';
+    newBtn.innerHTML = `
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+      <span>新建普通对话</span>
+    `;
+  } else {
+    tabProjects.classList.add('active');
+    tabGeneral.classList.remove('active');
+    generalList.style.display = 'none';
+    projectList.style.display = 'block';
+    newBtn.innerHTML = `
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+      <span>新建项目工作区</span>
+    `;
+  }
+}
+
+// 模拟新建空白对话 (显示欢迎与灵感卡片)
+document.getElementById('newChatBtn').addEventListener('click', () => {
+  document.querySelectorAll('.conv-item').forEach(el => el.classList.remove('active'));
+  document.getElementById('chatTitle').innerHTML = `<span>新对话</span>`;
+
+  const container = document.getElementById('chatContent');
+  container.innerHTML = `
+    <div class="welcome-container">
+      <div class="welcome-badge">
+        <span>✨ 自由探索模式</span>
+      </div>
+      <div class="welcome-title">有什么我可以协助你的？</div>
+      <div class="welcome-subtitle">
+        在此模式下无需关联任何本地代码仓库。适合随手记想法、解析代码片段、技术答疑或头脑风暴。
+      </div>
+
+      <div class="prompt-grid">
+        <div class="prompt-card" onclick="fillPrompt('请帮我对比一下 Go goroutine 与 Python asyncio 的底层并发机制')">
+          <div class="prompt-card-icon">⚡</div>
+          <div class="prompt-card-title">架构与并发对比</div>
+          <div class="prompt-card-desc">对比 Go 与 Python 的异步并发实现逻辑</div>
+        </div>
+        <div class="prompt-card" onclick="fillPrompt('帮我写一个高性能的 LRU 缓存类，支持泛型与并发安全')">
+          <div class="prompt-card-icon">💻</div>
+          <div class="prompt-card-title">算法与数据结构</div>
+          <div class="prompt-card-desc">编写线程安全的 LRU 缓存示例</div>
+        </div>
+        <div class="prompt-card" onclick="fillPrompt('请解释一下 OAuth 2.0 PKCE 流程的安全性原理')">
+          <div class="prompt-card-icon">🔒</div>
+          <div class="prompt-card-title">网络与安全协议</div>
+          <div class="prompt-card-desc">解读 PKCE 如何避免授权码拦截攻击</div>
+        </div>
+        <div class="prompt-card" onclick="fillPrompt('请帮我审阅以下 SQL 并在高并发场景下给出索引优化建议：')">
+          <div class="prompt-card-icon">🗄️</div>
+          <div class="prompt-card-title">SQL 与性能调优</div>
+          <div class="prompt-card-desc">分析慢查询瓶颈与联合索引覆盖</div>
+        </div>
+      </div>
+    </div>
+  `;
+});
+
+function fillPrompt(text) {
+  const input = document.getElementById('userInput');
+  input.value = text;
+  input.focus();
+}
+
+function handleSend() {
+  const input = document.getElementById('userInput');
+  const text = input.value.trim();
+  if (!text) return;
+
+  const container = document.getElementById('chatContent');
+  // 如果是空状态，先清空
+  if (container.querySelector('.welcome-container')) {
+    container.innerHTML = '';
+  }
+
+  // 追加用户气泡
+  const userRow = document.createElement('div');
+  userRow.className = 'msg-row user';
+  userRow.innerHTML = `<div class="msg-body"><div class="msg-bubble">${escapeHtml(text)}</div></div>`;
+  container.appendChild(userRow);
+
+  input.value = '';
+
+  // 模拟 AI 回复
+  setTimeout(() => {
+    const aiRow = document.createElement('div');
+    aiRow.className = 'msg-row assistant';
+    aiRow.innerHTML = `
+      <div class="msg-avatar ai">S</div>
+      <div class="msg-body">
+        <div class="msg-meta">
+          <strong>DeepSeek-V3</strong>
+          <span>耗时 0.9s · 320 tokens</span>
+        </div>
+        <div class="msg-bubble">
+          <p>这是针对你提出的问题 <strong>“${escapeHtml(text)}”</strong> 生成的通用普通对话回复。</p>
+          <p style="margin-top: 8px;">在普通对话模式下，Sona Code 可以作为你的随身开发智囊。如果你之后希望它针对你的本地工程进行代码文件编辑或自动化测试，可点击顶部右上角的 <strong>“转为工程项目”</strong> 随时升级！</p>
+        </div>
+      </div>
+    `;
+    container.appendChild(aiRow);
+    document.getElementById('chatScroll').scrollTop = document.getElementById('chatScroll').scrollHeight;
+  }, 400);
+
+  document.getElementById('chatScroll').scrollTop = document.getElementById('chatScroll').scrollHeight;
+}
+
+function escapeHtml(string) {
+  const div = document.createElement('div');
+  div.textContent = string;
+  return div.innerHTML;
+}
+
+// 转为工程项目弹窗
+function openUpgradeModal() {
+  document.getElementById('upgradeModal').classList.add('active');
+}
+function closeUpgradeModal() {
+  document.getElementById('upgradeModal').classList.remove('active');
+}
+function confirmUpgrade() {
+  closeUpgradeModal();
+  alert('已成功将此对话升级并挂载到项目工作区！现在你可以使用 @ 引用工程文件并执行自动化变更。');
+}
+</script>
+
+</body>
+</html>

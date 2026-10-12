@@ -108,7 +108,7 @@ def main(argv: list[str] | None = None) -> None:
     # Keep this job alive until process exit. An OS kill closes it and kills all
     # desktop-owned descendants, including children whose parents already exited.
     desktop_job = None
-    if os.name == "nt" and os.environ.get("SONACODE_DESKTOP_INSTANCE_ID"):
+    if os.name == "nt":
         from sona_code.processes import WindowsJob
         desktop_job = WindowsJob()
         desktop_job.assign(os.getpid())

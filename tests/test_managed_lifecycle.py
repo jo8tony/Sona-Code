@@ -127,6 +127,34 @@ async def test_cancelled_terminal_start_reaps_the_eventual_process(tmp_path, mon
     assert not manager.sessions
 
 
+async def test_failed_terminal_launch_is_reported_once_and_closes_scope(tmp_path, monkeypatch):
+    import sona_code.terminal.manager as terminal_module
+    calls = []
+    class Pty:
+        @staticmethod
+        def spawn(*args, **kwargs):
+            calls.append("spawn")
+            raise OSError("ConPTY launch failed")
+    class Job:
+        def close(self):
+            calls.append("close")
+    monkeypatch.setattr(terminal_module, "PtyProcess", Pty)
+    monkeypatch.setattr(terminal_module.sys, "platform", "win32")
+    if os.name == "nt":
+        monkeypatch.setattr("sona_code.processes.WindowsJob", Job)
+    manager = TerminalManager()
+    manager.commands = CommandManager(ExecutionLedger(str(tmp_path / "config.json")), 1234)
+    cfg = AppConfig(terminal={"shell_command": sys.executable},
+                    upstreams=[UpstreamConfig(name="test", base_url="http://127.0.0.1:9")], default_upstream="test")
+    try:
+        with pytest.raises(terminal_module.TerminalError, match="ConPTY launch failed"):
+            await manager.create(cfg, str(tmp_path), "shell", 24, 80)
+        assert calls == (["spawn", "close"] if os.name == "nt" else ["spawn"])
+        assert not manager.sessions
+    finally:
+        await manager.commands.shutdown()
+
+
 @pytest.mark.skipif(os.name != "nt" or bool(os.environ.get("SONACODE_SKIP_TERMINAL_TESTS")), reason="Windows ConPTY ownership regression")
 async def test_closing_terminal_reaps_its_background_command(tmp_path):
     from sona_code.processes import kernel
@@ -412,9 +440,24 @@ async def test_desktop_backend_exit_reaps_commands(binary, exit_mode, tmp_path):
                 await asyncio.to_thread(owner.wait, 5)
             await asyncio.to_thread(backend.wait, 10)
             assert kernel.WaitForSingleObject(child_handle, 1000) == 0
+            with socket.socket() as probe:
+                probe.settimeout(1)
+                assert probe.connect_ex(("127.0.0.1", port)) != 0
             ledger = ExecutionLedger(str(config_path))
             assert ledger.runs[ledger.key(str(tmp_path), session)][-1]['state'] in {"stopped", "interrupted"}
             assert all(run['state'] not in {'running', 'stopping'} for runs in ledger.runs.values() for run in runs)
+            # Read a cold native snapshot after exit; never start a new server or
+            # write OpenCode's database to repair interrupted tool display state.
+            from sona_code.workspace.history import read_history
+            history_cfg = cfg.model_copy(deep=True)
+            history_cfg.terminal.inject_env["XDG_DATA_HOME"] = env["XDG_DATA_HOME"]
+            history = read_history(str(tmp_path), history_cfg, f"/session/{session}/message")
+            assert history is not None
+            history = ledger.annotate(str(tmp_path), session, history)
+            assert all(message["info"].get("time", {}).get("completed")
+                       for message in history if message["info"].get("role") == "assistant")
+            assert all(part["state"]["status"] not in {"running", "pending"}
+                       for message in history for part in message["parts"] if part["type"] == "tool")
     finally:
         if backend.poll() is None:
             backend.kill()

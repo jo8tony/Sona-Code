@@ -1,0 +1,42 @@
+appId: com.liaopeng.sonacode.electron
+productName: Sona Code
+asar: true
+afterPack: electron/after-pack.cjs
+directories:
+  output: dist/electron
+files:
+- electron/**/*
+- '!electron/binaries/**/*'
+- desktop/index.html
+- package.json
+extraResources:
+- from: build/openspec
+  to: tools/openspec
+- from: src-tauri/icons/icon.ico
+  to: icon.ico
+- from: src-tauri/binaries/sona-code-sidecar-x86_64-pc-windows-msvc.exe
+  to: sona-code-sidecar.exe
+- from: src-tauri/binaries/opencode-x86_64-pc-windows-msvc.exe
+  to: opencode.exe
+- from: third_party/opencode/LICENSE
+  to: licenses/OpenCode-LICENSE.txt
+- from: THIRD_PARTY_NOTICES.md
+  to: THIRD_PARTY_NOTICES.md
+win:
+  signAndEditExecutable: false
+  target:
+  - target: nsis
+    arch:
+    - x64
+  icon: src-tauri/icons/icon.ico
+  artifactName: Sona-Code-${version}-Setup.exe
+nsis:
+  include: electron/installer.nsh
+  installerIcon: src-tauri/icons/icon.ico
+  uninstallerIcon: src-tauri/icons/icon.ico
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+electronDist: node_modules/electron/dist
+electronVersion: 44.4.5

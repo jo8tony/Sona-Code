@@ -59,7 +59,8 @@ def test_status_route_maps_only_registered_projects(tmp_path):
     with TestClient(app) as client:
         projects = client.get('/__recorder/api/workspace/projects').json()['items']
         result = client.get('/__recorder/api/workspace/status').json()['projects']
-        assert len(result) == 3
+        assert len(result) == 4
+        assert result["chat"] == {"statuses": {}}
         by_path = {p['path']: result[p['id']]['statuses'] for p in projects}
         assert by_path == {paths[0]: {'same_id': {'type': 'busy'}}, paths[1]: {'same_id': {'type': 'retry'}}, paths[2]: {}}
 

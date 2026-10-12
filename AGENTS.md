@@ -53,3 +53,11 @@ History uses short imperative summaries in Chinese or English, sometimes Convent
 ## Security & Configuration Tips
 
 Never commit `.runtime/`, API keys, call recordings, generated sidecars, or local demo captures. Use masked example credentials and verify header-redaction tests when touching proxy or recording code.
+
+## Conversation and Preview Integration
+
+Projectless chat uses `workspace/chat.py` and an application-owned directory next to the config file. Keep it separate from registered projects, force the `sonacode-chat` agent and native deny permissions, and reject project tools, file references, and foreign sessions at the backend. Conversation history remains owned by OpenCode.
+
+File previews use bounded read-only reads in `workspace/files.py`, with the shared project path validation. Bundle pinned Prism and PDF.js assets (including worker, CMaps, fonts, WASM, and licenses) and avatar SVGs in Python package data and the sidecar. Preserve macOS system open/reveal commands and PTY support when importing Windows changes.
+
+The managed command runner is optional only when the offline tool bundle is omitted. Missing tools keep native V1 shell configuration; a partial bundle must still fail integrity verification. This fallback cannot guarantee per-session cleanup of detached commands. See `docs/optional-openspec.md`. Keep Windows sidecars and OpenCode in `src-tauri/binaries` for both Tauri and Electron; `packaging/electron-builder-offline.yml` reuses the locked Electron runtime. Keep Python, npm, and Tauri versions aligned.

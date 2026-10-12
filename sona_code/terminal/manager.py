@@ -344,9 +344,20 @@ class TerminalManager:
         self.sessions: dict[str, TerminalSession] = {}
         self.closing = False
         self.commands = None
+        self._creating: set[asyncio.Task] = set()
 
     # ------------------------------------------------------------ 会话生命周期
     async def create(
+        self, cfg: AppConfig, cwd: str, kind: str, rows: int, cols: int
+    ) -> TerminalSession:
+        task = asyncio.current_task()
+        self._creating.add(task)
+        try:
+            return await self._create(cfg, cwd, kind, rows, cols)
+        finally:
+            self._creating.discard(task)
+
+    async def _create(
         self, cfg: AppConfig, cwd: str, kind: str, rows: int, cols: int
     ) -> TerminalSession:
         t = cfg.terminal
@@ -384,21 +395,31 @@ class TerminalManager:
         env = _build_env(cfg, kind)
         if getattr(self, "environment", None) is not None:
             env = await asyncio.to_thread(self.environment, str(path.resolve()), kind, env)
+        if self.closing:
+            raise TerminalError("应用正在退出", 503)
 
         sid = uuid.uuid4().hex[:12]
         if self.commands is not None and kind == "opencode":
             env = self.commands.environment("terminal:" + sid, str(path.resolve()), env)
         scope = None
         launch_task = None
+        gate = None
         try:
             if self.commands is not None and os.name == "nt":
                 from sona_code.processes import WindowsJob
                 scope = WindowsJob()
+                helper = self.commands.helper()
+                if helper is not None:
+                    gate = Path(self.commands.runners.name) / (sid + ".ready")
+                    env["SONACODE_PTY_GATE"] = str(gate)
+                    argv = [str(helper), "--sona-pty", *argv]
             def launch():
                 spawned = PtyProcess.spawn(argv, cwd=str(path), env=env, dimensions=(rows, cols))
                 try:
                     if scope is not None:
                         scope.assign(spawned.pid)
+                    if gate is not None:
+                        gate.touch()
                 except BaseException:
                     spawned.close(True)
                     raise
@@ -410,9 +431,6 @@ class TerminalManager:
                 launch_task = asyncio.create_task(asyncio.to_thread(launch))
                 proc = await asyncio.shield(launch_task)
             if self.closing:
-                await asyncio.to_thread(proc.close, True)
-                if scope is not None:
-                    await asyncio.to_thread(scope.close)
                 raise TerminalError("应用正在退出", 503)
         except BaseException as e:
             if launch_task is not None and 'proc' not in locals():
@@ -428,6 +446,10 @@ class TerminalManager:
                 await self.commands.stop_owner("terminal:" + sid)
             if isinstance(e, asyncio.CancelledError):
                 raise
+            if isinstance(e, TerminalError):
+                raise
+            if isinstance(e, FileNotFoundError):
+                raise TerminalError(f"未找到命令 {command}：{e}") from e
             raise TerminalError(f"启动失败：{type(e).__name__}: {e}") from e
 
         session = TerminalSession(
@@ -455,16 +477,21 @@ class TerminalManager:
         session = self.sessions.get(session_id)
         if session is None:
             return False
-        try:
-            if self.commands is not None:
-                await self.commands.stop_owner("terminal:" + session_id)
-            if session.scope is not None:
-                await asyncio.to_thread(session.scope.close)
-            # close(force=True)：关 socket（解除泵阻塞）+ 强杀进程
-            await asyncio.to_thread(session.proc.close, True)
-        except Exception:
-            logger.warning("终端会话 %s 关闭进程失败", session_id, exc_info=True)
-            raise TerminalError("终端进程清理失败，请重试", 503)
+        failures = []
+        operations = []
+        if self.commands is not None:
+            operations.append(lambda: self.commands.stop_owner("terminal:" + session_id))
+        if session.scope is not None:
+            operations.append(lambda: asyncio.to_thread(session.scope.close))
+        operations.append(lambda: asyncio.to_thread(session.proc.close, True))
+        for operation in operations:
+            try:
+                await operation()
+            except Exception as exc:
+                failures.append(exc)
+                logger.warning("终端会话 %s 关闭进程失败", session_id, exc_info=True)
+        if failures:
+            raise TerminalError("终端进程清理失败，请重试", 503) from failures[0]
         session.alive = False
         if session.pump_task is not None:
             try:
@@ -478,6 +505,10 @@ class TerminalManager:
 
     async def shutdown(self) -> None:
         """服务退出时终止全部会话进程。"""
+        self.closing = True
+        creating = [task for task in self._creating if task is not asyncio.current_task()]
+        if creating:
+            await asyncio.gather(*creating, return_exceptions=True)
         ids = list(self.sessions)
         if ids:
             results = await asyncio.gather(*(self.kill(sid) for sid in ids), return_exceptions=True)
@@ -552,10 +583,16 @@ class TerminalManager:
             logger.warning("终端会话 %s 输出泵异常", session.id, exc_info=True)
         finally:
             session.alive = False
-            if self.commands is not None:
-                await self.commands.stop_owner("terminal:" + session.id)
-            if session.scope is not None:
-                await asyncio.to_thread(session.scope.close)
+            try:
+                try:
+                    if self.commands is not None:
+                        await self.commands.stop_owner("terminal:" + session.id)
+                finally:
+                    if session.scope is not None:
+                        await asyncio.to_thread(session.scope.close)
+            except Exception:
+                # Keep the session tracked so explicit close/shutdown can retry.
+                logger.warning("终端会话 %s 后代进程清理失败", session.id, exc_info=True)
             try:
                 if hasattr(proc, "_reap"):
                     proc._reap()

@@ -3,6 +3,127 @@
 from tests.test_workspace_interactions import run_node
 
 
+def test_workspace_account_keeps_login_identity_when_model_source_changes():
+    run_node(r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
+const accountName = {}, avatar = {src: "avatars/panda.svg"}, description = {};
+const settings = {source: "sona", connected: true, user: {userName: "张三"}};
+const context = vm.createContext({accountName, accountLoadVersion: 0, state: {},
+  alive: () => true, modelPicker: {hidden: true}, api: async () => ({...settings}),
+  view: {querySelector: selector => selector === ".wsp-account-avatar" ? avatar : description},
+});
+vm.runInContext(source.slice(source.indexOf("function workspaceAccountProfile("),
+  source.indexOf("function workspaceProjectMark(")), context);
+vm.runInContext(source.slice(source.indexOf("  async function refreshSidebarAccount("),
+  source.indexOf('  const content = view.querySelector("#wsp-content")')), context);
+(async () => {
+  for (const modelSource of ["sona", "custom", "native"]) {
+    settings.source = modelSource;
+    await context.refreshSidebarAccount();
+    assert.equal(accountName.textContent, "张三", "Model selection must not hide the logged-in account");
+    assert.equal(accountName.title, "张三");
+    assert.equal(avatar.src, "avatars/panda.svg", "Logging in must retain the chosen animal avatar");
+    assert.equal(avatar.textContent, undefined);
+    assert.equal(description.textContent, "Sona 已连接");
+  }
+  let resolveLogin;
+  context.api = () => new Promise(resolve => {resolveLogin = resolve;});
+  const oldLoginRequest = context.refreshSidebarAccount();
+  settings.connected = false;
+  context.api = async () => ({...settings});
+  await context.refreshSidebarAccount();
+  assert.equal(accountName.textContent, "我的工作区");
+  assert.equal(avatar.src, "avatars/panda.svg", "Logging out must retain the chosen animal avatar");
+  assert.equal(avatar.textContent, undefined);
+  resolveLogin({connected: true, user: {userName: "旧账号"}});
+  await oldLoginRequest;
+  assert.equal(accountName.textContent, "我的工作区", "A stale login response must not restore the signed-out name");
+})().catch(error => {console.error(error); process.exitCode = 1;});
+''')
+
+
+def test_subscription_uses_active_website_without_login_and_survives_picker_states():
+    run_node(r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+vm.runInThisContext(fs.readFileSync("sona_code/web/static/models.js", "utf8"));
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
+vm.runInThisContext(source);
+global.el = (tag, props = {}, ...children) => ({tag, ...props, children, textContent: props.text || "",
+  dataset: {sonaLoginLabel: props["data-sona-login-label"]},
+  append(...items) {this.children.push(...items);}, replaceChildren(...items) {this.children = items;},
+  setAttribute(key, value) {this[key] = value;}, removeAttribute(key) {delete this[key];}});
+const footer = el("div"), logout = el("button"), refresh = el("button");
+global.state = {modelSource: "sona", sonaConnected: false, sonaEnvironment: "prod", providers: [],
+  chosenModels: new Map(), modelLoadError: ""};
+global.view = {querySelector: selector => selector === "#wsp-model-footer" ? footer : selector === "#wsp-sona-logout" ? logout : refresh};
+global.modelList = el("div"); global.modelSearch = {value: ""};
+global.modelPicker = {hidden: false}; global.modelButton = {};
+global.accountName = {}; global.accountLoadVersion = 0;
+global.sideBottom = {classList: {toggle() {}}};
+global.alive = () => true; global.positionPicker = () => {};
+global.detail = error => error.message;
+const errors = []; global.toast = error => errors.push(error);
+global.window = {};
+const settings = {source: "sona", environment: "prod", connected: false,
+  prod_url: "https://production.example.test", uat_url: "https://uat.example.test"};
+const requests = [];
+global.api = async path => {requests.push(path); assert.equal(path, "models/source"); return settings;};
+vm.runInThisContext(source.slice(source.indexOf("  function renderModelPicker("), source.indexOf("  function openModelPicker(")));
+vm.runInThisContext(source.slice(source.indexOf("function workspaceAccountProfile("), source.indexOf("function workspaceProjectMark(")));
+vm.runInThisContext(source.slice(source.indexOf("  async function refreshSidebarAccount("), source.indexOf('  const content = view.querySelector("#wsp-content")')));
+(async () => {
+  for (const environment of ["prod", "uat"]) for (const connected of [false, true]) {
+    settings.environment = environment; settings.connected = connected;
+    state.sonaConnected = connected;
+    await refreshSidebarAccount();
+    const link = footer.children.find(item => item.tag === "a");
+    const url = settings[environment + "_url"];
+    assert.equal(link.href, url); assert.equal(link.target, "_blank");
+    assert.equal(link.rel, "noopener noreferrer");
+    let prevented = false;
+    await link.onclick({preventDefault() {prevented = true;}});
+    assert.equal(prevented, false, "Web links use normal browser navigation");
+    assert.equal(sonaLoginPending, null, "Subscribing never starts the login handoff");
+    if (!connected) assert(modelList.children.some(item => item.class === "wsp-model-login"));
+    state.modelLoadError = "offline"; renderModelPicker();
+    assert.equal(footer.children.find(item => item.tag === "a").href, url);
+    state.modelLoadError = ""; modelSearch.value = "missing model"; renderModelPicker();
+    assert.equal(footer.children.find(item => item.tag === "a").href, url);
+    modelSearch.value = "";
+  }
+  const link = footer.children.find(item => item.tag === "a");
+  const opened = [];
+  window.__TAURI__ = {core: {invoke: async (command, payload) => opened.push([command, payload])}};
+  let prevented = false;
+  await link.onclick({preventDefault() {prevented = true;}});
+  assert.equal(prevented, true);
+  assert.deepEqual(opened, [["open_website", {url: settings.uat_url}]]);
+  assert.equal(requests.length, 4, "Subscription clicks do not contact login or catalog APIs");
+  assert.equal(errors.length, 0);
+})().catch(error => {console.error(error); process.exitCode = 1;});
+''')
+
+
+def test_desktop_subscription_and_login_share_validated_external_opener():
+    run_node(r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const calls = [], exposed = {};
+vm.runInNewContext(fs.readFileSync("electron/preload.js", "utf8"), {
+  require: name => {assert.equal(name, "electron"); return {
+    contextBridge: {exposeInMainWorld(name, value) {exposed[name] = value;}},
+    ipcRenderer: {invoke: async (...args) => calls.push(args)}
+  };}
+});
+(async () => {
+  await exposed.__TAURI__.core.invoke("open_website", {url: "https://sona.example.test"});
+  await exposed.__TAURI__.core.invoke("open_website_login", {url: "https://sona.example.test/#/login?state=local"});
+  assert.deepEqual(calls, [["sona:open-website-login", "https://sona.example.test"],
+    ["sona:open-website-login", "https://sona.example.test/#/login?state=local"]]);
+})().catch(error => {console.error(error); process.exitCode = 1;});
+''')
+
+
 def test_chat_logout_relogin_and_late_catalog_response():
     run_node(r'''
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
@@ -14,7 +135,7 @@ const newProvider = {id: "new-provider", source: "sona", models: {fresh: {name: 
 const catalogue = connected => ({source: "sona", sona_environment: "prod", sona_connected: connected,
   providers: connected ? [newProvider] : [], default_model: null});
 global.state = {projectId: null, modelSource: "sona", sonaEnvironment: "prod", sonaConnected: true,
-  providers: [oldProvider], connectedProviders: new Set(), chosenModels: new Map([[null, "old-provider\u0000old"]]),
+  providers: [oldProvider], connectedProviders: new Set(), chosenModels: new Map([[workspaceConversationKey(null, null), "old-provider\u0000old"]]),
   chosenVariants: new Map(), modelLoadError: ""};
 const node = props => ({...props, textContent: props?.text || "", children: [], dataset: {
   sonaLoginLabel: props?.["data-sona-login-label"]}, append(...children) {this.children.push(...children);},
@@ -56,7 +177,7 @@ vm.runInThisContext(source.slice(source.indexOf("  async function logoutSona("),
   await logoutSona(); await new Promise(setImmediate);
   assert.equal(logout.hidden, true); assert.equal(refresh.hidden, true);
   assert.equal(state.sonaConnected, false); assert.deepEqual(state.providers, []);
-  assert.equal(state.chosenModels.get(null), "");
+  assert.equal(state.chosenModels.get(workspaceConversationKey(null, null)), "");
   releaseOld(); await stale;
   assert.equal(state.sonaConnected, false, "A late read must not restore the old account");
   assert.deepEqual(state.providers, []);

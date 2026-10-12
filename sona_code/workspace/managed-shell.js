@@ -1,6 +1,7 @@
 // V1 hooks preserve the native shell tool's validation, permissions and history.
 export default async ({ directory }) => {
   let shell = "";
+  const runnerAvailable = Boolean(process.env.SONACODE_COMMAND_RUNNER);
   const send = async (body) => {
     const response = await fetch(process.env.SONACODE_COMMAND_URL + "/event", {
       method: "POST",
@@ -12,6 +13,8 @@ export default async ({ directory }) => {
   };
   return {
     config: async (config) => {
+      // Bundles without offline tools keep the native V1 shell configuration.
+      if (!runnerAvailable) return;
       const original = config.shell || process.env.SHELL || "";
       // Hook failures must never fall back to executing an unmanaged shell.
       config.shell = process.env.SONACODE_COMMAND_RUNNER;
@@ -27,6 +30,7 @@ export default async ({ directory }) => {
       config.shell = managed.runner;
     },
     "shell.env": async (input, output) => {
+      if (!runnerAvailable) return;
       if (!input.sessionID) throw new Error("A managed command requires a session ID");
       output.env.SONACODE_COMMAND_SESSION = input.sessionID;
       output.env.SONACODE_COMMAND_SHELL = shell;

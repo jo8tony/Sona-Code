@@ -28,29 +28,30 @@ global.state = {projectId: null, sessionId: null, attachments: [], projects: [{i
 let editor = {text: "Message written before creating a project", references: []};
 global.composer = {snapshot: () => structuredClone(editor), restore: draft => {editor = draft || {text: ""};},
   get fileReferences() {return [];}};
-global.draftTimer = null; global.draftContextReady = true;
+global.draftTimer = null; global.draftContextReady = true; global.relatedSessionRequest = 0;
 global.tree = {}; global.root = {classList: {remove() {}}}; global.input = {focus() {}};
 global.pendingImages = new Map(); global.creationDraftDestinations = new Map(); global.conversationViews = new Map();
-for (const name of ["updateSkillInput", "renderAttachments", "saveConversationView", "cancelSelectedRefresh",
-  "hideAutocomplete", "closeChangePopover", "restoreConversationView", "updateSidebarButton", "renderSidebar",
+for (const name of ["syncSidebarScope", "updateSkillInput", "renderAttachments", "saveConversationView", "cancelSelectedRefresh",
+  "hideAutocomplete", "closeChangePopover", "closeSubagentPopover", "restoreConversationView", "updateSidebarButton", "renderSidebar",
   "renderHeader", "renderMain", "refreshSelected", "connectEvents", "loadModels", "loadAgents", "loadSessions",
   "updateModelButton", "renderStatsLine", "closeModelPicker"]) global[name] = () => {};
 global.activeProject = () => state.projects[0]; global.loadProjectFiles = async () => {};
 vm.runInThisContext(source.slice(source.indexOf("  function saveDraft()"), source.indexOf("  const attachmentList =")));
+vm.runInThisContext(source.slice(source.indexOf("  function restoreModelSelection("), source.indexOf("  function selectedModel(")));
 vm.runInThisContext(source.slice(source.indexOf("  function chooseModel("), source.indexOf("  function renderModelPicker(")));
 vm.runInThisContext(source.slice(source.indexOf("  function migrateCreationDraft("), source.indexOf("  async function createSession(")));
 vm.runInThisContext(source.slice(source.indexOf("  function selectProject("), source.indexOf("  function selectSession(")));
 const choice = "demo\u0000second-model";
-chooseModel(choice); state.chosenVariants.set(null, "high");
-assert.equal(state.chosenModels.get(null), choice); assert.equal(stored.get("sona-code:last-model"), choice);
+chooseModel(choice); state.chosenVariants.set(workspaceConversationKey(null, null), "high");
+assert.equal(state.chosenModels.get(workspaceConversationKey(null, null)), choice); assert.equal(stored.get("sona-code:last-model"), choice);
 selectProject("first");
-assert.equal(state.chosenModels.get("first"), choice); assert.equal(state.chosenVariants.get("first"), "high");
-assert.equal(stored.get("sona-code:model:first"), choice);
+assert.equal(state.chosenModels.get(workspaceConversationKey("first", null)), choice); assert.equal(state.chosenVariants.get(workspaceConversationKey("first", null)), "high");
+assert.equal(stored.get(`sona-code:session-model:${workspaceConversationKey("first", null)}`), choice);
 assert.equal(editor.text, "Message written before creating a project");
 assert.equal(workspaceReadDraft(workspaceConversationKey(null, null)), undefined);
 assert.equal(workspaceReadDraft(workspaceConversationKey("first", null)).text, editor.text);
 state.chosenModels.clear(); selectProject("first");
-assert.equal(state.chosenModels.get("first"), choice, "Reload must retain a non-default model chosen before project creation");
+assert.equal(state.chosenModels.get(workspaceConversationKey("first", null)), choice, "Reload must retain a non-default model chosen before project creation");
 ''')
 
 
@@ -73,6 +74,29 @@ assert.deepEqual(workspaceFileTextMatches("C:\\repo\\src\\deep\\components\\Page
 assert.deepEqual(workspaceFileTextMatches("https://site.test/Page.html /other/Page.html", lookup), []);
 assert.deepEqual(workspaceFileTextMatches("NotPage.html", lookup), []);
 assert.deepEqual(workspaceFileTextMatches("请修改Page.html文件", lookup).map(m => m.text), ["Page.html"]);
+''')
+
+
+def test_tree_search_returns_all_matches_beyond_autocomplete_limit():
+    run_node(r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
+vm.runInThisContext(source);
+const files = Array.from({length: 150}, (_, index) => `.hidden/build/file-${index}.txt`);
+global.loadProjectFiles = async () => ({items: files, truncated: false});
+global.view = {querySelector: () => ({})};
+global.openProjectEntry = () => {};
+global.openFilePreview = () => {};
+let callbacks;
+global.createWorkspaceTree = (_pane, options) => {callbacks = options; return {};};
+vm.runInThisContext(source.slice(source.indexOf("  const tree = createWorkspaceTree("),
+  source.indexOf("  addCleanup(() => tree.dispose())")));
+(async () => {
+  const result = await callbacks.search("project", "file");
+  assert.equal(result.items.length, 150);
+  assert.equal(result.truncated, false);
+  assert.deepEqual(new Set(result.items), new Set(files));
+})().catch(error => {console.error(error); process.exitCode = 1;});
 ''')
 
 
@@ -190,6 +214,8 @@ let editor = "previous task", renders = 0;
 global.alive = () => true;
 global.saveDraft = () => workspaceWriteDraft(workspaceConversationKey(state.projectId, state.sessionId), {text: editor, attachments: [...state.attachments]});
 global.selectSession = (projectId, sessionId) => {saveDraft(); state.projectId = projectId; state.sessionId = sessionId; editor = ""; selected.push(sessionId);};
+global.migrateModelSelection = () => {};
+global.restoreModelSelection = () => {};
 global.applyLatestModel = global.persistWorkspaceSelection = global.refreshSelected = () => {};
 global.renderHeader = global.renderMain = global.renderSidebar = global.renderAttachments = () => {renders++;};
 global.input = {focus() {}};
@@ -227,6 +253,103 @@ let imageResolved; global.readImage = () => new Promise(resolve => {imageResolve
   assert.equal(state.sessionId, null); assert.equal(editor, "preserve failed creation draft");
   assert.equal(workspaceReadDraft(workspaceConversationKey("p", null)).text, editor);
   assert.equal(creatingSessions.size, 0); assert.equal(notices.length, 1);
+})().catch(error => {console.error(error); process.exitCode = 1;});
+''')
+
+
+def test_session_list_refresh_preserves_unselected_draft_and_existing_session():
+    run_node(r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
+const state = {projectId: "p", sessionId: null, messagesLoaded: true,
+  errors: new Map(), sessionDetails: new Map(), sessions: new Map()};
+const editor = {text: "正在输入第一条消息", caret: 5, composing: true, references: [{path: "src/app.js"}]};
+let items = [], saved = 0, restored = 0;
+const context = vm.createContext({state, lastSessionListRefresh: 0, selectedRefresh: null,
+  scrollToLatestOnLoad: false, workspaceSelection: {}, alive: () => true,
+  api: async () => ({items}), storeSessions: (project, sessions) => sessions,
+  workspaceConversationKey: (p, s) => JSON.stringify([p, s]), workspaceSessionTree: sessions => ({roots: sessions}),
+  saveDraft() {saved++;}, restoreDraft() {restored++; editor.caret = 0; editor.composing = false;},
+  saveConversationView() {}, restoreConversationView() {}, restoreModelSelection() {}, cancelSelectedRefresh() {}, persistWorkspaceSelection() {},
+  renderMain() {}, refreshSelected() {}, renderSidebar() {}, renderHeader() {}, detail: e => e.message,
+  content: {replaceChildren() {throw Error("Unexpected refresh failure");}},
+});
+vm.runInContext(source.slice(source.indexOf("  async function fetchSessions("), source.indexOf("  function storeSessions(")), context);
+(async () => {
+  const original = structuredClone(editor);
+  for (let i = 0; i < 3; i++) await context.fetchSessions({id: "p"});
+  assert.equal(restored, 0, "Polling an empty project must not restore the same draft");
+  assert.equal(saved, 0); assert.deepEqual(editor, original); assert.equal(state.sessionId, null);
+  items = [{id: "other"}]; await context.fetchSessions({id: "p"});
+  assert.equal(state.sessionId, null, "A newly discovered session must not interrupt an unselected draft");
+  assert.deepEqual(editor, original);
+  state.sessionId = "other"; await context.fetchSessions({id: "p"});
+  assert.equal(restored, 0, "Refreshing the selected session must retain its editor");
+  state.sessionDetails.set(JSON.stringify(["p", "child"]), {id: "child"});
+  state.sessionId = "child"; await context.fetchSessions({id: "p"});
+  assert.equal(state.sessionId, "child"); assert.equal(restored, 0);
+  state.sessionId = "deleted"; await context.fetchSessions({id: "p"});
+  assert.equal(state.sessionId, "other", "A removed session must still fall back to an available conversation");
+  assert.equal(restored, 1); assert.equal(saved, 1);
+  items = []; await context.fetchSessions({id: "p"});
+  assert.equal(state.sessionId, null); assert.equal(restored, 2);
+  await context.fetchSessions({id: "p"}); assert.equal(restored, 2);
+})().catch(error => {console.error(error); process.exitCode = 1;});
+''')
+
+
+def test_question_single_choice_custom_switching_and_multiple_choice_reply():
+    run_node(r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
+const content = {children: []};
+const state = {projectId: "p", sessionId: "s", questionDrafts: new Map(), questionPages: new Map(), questionErrors: new Map()};
+const replies = [];
+const context = vm.createContext({content, state, el(tag, attrs, ...children) {
+  return {tag, ...attrs, children: children.filter(Boolean), append(...nodes) {this.children.push(...nodes);}};
+}, api: async (path, options) => replies.push(options.body), refreshSelected: async () => {}, detail: e => e.message,
+  renderMain() {throw Error("Switching answers must not rebuild the live input");}});
+vm.runInContext(source.slice(source.indexOf("  function questionCard("), source.indexOf("  function compactionCard(")), context);
+const findAll = (node, test) => [...(test(node) ? [node] : []), ...(node.children || []).flatMap(child => findAll(child, test))];
+const find = (node, test) => findAll(node, test)[0];
+const create = (id, multiple = false, custom = true) => {
+  const request = {id, questions: [{question: "选择方案", options: [{label: "A"}, {label: "B"}], multiple, custom}]};
+  const card = context.questionCard(request); content.children = [card];
+  return {request, card, options: findAll(card, n => n.type === (multiple ? "checkbox" : "radio")),
+    input: find(card, n => n.class === "wsp-question-custom"), submit: find(card, n => n.text === "提交回答")};
+};
+const choose = (view, index, checked = true) => {
+  if (view.options[index].type === "radio") view.options.forEach(option => {option.checked = false;});
+  view.options[index].checked = checked;
+  view.options[index].onchange({target: view.options[index]});
+};
+const type = (view, text) => {view.input.value = text; view.input.oninput({target: view.input, isComposing: true});};
+(async () => {
+  const single = create("single"); choose(single, 0);
+  type(single, "   "); assert.equal(single.options[0].checked, true, "Whitespace is not a custom answer");
+  single.input.selectionStart = 2; single.input.composing = true;
+  type(single, "自定义中文回答");
+  assert(single.options.every(option => !option.checked), "Custom input must visibly clear all radio choices");
+  assert.equal(state.questionDrafts.get("single")[0].selected.length, 0);
+  assert.equal(single.input.selectionStart, 2); assert.equal(single.input.composing, true);
+  for (let i = 0; i < 3; i++) assert.equal(context.questionCard(single.request), single.card);
+  await single.submit.onclick();
+  assert.equal(JSON.stringify(replies.at(-1)), JSON.stringify({answers: [["自定义中文回答"]]}));
+
+  const reverse = create("reverse"); choose(reverse, 0); type(reverse, "自己的回答"); choose(reverse, 1);
+  assert.equal(reverse.input.value, ""); assert.equal(state.questionDrafts.get("reverse")[0].custom, "");
+  await reverse.submit.onclick();
+  assert.equal(JSON.stringify(replies.at(-1)), JSON.stringify({answers: [["B"]]}));
+
+  const multiple = create("multiple", true); choose(multiple, 0); type(multiple, "补充说明"); choose(multiple, 1);
+  assert.equal(multiple.input.value, "补充说明"); assert(multiple.options.every(option => option.checked));
+  choose(multiple, 0, false);
+  await multiple.submit.onclick();
+  assert.equal(JSON.stringify(replies.at(-1)), JSON.stringify({answers: [["B", "补充说明"]]}));
+
+  const fixed = create("fixed", false, false); assert.equal(fixed.input, undefined); choose(fixed, 1);
+  await fixed.submit.onclick();
+  assert.equal(JSON.stringify(replies.at(-1)), JSON.stringify({answers: [["B"]]}));
 })().catch(error => {console.error(error); process.exitCode = 1;});
 ''')
 

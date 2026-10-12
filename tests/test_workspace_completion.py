@@ -54,6 +54,10 @@ async function complete(p, s) {start(p,s); const watch = finish(p,s); if (watch)
   queue = []; failed = true; await complete("p", "failed"); assert(!unread().includes(key("p", "failed")));
   failed = false; completed = 1; await complete("p", "old"); assert(!unread().includes(key("p", "old")));
   completed = Date.now() + 1000;
+  context.state.sessionDetails = new Map([[key("p", "child"), {id: "child", parentID: "shown"}]]);
+  await complete("p", "child");
+  assert(!unread().includes(key("p", "child")), "Subagents have no completion unread marker");
+  assert(!context.completionWatches.has(key("p", "child")));
   // Opening a session while its completion details load must keep it read.
   hold = {}; start("p", "clicked"); const clicked = finish("p", "clicked");
   const pending = context.confirmAnswerComplete("p", "clicked", clicked);
@@ -104,8 +108,8 @@ const project = {id: "p", name: "Project", path: "path"}, sessions = Array.from(
 const state = {projects: [project], sessions: new Map([["p", sessions]]), collapsedProjects: new Set(["p"]),
   projectStatuses: new Map(), sessionLimits: new Map(), errors: new Map(), search: "", projectId: "p", sessionId: "s0"};
 const sidebarSections = new Map(), sidebarRows = new Map(), sideList = el("div");
-const context = vm.createContext({state, sidebarSections, sidebarRows, sideList, el, sidebarDrag: null,
-  view: {querySelector: () => ({})}, closeRowMenus() {}, bindSidebarDrag() {}, rowMenu: () => el("div"),
+const context = vm.createContext({state, sidebarSections, sidebarRows, sideList, el, sidebarDrag: null, subagentPopover: null,
+  view: {querySelector: () => ({setAttribute() {}}), querySelectorAll: () => []}, closeRowMenus() {}, bindSidebarDrag() {}, rowMenu: () => el("div"),
   sessionTitle: s => s.title, stamp: () => "today", workspaceIcon: () => el("svg"), statusIcon: () => el("svg"),
   workspaceSyncChildren(parent, children) {parent.children = []; parent.append(...children);},
 });

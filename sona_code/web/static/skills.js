@@ -1,7 +1,7 @@
 "use strict";
 /* Local skill management and shared accessible selection/import dialogs. */
 
-function skillError(error) { return error?.data?.detail || error?.message || String(error); }
+function skillError(error) { return error?.detail || error?.data?.detail || error?.message || String(error); }
 
 function openSpecError(error) {
   const detail = skillError(error);
@@ -155,77 +155,172 @@ function openSkillImport(onImported) {
 }
 
 function renderSkills(view) {
-  let disposed = false, items = [], loading = true, busy = false;
+  let disposed = false, items = [], loading = true, busy = false, busyId = "", requestedEnabled = false;
+  let filter = "all", failedId = "", failure = "", loadVersion = 0;
+  const cards = new Map();
   addCleanup(() => { disposed = true; });
-  const search = el("input", { type: "search", placeholder: "搜索技能名称和描述", "aria-label": "搜索技能" });
-  const count = el("span", { class: "skill-count" });
+  const search = el("input", { type: "search", placeholder: "搜索技能名称或描述", "aria-label": "搜索技能" });
+  const count = el("span", { class: "skill-count", role: "status" });
   const errorLine = el("div", { class: "banner banner-err", role: "alert", hidden: true });
-  const list = el("div", { class: "skill-list" });
-  const add = el("button", { class: "btn btn-primary", type: "button", text: "＋ 新增技能", onclick: () => openSkillImport((skill) => {
+  const list = el("div", { class: "skill-list", "aria-label": "技能列表" });
+  const refresh = el("button", { class: "skill-refresh", type: "button", title: "刷新技能", "aria-label": "刷新技能",
+    onclick: () => load() }, workspaceIcon("refresh"));
+  const add = el("button", { class: "btn btn-primary skill-add", type: "button", onclick: () => openSkillImport((skill) => {
     toast(`技能 ${skill.name} 已导入并启用`, "ok"); load();
-  }) });
+  }) }, workspaceIcon("plus"), "新增技能");
+  const filters = [["all", "全部"], ["enabled", "已启用"], ["disabled", "已停用"]].map(([value, text]) =>
+    el("button", { class: "skill-filter", type: "button", text, "aria-pressed": String(value === filter),
+      onclick: () => { filter = value; draw(); } }));
   view.replaceChildren(el("section", { class: "skills-page" },
     el("div", { class: "skill-page-head" },
-      el("div", null, el("h1", { text: "技能" }), el("p", { text: "为 OpenCode 添加可复用的指令、脚本和参考资料。" })), add),
-    el("article", { class: "card skill-card wsp-openspec-card" },
-      el("div", { class: "skill-card-copy" }, el("div", { class: "skill-card-title" }, el("h2", { text: "OpenSpec" }), el("span", { class: "skill-state enabled", text: "内置" })),
-        el("p", { text: "12 个规范驱动工作流，支持提案、实现、验证和归档。为项目一键启用，无需单独安装。" })),
-      el("button", { class: "btn btn-primary", type: "button", text: "选择项目", onclick: openOpenSpecProjects })),
-    errorLine, el("div", { class: "skill-toolbar" }, search, count,
-      el("button", { class: "btn", type: "button", text: "刷新", onclick: () => load() })), list));
+      el("div", null, el("h1", { text: "技能" }), el("p", { text: "把常用指令和工作流程，变成可复用的技能。" })), add),
+    el("article", { class: "skill-feature" },
+      el("span", { class: "skill-feature-icon", "aria-hidden": "true" }, workspaceIcon("skill")),
+      el("div", { class: "skill-card-copy" }, el("div", { class: "skill-card-title" }, el("h2", { text: "OpenSpec" }), el("span", { class: "skill-state", text: "内置" })),
+        el("p", { text: "12 个规范驱动工作流，覆盖提案、实现、验证与归档。" })),
+      el("button", { class: "skill-feature-action", type: "button", onclick: openOpenSpecProjects }, "选择项目", workspaceIcon("chevron"))),
+    errorLine, el("div", { class: "skill-toolbar" },
+      el("div", { class: "skill-search" }, workspaceIcon("search"), search),
+      el("div", { class: "skill-filters", "aria-label": "筛选技能" }, filters), refresh),
+    el("div", { class: "skill-list-head" }, el("h2", { text: "我的技能" }), count), list));
 
+  function statusLabel(item) {
+    return item.error ? "格式错误" : item.conflict ? "同名冲突" : !item.enabled ? "已停用" : item.permission === "ask" ? "需确认" : "已启用";
+  }
+  function details(item) {
+    const dialog = createSkillDialog(item.name);
+    dialog.body.append(el("p", { class: "skill-detail-description", text: item.description || "该技能暂未提供描述。" }),
+      el("dl", { class: "skill-detail-meta" },
+        el("dt", { text: "来源" }), el("dd", { text: item.source === "app" ? "本应用 · 导入副本" : `本机 ${item.origin || "OpenCode"} · 原目录读取` }),
+        el("dt", { text: "状态" }), el("dd", { text: statusLabel(item) }),
+        el("dt", { text: "目录" }), el("dd", {}, el("code", { class: "skill-storage-path", text: item.path }))));
+    if (item.error || item.conflict) dialog.body.append(el("p", { class: "banner banner-err", text: item.error || item.conflict }));
+    dialog.body.append(el("div", { class: "wsp-modal-actions" }, el("button", { class: "wsp-mini", type: "button", text: "关闭", onclick: dialog.close })));
+    dialog.body.querySelector("button").focus();
+  }
+  function remove(item) {
+    const dialog = createSkillDialog("删除技能");
+    dialog.body.append(el("p", { text: `删除应用中的「${item.name}」副本？源目录不会被删除。` }),
+      el("div", { class: "wsp-modal-actions" }, el("button", { class: "wsp-mini", type: "button", text: "取消", onclick: dialog.close }),
+        el("button", { class: "wsp-mini", type: "button", text: "删除副本", onclick: () => { dialog.close(); change(item, "DELETE"); } })));
+    dialog.body.querySelector("button").focus();
+  }
+  function card(item) {
+    let row = cards.get(item.id);
+    if (!row) {
+      const name = el("h2", { class: "skill-card-name" });
+      const source = el("span", { class: "skill-source" });
+      const description = el("p", { class: "skill-card-description" });
+      const status = el("span", { class: "skill-card-status" });
+      const issue = el("p", { class: "skill-card-error", role: "alert", hidden: true });
+      const toggle = el("button", { class: "skill-switch", type: "button", role: "switch",
+        onclick: () => change(row.item, "PATCH", { enabled: !row.item.enabled }) },
+        el("span", { class: "skill-switch-track", "aria-hidden": "true" }));
+      const removeButton = el("button", { class: "skill-remove", type: "button", onclick: () => remove(row.item) }, workspaceIcon("trash"));
+      const detailsButton = el("button", { class: "skill-details", type: "button", onclick: () => details(row.item) }, "查看详情", workspaceIcon("chevron"));
+      const node = el("article", { class: "skill-card" },
+        el("div", { class: "skill-card-head" }, el("span", { class: "skill-card-icon", "aria-hidden": "true" }, workspaceIcon("skill")),
+          el("div", { class: "skill-card-copy" }, name, source), removeButton), description, issue,
+        el("div", { class: "skill-card-foot" }, detailsButton, el("div", { class: "skill-card-actions" }, status, toggle)));
+      row = { node, name, source, description, status, issue, toggle, removeButton, detailsButton };
+      cards.set(item.id, row);
+    }
+    row.item = item;
+    const pending = busy && busyId === item.id;
+    const invalid = !!item.error || !!item.conflict;
+    row.node.className = "skill-card" + (!item.enabled ? " skill-disabled" : "") + (invalid ? " skill-invalid" : "");
+    row.node.setAttribute("aria-label", item.name);
+    row.name.textContent = item.name;
+    row.source.textContent = item.source === "app" ? "本应用" : item.origin || "本机技能";
+    row.source.title = item.source === "app" ? "应用导入的技能副本" : "从本机原目录读取";
+    row.description.textContent = item.error || item.conflict || item.description || "该技能暂未提供描述。";
+    row.status.textContent = pending ? (requestedEnabled ? "正在启用…" : "正在停用…") : statusLabel(item);
+    if (pending && requestedEnabled === null) row.status.textContent = "正在删除…";
+    row.status.className = "skill-card-status" + (invalid ? " warning" : item.enabled ? " enabled" : "");
+    row.toggle.setAttribute("aria-checked", String(!!item.enabled && !invalid));
+    row.toggle.setAttribute("aria-label", `启用 ${item.name}`);
+    row.toggle.setAttribute("aria-busy", String(pending));
+    row.toggle.title = item.error || item.conflict || (item.enabled ? "停用此技能" : "启用此技能");
+    row.toggle.disabled = busy || loading || invalid;
+    row.removeButton.hidden = !item.deletable;
+    row.removeButton.disabled = busy || loading;
+    row.removeButton.title = `删除 ${item.name} 的应用副本`;
+    row.removeButton.setAttribute("aria-label", `删除 ${item.name}`);
+    row.detailsButton.setAttribute("aria-label", `查看 ${item.name} 详情`);
+    row.issue.hidden = failedId !== item.id || !failure;
+    row.issue.textContent = failedId === item.id ? failure : "";
+    return row.node;
+  }
   function draw() {
     const query = search.value.trim().toLocaleLowerCase();
-    const matches = items.filter((item) => `${item.name} ${item.description}`.toLocaleLowerCase().includes(query));
-    count.textContent = `${items.length} 个技能 · ${items.filter((item) => item.enabled && !item.error && !item.conflict).length} 个已启用`;
-    add.disabled = busy;
-    list.replaceChildren();
-    if (loading) { list.append(el("div", { class: "loading", text: "正在读取技能…" })); return; }
-    if (!matches.length) {
-      list.append(el("div", { class: "card skill-empty" }, el("h2", { text: query ? "没有匹配的技能" : "还没有技能" }),
-        el("p", { text: query ? "试试其他名称或关键词。" : "点击「新增技能」，选择包含 SKILL.md 的本地目录。" })));
-      return;
-    }
-    for (const item of matches) {
-      const toggle = el("button", { class: "btn", type: "button", role: "switch", "aria-checked": String(item.enabled),
-        "aria-label": `启用 ${item.name}`, text: item.enabled ? "停用" : "启用", disabled: busy || !!item.conflict || !!item.error,
-        onclick: () => change(item, "PATCH", { enabled: !item.enabled }) });
-      const remove = el("button", { class: "btn btn-danger", type: "button", text: "删除", disabled: busy, onclick: () => {
-        const dialog = createSkillDialog("删除技能");
-        dialog.body.append(el("p", { text: `删除应用中的「${item.name}」副本？源目录不会被删除。` }),
-          el("div", { class: "wsp-modal-actions" }, el("button", { class: "wsp-mini", type: "button", text: "取消", onclick: dialog.close }),
-            el("button", { class: "wsp-mini", type: "button", text: "删除副本", onclick: () => { dialog.close(); change(item, "DELETE"); } })));
-        dialog.body.querySelector("button").focus();
-      } });
-      list.append(el("article", { class: "card skill-card" + (!item.enabled ? " skill-disabled" : "") },
-        el("div", { class: "skill-card-copy" },
-          el("div", { class: "skill-card-title" }, el("h2", { text: item.name }),
-            el("span", { class: `skill-state${item.enabled && !item.error ? " enabled" : ""}`, text: item.error ? "格式错误" : item.conflict ? "同名冲突" : item.enabled ? (item.permission === "ask" ? "需确认" : "已启用") : "已停用" })),
-          el("small", { class: "dim", text: item.source === "app" ? "本应用" : `本机 ${item.origin || "OpenCode"} · 原目录读取` }), el("p", { text: item.error || item.conflict || item.description }), el("code", { class: "skill-storage-path", text: item.path })),
-        el("div", { class: "skill-card-actions" }, toggle, item.deletable ? remove : null)));
-    }
+    const enabled = item => item.enabled && !item.error && !item.conflict;
+    const matches = items.filter(item => `${item.name} ${item.description}`.toLocaleLowerCase().includes(query) &&
+      (filter === "all" || (filter === "enabled" ? enabled(item) : !item.enabled)));
+    count.textContent = `${items.length} 个技能 · ${items.filter(enabled).length} 个已启用`;
+    add.disabled = busy || loading;
+    refresh.disabled = busy || loading;
+    refresh.classList.toggle("loading", loading);
+    refresh.setAttribute("aria-busy", String(loading));
+    list.setAttribute("aria-busy", String(loading));
+    filters.forEach((button, index) => button.setAttribute("aria-pressed", String(["all", "enabled", "disabled"][index] === filter)));
+    let nodes;
+    if (loading && !items.length) nodes = [el("div", { class: "skill-empty skill-loading", role: "status", text: "正在读取技能…" })];
+    else if (!matches.length) {
+      const narrowed = !!query || filter !== "all";
+      nodes = [el("div", { class: "skill-empty" },
+        el("span", { class: "skill-empty-icon", "aria-hidden": "true" }, workspaceIcon(narrowed ? "search" : "skill")),
+        el("h2", { text: narrowed ? "没有匹配的技能" : "添加你的第一个技能" }),
+        el("p", { text: narrowed ? "试试其他关键词，或切换到全部技能。" : "导入一个包含 SKILL.md 的目录，让常用工作流程随时可用。" }),
+        el("button", { class: "skill-empty-action", type: "button", disabled: busy || loading,
+          text: narrowed ? "清除筛选" : "新增技能", onclick: () => {
+            if (narrowed) { search.value = ""; filter = "all"; draw(); search.focus(); }
+            else add.click();
+          } }))];
+    } else nodes = matches.map(card);
+    // Keep card controls mounted across API state changes so focus is retained.
+    const keep = new Set(nodes);
+    for (const child of Array.from(list.children)) if (!keep.has(child)) child.remove();
+    nodes.forEach((node, index) => { if (list.children[index] !== node) list.insertBefore(node, list.children[index] || null); });
+    for (const id of cards.keys()) if (!items.some(item => item.id === id)) cards.delete(id);
   }
   async function load() {
+    const version = ++loadVersion;
+    loading = true; draw();
     try {
       const data = await api("skills", { silent: true });
-      if (disposed) return;
+      if (disposed || version !== loadVersion) return;
       items = data.items || [];
       errorLine.textContent = (data.warnings || []).join("；");
       errorLine.hidden = !errorLine.textContent;
     } catch (error) {
-      if (disposed) return;
+      if (disposed || version !== loadVersion) return;
       errorLine.textContent = "读取技能失败：" + skillError(error); errorLine.hidden = false;
-    } finally { loading = false; if (!disposed) draw(); }
+    } finally { if (!disposed && version === loadVersion) { loading = false; draw(); } }
   }
   async function change(item, method, body) {
-    if (busy) return;
-    busy = true; draw(); errorLine.hidden = true;
+    if (busy || loading || disposed) return;
+    const focused = document.activeElement;
+    busy = true; busyId = item.id; requestedEnabled = body?.enabled ?? null;
+    failedId = ""; failure = ""; draw();
     try {
       await api(`skills/${encodeURIComponent(item.id)}`, { method, body, silent: true });
-      if (!disposed) { toast(method === "DELETE" ? "技能副本已删除" : body.enabled ? "技能已启用" : "技能已停用", "ok"); await load(); }
+      if (disposed) return;
+      if (method === "DELETE") items = items.filter(entry => entry.id !== item.id);
+      else items = items.map(entry => entry.id === item.id ? { ...entry, enabled: body.enabled } : entry);
+      toast(method === "DELETE" ? "技能副本已删除" : body.enabled ? "技能已启用" : "技能已停用", "ok");
+      await load();
     } catch (error) {
-      if (!disposed) { errorLine.textContent = skillError(error); errorLine.hidden = false; }
-    } finally { busy = false; if (!disposed) draw(); }
+      if (!disposed) { failedId = item.id; failure = String(skillError(error)); }
+    } finally {
+      busy = false; busyId = "";
+      if (!disposed) {
+        draw();
+        if (focused?.classList.contains("skill-switch") && document.activeElement === document.body) {
+          if (focused.isConnected && !focused.disabled) focused.focus();
+          else filters.find(button => button.getAttribute("aria-pressed") === "true")?.focus();
+        }
+      }
+    }
   }
   search.addEventListener("input", draw);
   draw(); load();

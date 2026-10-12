@@ -57,7 +57,7 @@ const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:a
 const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8").replace(/\r\n/g, "\n");
 const requests = [], selected = [], sessionLoads = [];
 const state = {projects: [], collapsedProjects: new Set(), projectId: "p", check: null};
-const context = vm.createContext({state, projectsLoading: null, checkLoading: null, draftContextReady: false,
+const context = vm.createContext({state, WORKSPACE_CHAT_ID: "chat", projectsLoading: null, checkLoading: null, draftContextReady: false,
   api(path) {return new Promise(resolve => requests.push({path, resolve}));},
   alive: () => true, workspaceOrderItems: items => items,
   refreshWorkspaceStatuses() {}, renderSidebar() {}, renderHeader() {}, renderMain() {},
@@ -117,7 +117,7 @@ const projects = [
   {id: "empty", session_count: 0, sessions: []},
   {id: "one", session_count: 1, sessions: [{id: "ses_one", time: {updated: 1}}]},
 ];
-const context = vm.createContext({state, projectsLoading: null, checkLoading: null, draftContextReady: false,
+const context = vm.createContext({state, WORKSPACE_CHAT_ID: "chat", projectsLoading: null, checkLoading: null, draftContextReady: false,
   api: async () => ({items: projects}), alive: () => true, workspaceOrderItems: items => items,
   workspaceConversationKey: (p,s) => p + ":" + s,
   refreshWorkspaceStatuses() {}, renderSidebar() {}, renderHeader() {}, renderMain() {},
@@ -142,10 +142,10 @@ def test_workspace_suspends_requests_and_resumes_without_resetting_view():
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
 const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8").replace(/\r\n/g, "\n");
 const calls = [], state = {projectId: "p", sessionId: "a", search: "query", messages: [{saved: true}]};
-const methods = ["saveDraft", "cancelSelectedRefresh", "hideAutocomplete", "closeRowMenus", "closeChangePopover",
+const methods = ["saveDraft", "cancelSelectedRefresh", "hideAutocomplete", "closeRowMenus", "closeChangePopover", "closeSubagentPopover",
   "closeModelPicker", "closeAgentPicker", "closeVariantPicker", "updateTrajectoryHeight", "loadProjects",
   "loadCheck", "refreshSelected", "connectEvents", "loadModels", "loadAgents", "refreshSidebarAccount", "markVisibleSessionRead"];
-const context = vm.createContext({state, disposed: false, suspended: false,
+const context = vm.createContext({state, disposed: false, suspended: false, relatedSessionRequest: 0,
     navigation: {close() {}},
   events: {close() {calls.push("closeEvents");}}, eventProjectId: "p", queueDialog: null, deleteDialog: null,
   workspaceModelCache: new Map([["p", {data: {old: true}}]]), cleanups: [() => calls.push("dispose")],

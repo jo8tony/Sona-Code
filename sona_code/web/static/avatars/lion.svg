@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="狮子">
+  <!-- Original Sona Code animal avatar. Self-contained, no external resources. -->
+  <defs><clipPath id="round"><circle cx="48" cy="48" r="48"/></clipPath></defs>
+  <g clip-path="url(#round)">
+    <path fill="#F8EBCB" d="M0 0h96v96H0z"/>
+    <circle cx="21" cy="21" r="24" fill="#fff" opacity=".22"/>
+    <ellipse cx="48" cy="97" rx="29" ry="20" fill="#EFC37C"/>
+    <path d="M48 14 Q58 8 65 21 Q80 17 80 31 Q92 38 82 49 Q94 63 80 69 Q83 83 68 83 Q61 94 48 86 Q35 94 28 83 Q13 83 16 69 Q2 63 14 49 Q4 38 16 31 Q16 17 31 21 Q38 8 48 14" fill="#BD8557" /><circle cx="24" cy="27" r="12" fill="#EFC37C"/><circle cx="24" cy="27" r="7" fill="#E2A66F"/><circle cx="72" cy="27" r="12" fill="#EFC37C"/><circle cx="72" cy="27" r="7" fill="#E2A66F"/><ellipse cx="48" cy="51" rx="26" ry="27" fill="#EFC37C" /><ellipse cx="35" cy="47" rx="3" ry="4" fill="#394350" /><circle cx="34.3" cy="45.8" r="0.8" fill="#fff"/><ellipse cx="61" cy="47" rx="3" ry="4" fill="#394350" /><circle cx="60.3" cy="45.8" r="0.8" fill="#fff"/><ellipse cx="48" cy="61" rx="14" ry="10" fill="#FFF7E8" /><path d="M44 56 Q48 53 52 56 L48 60Z" fill="#394350" /><path d="M48 60 V64 M41 64 Q44 68 48 64 Q52 68 55 64" fill="none" stroke="#394350" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><ellipse cx="26" cy="59" rx="6" ry="3" fill="#F3A5A1" opacity=".55"/><ellipse cx="70" cy="59" rx="6" ry="3" fill="#F3A5A1" opacity=".55"/>
+  </g>
+</svg>

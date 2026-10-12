@@ -73,6 +73,7 @@ const context = vm.createContext({state, root, sidebarRows, setTimeout, clearTim
     sidebarRows.set(JSON.stringify(["p", "s12"]), {button: row});},
 });
 vm.runInContext(source.slice(source.indexOf("  let locatingSession ="), source.indexOf("  function renderSidebar(")), context);
+vm.runInContext(source.slice(source.indexOf("function workspaceSessionTree("), source.indexOf("function workspaceTaskSessionId(")), context);
 (async () => {
   await context.locateCurrentSession();
   assert.equal(state.sessionId, "s12"); assert.equal(renders, 1);
@@ -99,6 +100,7 @@ const content = {children: [], childNodes: [], classList: {remove() {}}};
 const state = {projectId: "p", sessionId: "s", tab: "chat"};
 const frames = [], row = {};
 const context = vm.createContext({state, scroll, content, composerDock: {},
+  conversationMessages: () => state.messages || [],
   browsingHistory: true, followLatest: false, navigation: {render() {}},
   document: {activeElement: null}, view: {querySelector: () => ({})},
   trajectoryView: null, changePopover: null, changeTriggers: new Map(),
@@ -116,4 +118,9 @@ context.renderMain(); assert.equal(scroll.scrollTop, 1030); assert.equal(frames.
 context.browsingHistory = true; context.followLatest = false; scroll.scrollTop = 70;
 frames[0](); assert.equal(scroll.scrollTop, 70);
 context.renderMain(true); assert.equal(context.browsingHistory, false); assert.equal(scroll.scrollTop, 1030);
+// A fresh ordinary conversation opens its welcome content at the top.
+state.projectId = "chat"; state.sessionId = null; state.messages = []; scroll.scrollTop = 0;
+context.renderMain(true); assert.equal(scroll.scrollTop, 0); assert.equal(context.followLatest, false);
+scroll.scrollTop = 40; context.renderMain(); assert.equal(scroll.scrollTop, 40);
+
 ''')

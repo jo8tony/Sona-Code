@@ -243,7 +243,7 @@ function setNav(name) {
 function route() {
   let hash = location.hash || "#/workspace";
   if (hash === "#/preferences") {
-    hash = adminMenusVisible ? "#/settings" : "#/application";
+    hash = "#/skills";
     history.replaceState(null, "", location.pathname + location.search + hash);
   }
   const isWorkspace = hash === "#/workspace";

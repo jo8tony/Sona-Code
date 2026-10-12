@@ -204,8 +204,9 @@ class SonaSiteManager:
                             id=name, display_name=name, api_type="chat_completions",
                             context_length=DEFAULT_CONTEXT_LENGTH,
                             output_length=DEFAULT_OUTPUT_LENGTH,
-                            input_modalities=[value for value in modalities
-                                              if value in INPUT_MODALITIES] if isinstance(modalities, list) else [],
+                            input_modalities=[value.lower() for value in modalities
+                                              if isinstance(value, str) and value.lower() in INPUT_MODALITIES]
+                            if isinstance(modalities, list) else [],
                         ))
                     if models:
                         providers.append(UpstreamConfig(

@@ -1,6 +1,11 @@
+param([switch]$SkipOpenSpec)
+
 $ErrorActionPreference = "Stop"
 
 $ProjectDir = Split-Path -Parent $PSScriptRoot
+if ($SkipOpenSpec -and (Test-Path (Join-Path $ProjectDir "build\openspec"))) {
+    throw "-SkipOpenSpec requires build\openspec to be absent; move the existing bundle aside before building without OpenSpec"
+}
 $BuildPython = if ($env:BUILD_PYTHON) {
     $env:BUILD_PYTHON
 } elseif (Test-Path (Join-Path $ProjectDir ".venv-build\Scripts\python.exe")) {
@@ -42,7 +47,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "Preparing bundled OpenCode failed with exit code $LASTEXITCODE"
 }
 
-& $BuildPython (Join-Path $PSScriptRoot "prepare-openspec.py")
-if ($LASTEXITCODE -ne 0) {
-    throw "Preparing bundled OpenSpec failed with exit code $LASTEXITCODE"
+if ($SkipOpenSpec) {
+    Write-Warning "OpenSpec omitted; messages and commands use native OpenCode execution"
+} else {
+    & $BuildPython (Join-Path $PSScriptRoot "prepare-openspec.py")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Preparing bundled OpenSpec failed with exit code $LASTEXITCODE"
+    }
 }

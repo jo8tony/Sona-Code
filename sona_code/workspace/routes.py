@@ -19,7 +19,7 @@ from typing import Awaitable, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from sona_code.admin.skills import WORKSPACE_COMMANDS
@@ -27,7 +27,9 @@ from sona_code.terminal.manager import resolve_opencode
 from sona_code.admin.models import application_catalog, public_native_catalog, native_provider_id
 from sona_code.workspace.manager import WorkspaceError
 from sona_code.workspace.changes import annotate_changes, history_changes
+from sona_code.workspace.files import file_content, file_preview
 from sona_code.recording.parse import session_key_from_header
+from sona_code.workspace.chat import CHAT_AGENT, CHAT_SCOPE_ID
 
 router = APIRouter()
 
@@ -43,6 +45,18 @@ def _project_info(item: dict) -> dict:
 
 
 def _project_path(request: Request, project_id: str) -> str:
+    if project_id == CHAT_SCOPE_ID:
+        # Reuse the existing session/queue transport without registering an
+        # internal directory as a user project. Project file/configuration
+        # endpoints remain unavailable, including direct HTTP requests.
+        path = request.scope.get("path", "")
+        if path and not re.search(
+            r"/workspace/projects/chat/(?:sessions(?:/.*)?|events|status|models|agents"
+            r"|commands|skills|permissions|questions(?:/.*)?|providers/[^/]+/api-key)$",
+            path,
+        ):
+            raise HTTPException(403, "普通对话没有项目目录或项目配置")
+        return request.app.state.runtime.workspace.chat_directory
     for item in request.app.state.runtime.terminal_projects.list():
         if _project_id(item["path"]) == project_id:
             return str(Path(item["path"]).expanduser().resolve())
@@ -61,6 +75,29 @@ async def _opencode(
 ):
     try:
         runtime = request.app.state.runtime
+        if runtime.workspace.is_chat(project):
+            if method == "GET" and endpoint == "/agent":
+                return [{"name": CHAT_AGENT, "description": "普通对话", "mode": "primary"}]
+            if method == "GET" and endpoint in {"/command", "/skill", "/permission", "/question"}:
+                return []
+            if (endpoint.endswith(("/command", "/shell", "/revert", "/unrevert")) or
+                    endpoint.startswith(("/permission/", "/question/"))):
+                raise HTTPException(403, "普通对话不支持此操作")
+            session_match = re.match(r"^/session/([A-Za-z0-9_-]+)(?:/|$)", endpoint)
+            if session_match and session_match[1] != "status":
+                info = await runtime.workspace.request(
+                    project, runtime.provider_config(), "GET", f"/session/{session_match[1]}",
+                )
+                if (not isinstance(info, dict) or
+                        os.path.normcase(os.path.normpath(info.get("directory", ""))) !=
+                        os.path.normcase(os.path.normpath(project))):
+                    raise HTTPException(404, "普通对话不存在")
+                if method == "GET" and endpoint == f"/session/{session_match[1]}":
+                    return info
+            if method == "POST" and endpoint == "/session":
+                body = {**(body or {}), "permission": [
+                    {"permission": "*", "pattern": "*", "action": "deny"},
+                ]}
         if method == "POST" and endpoint.endswith(("/prompt_async", "/command", "/shell", "/summarize")):
             async with runtime.workspace.task_dispatch(project):
                 body = dict(body or {})
@@ -117,6 +154,16 @@ async def list_projects(request: Request) -> dict:
     return {"items": items, "total": len(items)}
 
 
+@router.get("/workspace/chats")
+async def chat_scope(request: Request) -> dict:
+    runtime = request.app.state.runtime
+    path = runtime.workspace.chat_directory
+    catalog = await runtime.workspace.session_catalog([path], runtime.provider_config())
+    sessions = catalog[path] if catalog is not None else None
+    return {"id": CHAT_SCOPE_ID, "kind": "chat", "name": "普通对话", "path": "",
+            "sessions": sessions, "session_count": len(sessions) if sessions is not None else None}
+
+
 class AddProjectBody(BaseModel):
     path: str = Field(min_length=1)
 
@@ -125,8 +172,10 @@ class AddProjectBody(BaseModel):
 async def workspace_status(request: Request) -> dict:
     runtime = request.app.state.runtime
     active = await runtime.workspace.running_statuses()
-    return {"projects": {item["id"]: active.get(item["path"], {"statuses": {}})
-                         for item in map(_project_info, runtime.terminal_projects.list())}}
+    statuses = {item["id"]: active.get(item["path"], {"statuses": {}})
+                for item in map(_project_info, runtime.terminal_projects.list())}
+    statuses[CHAT_SCOPE_ID] = active.get(runtime.workspace.chat_directory, {"statuses": {}})
+    return {"projects": statuses}
 
 
 @router.post("/workspace/projects", status_code=201)
@@ -196,66 +245,59 @@ def _project_entry(request: Request, project_id: str, relative: str) -> tuple[Pa
     return root, entry
 
 
-_TREE_EXCLUDED = {"node_modules", "__pycache__", "build", "dist", "target"}
-
-
 @router.get("/workspace/projects/{project_id}/file-index")
 def project_file_index(project_id: str, request: Request) -> dict:
-    """Index visible project files without starting a native server or following links."""
+    """Index all project files without starting a native server or traversing directory links."""
     root, _ = _project_entry(request, project_id, "")
     items: list[str] = []
     pending = [root]
-    visited = 0
-    deadline = time.monotonic() + 3
+    scanned: set[Path] = set()
     while pending:
         directory = pending.pop()
         try:
+            resolved = directory.resolve(strict=True)
+            resolved.relative_to(root)
+            if resolved in scanned:
+                continue
+            scanned.add(resolved)
             with os.scandir(directory) as entries:
                 for entry in entries:
-                    visited += 1
-                    if visited > 50000 or len(items) >= 20000 or time.monotonic() > deadline:
-                        return {"items": sorted(items), "truncated": True}
-                    if entry.name.startswith(".") or entry.name in _TREE_EXCLUDED or entry.is_symlink():
-                        continue
                     try:
                         path = Path(entry.path)
                         path.resolve(strict=True).relative_to(root)
                         if entry.is_dir(follow_symlinks=False):
+                            if entry.is_symlink() or (hasattr(path, "is_junction") and path.is_junction()):
+                                continue
                             pending.append(path)
-                        elif entry.is_file(follow_symlinks=False):
+                        elif entry.is_file():
                             items.append(path.relative_to(root).as_posix())
                     except (OSError, ValueError):
                         continue
-        except OSError:
+        except (OSError, ValueError):
             continue
     return {"items": sorted(items), "truncated": False}
 
 
 @router.get("/workspace/projects/{project_id}/tree")
 def project_tree(project_id: str, request: Request, path: str = Query(default="", max_length=2000)) -> dict:
-    root, directory = _project_entry(request, project_id, path)
+    _, directory = _project_entry(request, project_id, path)
     if not directory.is_dir():
         raise HTTPException(400, "路径不是目录")
     items = []
     try:
         for entry in directory.iterdir():
-            if entry.name.startswith(".") or entry.name in _TREE_EXCLUDED:
-                continue
-            if entry.is_symlink():
-                continue
             try:
-                resolved = entry.resolve(strict=True)
-                resolved.relative_to(root)
-                is_dir = resolved.is_dir()
-                is_file = resolved.is_file()
-            except (OSError, ValueError):
-                continue
-            if is_dir or is_file:
-                items.append({"name": entry.name, "path": entry.relative_to(root).as_posix(), "directory": is_dir})
+                is_dir = entry.is_dir()
+            except OSError:
+                is_dir = False
+            # Keep links and unreadable entries visible; opening/expanding them
+            # still goes through _project_entry's resolved project boundary check.
+            relative = "/".join(filter(None, (path, entry.name)))
+            items.append({"name": entry.name, "path": relative, "directory": is_dir})
     except OSError as exc:
         raise HTTPException(400, f"无法读取目录：{exc}") from exc
     items.sort(key=lambda item: (not item["directory"], item["name"].casefold()))
-    return {"items": items[:500], "truncated": len(items) > 500}
+    return {"items": items, "truncated": False}
 
 
 @router.post("/workspace/projects/{project_id}/entries/open")
@@ -294,10 +336,44 @@ def open_project_entry(project_id: str, request: Request, path: str = Query(max_
     return {"ok": True}
 
 
+@router.get("/workspace/projects/{project_id}/entries/preview")
+def preview_project_entry(project_id: str, request: Request,
+                          path: str = Query(max_length=2000)) -> JSONResponse:
+    _, entry = _project_entry(request, project_id, path)
+    return JSONResponse(file_preview(entry, path), headers={"Cache-Control": "no-store"})
+
+
+@router.get("/workspace/projects/{project_id}/entries/content")
+def project_entry_content(project_id: str, request: Request,
+                          path: str = Query(max_length=2000),
+                          version: str = Query(default="", max_length=100)) -> Response:
+    _, entry = _project_entry(request, project_id, path)
+    content, mime = file_content(entry, version)
+    return Response(content, media_type=mime, headers={
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": (
+            "sandbox; default-src 'none'; style-src 'unsafe-inline'; "
+            "img-src data:; base-uri 'none'; form-action 'none'"),
+        "Content-Disposition": f"inline; filename*=UTF-8''{quote(entry.name, safe='')}",
+    })
+
+
 @router.get("/workspace/projects/{project_id}/sessions")
 async def list_sessions(project_id: str, request: Request):
     path = _project_path(request, project_id)
     data = await _opencode(request, path, "GET", "/session")
+    if project_id == CHAT_SCOPE_ID:
+        def chat_sessions(items: object) -> list[dict]:
+            return [item for item in items if isinstance(item, dict) and
+                    os.path.normcase(os.path.normpath(item.get("directory", ""))) ==
+                    os.path.normcase(os.path.normpath(path))] if isinstance(items, list) else []
+
+        data = chat_sessions(data)
+        if not data:
+            # A cold empty snapshot may precede native storage initialization or
+            # migration. Confirm against V1 without requiring a new user turn.
+            data = chat_sessions(await _opencode(request, path, "GET", "/session", params={"directory": path}))
     return {"items": data if isinstance(data, list) else []}
 
 
@@ -343,9 +419,23 @@ async def fork_session(project_id: str, session_id: str, body: ForkSessionBody, 
     path = _project_path(request, project_id)
     session = _safe_id(session_id)
     payload = {}
+    statuses = await _opencode(request, path, "GET", "/session/status", params={"directory": path})
+    queue = request.app.state.runtime.workspace_queue.snapshot(project_id, session_id)
+    if statuses.get(session_id, {}).get("type", "idle") != "idle" or queue.get("items"):
+        raise HTTPException(409, "请等待当前会话回复和消息队列完成后再创建分支")
+    messages = await _opencode(request, path, "GET", f"/session/{session}/message", params={"directory": path})
+    last_user = next((i for i in range(len(messages) - 1, -1, -1)
+                      if messages[i].get("info", {}).get("role") == "user"), None)
+    if last_user is not None and not any(
+        message.get("info", {}).get("role") == "assistant" and
+        (message["info"].get("error") or
+         (message["info"].get("time", {}).get("completed") and
+          message["info"].get("finish") not in {"tool-calls", "unknown"}))
+        for message in messages[last_user + 1:]
+    ):
+        raise HTTPException(409, "请等待当前会话回复完成后再创建分支")
     if body.message_id:
         message_id = _safe_id(body.message_id)
-        messages = await _opencode(request, path, "GET", f"/session/{session}/message")
         index = next((i for i, message in enumerate(messages)
                       if message.get("info", {}).get("id") == message_id), None)
         if index is None:
@@ -574,13 +664,15 @@ async def list_messages(project_id: str, session_id: str, request: Request):
 
 
 @router.get("/workspace/projects/{project_id}/sessions/{session_id}/trajectory")
-def session_trajectory(project_id: str, session_id: str, request: Request) -> dict:
+async def session_trajectory(project_id: str, session_id: str, request: Request) -> dict:
     """Reuse the recorder ledger for OpenCode's explicit X-Session-Id."""
     from sona_code.admin.api import trajectory_session_detail
 
-    _project_path(request, project_id)
+    path = _project_path(request, project_id)
+    if project_id == CHAT_SCOPE_ID:
+        await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}")
     key = session_key_from_header(_safe_id(session_id))
-    return trajectory_session_detail(key, request, q=None)
+    return await asyncio.to_thread(trajectory_session_detail, key, request, q=None)
 
 
 class PromptBody(BaseModel):
@@ -662,6 +754,9 @@ async def send_prompt(project_id: str, session_id: str, body: PromptBody, reques
 
 
 def _prepare_prompt(path: str, body: PromptBody, request: Request) -> dict:
+    chat = request.app.state.runtime.workspace.is_chat(path)
+    if chat and (body.references or body.agent not in {None, CHAT_AGENT}):
+        raise HTTPException(403, "普通对话只支持聊天 Agent 与上传的附件")
     if len(body.files) + len(body.references) > 8:
         raise HTTPException(status_code=400, detail="一条消息最多添加 8 个附件或文件引用")
     if not body.text.strip() and not body.files and not body.references:
@@ -703,6 +798,8 @@ def _prepare_prompt(path: str, body: PromptBody, request: Request) -> dict:
         prompt["model"] = model
     if body.agent:
         prompt["agent"] = body.agent
+    if chat:
+        prompt["agent"] = CHAT_AGENT
     if body.variant:
         prompt["variant"] = body.variant
     return prompt
@@ -729,6 +826,8 @@ async def _prepare_command(
     path: str, session_id: str, body: CommandBody, request: Request,
     *, record: bool = False, message_id: str | None = None,
 ) -> dict:
+    if request.app.state.runtime.workspace.is_chat(path):
+        raise HTTPException(403, "普通对话不支持原生命令")
     installed = await asyncio.to_thread(request.app.state.runtime.skills.list)
     managed = next((item for item in installed["items"]
                     if item["name"] == body.command and not item.get("conflict")), None)
@@ -809,7 +908,11 @@ async def _queue_result(operation: Awaitable[dict]) -> dict:
 
 async def _queue_payload(project_id: str, session_id: str, body: QueuedMessageBody, request: Request) -> dict:
     path = _project_path(request, project_id)
+    if project_id == CHAT_SCOPE_ID and body.kind != "prompt":
+        raise HTTPException(403, "普通对话不支持原生命令")
     _safe_id(session_id)
+    if project_id == CHAT_SCOPE_ID:
+        await _opencode(request, path, "GET", f"/session/{session_id}")
     try:
         parsed = (PromptBody if body.kind == "prompt" else CommandBody).model_validate(body.payload)
     except ValidationError as exc:
@@ -841,6 +944,16 @@ async def enqueue_message(project_id: str, session_id: str, body: QueuedMessageB
     await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}", params={"directory": path})
     return await _queue_result(request.app.state.runtime.workspace_queue.add(
         project_id, path, session_id, body.kind, payload, dispatch_if_idle=True,
+    ))
+
+
+@router.post("/workspace/projects/{project_id}/sessions/{session_id}/send", status_code=202)
+async def submit_message(project_id: str, session_id: str, body: QueuedMessageBody, request: Request):
+    payload = await _queue_payload(project_id, session_id, body, request)
+    path = _project_path(request, project_id)
+    await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}", params={"directory": path})
+    return await _queue_result(request.app.state.runtime.workspace_queue.send_now(
+        project_id, path, session_id, body.kind, payload,
     ))
 
 
@@ -957,6 +1070,8 @@ async def _native_managed_skill_names(
 @router.get("/workspace/projects/{project_id}/skills")
 async def project_skills(project_id: str, request: Request, agent: str | None = None) -> dict:
     path = _project_path(request, project_id)
+    if project_id == CHAT_SCOPE_ID:
+        return {"items": [], "unavailable": []}
     installed = await asyncio.to_thread(request.app.state.runtime.skills.list)
     enabled = [item for item in installed["items"]
                if item["enabled"] and not item.get("error") and not item.get("conflict")]
@@ -999,6 +1114,8 @@ async def run_shell(project_id: str, session_id: str, body: ShellBody, request: 
 @router.post("/workspace/projects/{project_id}/sessions/{session_id}/abort")
 async def abort_session(project_id: str, session_id: str, request: Request):
     path = _project_path(request, project_id)
+    if project_id == CHAT_SCOPE_ID:
+        await _opencode(request, path, "GET", f"/session/{_safe_id(session_id)}")
     await request.app.state.runtime.workspace_queue.stop(project_id, _safe_id(session_id))
     runtime = request.app.state.runtime
     return await runtime.workspace.stop_session(path, runtime.provider_config(), _safe_id(session_id))

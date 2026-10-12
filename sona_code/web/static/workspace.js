@@ -5,6 +5,19 @@ let workspaceSelection = { projectId: null, sessionId: null, tab: "chat" };
 const workspaceDrafts = new Map();
 const workspaceModelCache = new Map();
 const WORKSPACE_MODEL_TTL = 5 * 60 * 1000;
+const WORKSPACE_CHAT_ID = "chat";
+const WORKSPACE_CHAT_AGENT = "sonacode-chat";
+
+function workspaceIsChat(project) {
+  return project?.id === WORKSPACE_CHAT_ID;
+}
+
+function workspaceAccountProfile(source) {
+  const connected = source?.connected === true;
+  const name = connected ? String(source.user?.userName || source.user?.userId || "当前用户") : "我的工作区";
+  return {name,
+    description: connected ? "Sona 已连接" : "让想法，从这里开始"};
+}
 
 function workspaceProjectMark(name) {
   const characters = Array.from((name || "P").trim() || "P");
@@ -28,6 +41,95 @@ function workspaceMoveItem(items, sourceId, targetId, after) {
 }
 function workspaceConversationKey(projectId, sessionId) {
   return JSON.stringify([projectId, sessionId || null]);
+}
+
+// Local previews stay outside native history, usage and turn ownership. Match
+// the admission receipt by ID, including when SSE arrives before the receipt.
+function workspaceOutgoingProjection(messages, outgoing) {
+  if (!outgoing.length) return { messages, confirmed: [] };
+  const result = messages.slice(), confirmed = [];
+  const claimed = new Set(outgoing.map(item => item.nativeId).filter(Boolean));
+  for (const item of outgoing) {
+    const matchesPart = (expected, part) => {
+      if (expected.type === "text")
+        return workspaceUserTextPart(part) && (!!item.nativeId || part.text === expected.text);
+      if (expected.url.startsWith("file:"))
+        return part.type === "file" && part.filename === expected.filename ||
+          workspaceDirectoryReference(part) === expected.filename;
+      return part.type === "file" && part.url === expected.url;
+    };
+    const index = result.findIndex(message => message.info?.role === "user" &&
+      (item.nativeId ? message.info.id === item.nativeId :
+        !message.outgoing && !claimed.has(message.info.id) &&
+        !item.baselineIds.has(message.info.id) && item.message.parts.length > 0 &&
+        item.message.parts.every(expected => (message.parts || []).some(part => matchesPart(expected, part)))));
+    const native = result[index];
+    if (native) claimed.add(native.info.id);
+    const missing = item.message.parts.filter(expected => !(native?.parts || []).some(part => matchesPart(expected, part)));
+    if (native && item.nativeId && !missing.length) {
+      confirmed.push(item.id);
+      continue;
+    }
+    const preview = { ...item.message, info: native?.info || item.message.info,
+      parts: [...(native?.parts || []), ...missing],
+      outgoing: { id: item.id, nativeId: item.nativeId, error: item.error } };
+    if (index < 0) result.push(preview);
+    else result[index] = preview;
+  }
+  return { messages: result, confirmed };
+}
+
+// Group all descendants under their top-level conversation without adding
+// another indentation level. Missing parents and malformed cycles stay visible.
+function workspaceSessionTree(sessions) {
+  const byId = new Map(sessions.map(session => [session.id, session]));
+  const rootIds = new Map(), descendants = new Map(), roots = [];
+  for (const session of sessions) {
+    let current = session;
+    const visited = new Set([session.id]);
+    while (current.parentID && byId.has(current.parentID)) {
+      if (visited.has(current.parentID)) { current = session; break; }
+      current = byId.get(current.parentID);
+      visited.add(current.id);
+    }
+    rootIds.set(session.id, current.id);
+  }
+  for (const session of sessions) {
+    const rootId = rootIds.get(session.id);
+    if (rootId === session.id) roots.push(session);
+    else {
+      if (!descendants.has(rootId)) descendants.set(rootId, []);
+      descendants.get(rootId).push(session);
+    }
+  }
+  return { roots, descendants, rootIds, byId };
+}
+
+function workspaceTaskSessionId(part) {
+  if (part?.type !== "tool" || part.tool !== "task") return null;
+  const id = part.state?.metadata?.sessionId || part.state?.metadata?.sessionID;
+  return typeof id === "string" && id.trim() ? id : null;
+}
+
+function workspaceSubagentStatus(sessionId, statuses, requests, task, messages = [], unread = false) {
+  if (requests.some(request => request.sessionID === sessionId)) return { kind: "attention", label: "待确认" };
+  const native = statuses?.[sessionId]?.type;
+  if (native === "retry") return { kind: "busy", label: "重试中" };
+  if (native === "busy") return { kind: "busy", label: "运行中" };
+  const last = messages.filter(message => message.info?.role === "assistant").at(-1)?.info;
+  if (last?.error) return { kind: "error", label: "失败" };
+  if (task?.state?.status === "error") return {
+    kind: task.state.metadata?.interrupted ? "idle" : "error",
+    label: task.state.metadata?.interrupted ? "已停止" : "失败",
+  };
+  if (last?.time?.completed) return { kind: "ready", label: "已完成" };
+  // A completed background task tool only confirms launch, not completion.
+  if ((task?.state?.status === "completed" && !task.state.metadata?.background) || unread)
+    return { kind: "ready", label: "已完成" };
+  if (["pending", "running"].includes(task?.state?.status)) return {
+    kind: "busy", label: task.state.status === "pending" ? "等待中" : "运行中",
+  };
+  return { kind: "idle", label: "空闲" };
 }
 
 const workspaceUnreadCompletions = new Set();
@@ -499,6 +601,8 @@ function renderWorkspace(view) {
   let fileMentionRange = null;
   let lastSessionListRefresh = 0;
   let activeRowMenu = null;
+  let subagentPopover = null;
+  let relatedSessionRequest = 0;
   let followLatest = true;
   let browsingHistory = false;
   let scrollToLatestOnLoad = true;
@@ -512,6 +616,7 @@ function renderWorkspace(view) {
   let changesSignature = "";
   let changesView = null;
   const sendingConversations = new Set();
+  const outgoingMessages = new Map();
   const pendingActions = new Map();
   const pendingImages = new Map();
   const creationDraftDestinations = new Map();
@@ -540,9 +645,10 @@ function renderWorkspace(view) {
     get sending() { return sendingConversations.has(workspaceConversationKey(this.projectId, this.sessionId)); },
     get pendingAction() { return pendingActions.get(workspaceConversationKey(this.projectId, this.sessionId)) || ""; },
     queue: { items: [], paused: false, error: "" }, queueLoaded: false,
-    chosenAgents: new Map(), chosenVariants: new Map(), providers: [], connectedProviders: new Set(), agents: [], commands: [], skills: [], modelLoadError: "", modelSource: "sona", sonaEnvironment: "prod", sonaConnected: null,
+    chosenAgents: new Map(), chosenVariants: new Map(), providers: [], connectedProviders: new Set(), agents: [], commands: [], skills: [], modelLoadError: "", modelSource: "sona", sonaEnvironment: "prod", sonaConnected: null, sonaWebsiteUrl: "",
     collapsedProjects: new Set(), sessionLimits: new Map(), expandedTools: new Map(), actionError: "", compactingSessionId: null,
     attachments: [], fileReferences: [], commandSelectedIndex: 0, fileIndexVersion: 0,
+    sidebarMode: workspaceSelection.projectId === WORKSPACE_CHAT_ID ? "chat" : "project",
     get pendingImageCount() { return pendingImages.get(workspaceConversationKey(this.projectId, this.sessionId))?.count || 0; },
     get pendingImageBytes() { return pendingImages.get(workspaceConversationKey(this.projectId, this.sessionId))?.bytes || 0; },
   };
@@ -552,11 +658,12 @@ function renderWorkspace(view) {
       <aside class="wsp-side" aria-label="项目与对话">
         <div class="wsp-brand"><img class="wsp-brand-mark" src="sona-code-icon.png" alt="" width="34" height="34"><span class="wsp-brand-copy"><strong>Sona Code</strong><small>桌面工作区</small></span><button class="wsp-side-close" id="wsp-side-close" type="button" aria-label="关闭项目栏">${workspaceIcon("close").outerHTML}</button></div>
         <div class="wsp-side-top">
+          <nav class="wsp-scope-switch" aria-label="侧栏内容"><button type="button" data-wsp-scope="project" aria-pressed="true">${workspaceIcon("folderOpen").outerHTML}<span>项目</span></button><button type="button" data-wsp-scope="chat" aria-pressed="false">${workspaceIcon("chat").outerHTML}<span>普通对话</span></button></nav>
           <div class="wsp-side-actions"><button class="wsp-new" id="wsp-new" type="button">${workspaceIcon("plus").outerHTML}<span>新建项目</span></button></div>
           <label class="wsp-search-wrap">${workspaceIcon("search").outerHTML}<input class="wsp-search" id="wsp-search" type="search" placeholder="搜索项目和对话" aria-label="搜索项目和对话"><kbd>⌘K</kbd></label>
         </div>
         <div class="wsp-side-list"><div class="wsp-side-label"><span>项目与对话</span><span class="wsp-side-label-actions"><span id="wsp-project-count"></span></span></div><div id="wsp-projects"></div></div>
-        <div class="wsp-side-bottom"><span class="wsp-account-name" hidden></span><a class="wsp-settings" href="#/preferences" title="打开设置">${workspaceIcon("settings").outerHTML}<span>设置</span></a></div>
+        <div class="wsp-side-bottom"><button type="button" class="wsp-account-avatar" aria-label="更换头像" aria-haspopup="dialog" aria-expanded="false" aria-controls="wsp-avatar-picker"></button><div class="wsp-account-copy"><span class="wsp-account-name">我的工作区</span><small class="wsp-account-description">让想法，从这里开始</small></div><a class="wsp-settings" href="#/preferences" title="打开设置" aria-label="打开设置">${workspaceIcon("settings").outerHTML}</a></div>
       </aside>
       <aside class="wsp-tree" id="wsp-tree" aria-label="项目目录树" hidden>
         <div class="wsp-tree-head"><span class="wsp-tree-heading-icon">${workspaceIcon("folderOpen").outerHTML}</span><strong id="wsp-tree-title">目录树</strong><div class="wsp-tree-position" role="group" aria-label="目录树位置"><button type="button" data-tree-side="left" title="目录树放在左侧" aria-label="目录树放在左侧" aria-pressed="true">${workspaceIcon("panelLeft").outerHTML}</button><button type="button" data-tree-side="right" title="目录树放在右侧" aria-label="目录树放在右侧" aria-pressed="false">${workspaceIcon("panelRight").outerHTML}</button></div><button id="wsp-tree-refresh" type="button" title="刷新目录树" aria-label="刷新目录树">${workspaceIcon("refresh").outerHTML}</button><button id="wsp-tree-close" type="button" title="关闭目录树" aria-label="关闭目录树">${workspaceIcon("close").outerHTML}</button></div>
@@ -567,7 +674,7 @@ function renderWorkspace(view) {
       <div class="wsp-side-scrim" id="wsp-side-scrim"></div>
       <div class="wsp-main">
         <button class="wsp-todo-trigger" id="wsp-todo-trigger" type="button" aria-label="打开任务进度" aria-controls="wsp-todo-panel" aria-expanded="false" title="打开任务进度" hidden>${workspaceIcon("todo").outerHTML}<span>任务进度</span><small id="wsp-todo-trigger-count"></small></button>
-        <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏">${workspaceIcon("panelLeft").outerHTML}</button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title-row"><div class="wsp-title" id="wsp-title">选择项目</div><button class="wsp-locate-session" id="wsp-locate-session" type="button" title="在项目栏中定位当前会话" aria-label="在项目栏中定位当前会话" disabled>${workspaceIcon("locate").outerHTML}</button></div></div><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden>${workspaceIcon("stop").outerHTML}</button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span><button class="wsp-tree-trigger" id="wsp-tree-trigger" type="button" title="打开项目目录树" aria-label="打开项目目录树" aria-controls="wsp-tree" aria-expanded="false">${workspaceIcon("tree").outerHTML}</button></header>
+        <header class="wsp-head"><button class="wsp-menu" id="wsp-menu" type="button" aria-label="打开项目栏">${workspaceIcon("panelLeft").outerHTML}</button><div class="wsp-head-text"><div class="wsp-breadcrumb" id="wsp-breadcrumb">工作区</div><div class="wsp-title-row"><div class="wsp-title" id="wsp-title">选择项目</div><button class="wsp-locate-session" id="wsp-locate-session" type="button" title="在项目栏中定位当前会话" aria-label="在项目栏中定位当前会话" disabled>${workspaceIcon("locate").outerHTML}</button></div></div><button class="wsp-return-projects" id="wsp-return-projects" type="button" hidden>${workspaceIcon("folderOpen").outerHTML}<span>返回项目</span></button><button class="wsp-abort" id="wsp-abort" type="button" title="停止任务" aria-label="停止任务" hidden>${workspaceIcon("stop").outerHTML}</button><span class="wsp-status" id="wsp-status" role="status" aria-label="准备中" title="准备中"></span><button class="wsp-tree-trigger" id="wsp-tree-trigger" type="button" title="打开项目目录树" aria-label="打开项目目录树" aria-controls="wsp-tree" aria-expanded="false">${workspaceIcon("tree").outerHTML}</button></header>
         <nav class="wsp-tabs" aria-label="对话视图"><button class="wsp-tab active" type="button" data-wsp-tab="chat">对话</button><button class="wsp-tab" type="button" data-wsp-tab="changes">文件改动<span class="wsp-tab-count" id="wsp-change-count" aria-label="修改文件数量">0</span></button><button class="wsp-tab" type="button" data-wsp-tab="trajectory">轨迹</button><button class="wsp-tab" type="button" data-wsp-tab="activity">活动</button><button class="wsp-tab" type="button" data-wsp-tab="tasks">任务</button></nav>
         <aside class="wsp-todo-panel" id="wsp-todo-panel" aria-label="当前对话任务进度" hidden><div class="wsp-todo-panel-head"><span class="wsp-todo-panel-icon" aria-hidden="true">${workspaceIcon("todo").outerHTML}</span><div><strong>任务进度</strong><small>当前对话 · OpenCode</small></div><button class="wsp-todo-panel-close" id="wsp-todo-panel-close" type="button" aria-label="关闭任务进度" title="关闭任务进度">${workspaceIcon("close").outerHTML}</button></div><div class="wsp-todo-panel-summary"><span id="wsp-todo-summary"></span><strong id="wsp-todo-progress"></strong></div><div class="wsp-todo-progress-track"><span id="wsp-todo-progress-fill"></span></div><ol class="wsp-todo-panel-list" id="wsp-todo-panel-list"></ol><button class="wsp-todo-panel-link" id="wsp-todo-panel-link" type="button">查看任务页 ${workspaceIcon("open").outerHTML}</button></aside>
         <div class="wsp-chat-body" id="wsp-chat-body">
@@ -586,20 +693,22 @@ function renderWorkspace(view) {
   try { if (localStorage.getItem("sona-code:sidebar-collapsed") === "1") root.classList.add("side-collapsed"); }
   catch (_) { /* Storage may be unavailable. */ }
   const sideList = view.querySelector("#wsp-projects");
-  const sideBottom = view.querySelector(".wsp-side-bottom");
   const accountName = view.querySelector(".wsp-account-name");
+  const avatarPicker = createWorkspaceAvatarPicker(view.querySelector(".wsp-account-avatar"), toast);
+  addCleanup(() => avatarPicker.dispose());
+  const sidebarViews = new Map();
   let accountLoadVersion = 0;
   async function refreshSidebarAccount() {
     const version = ++accountLoadVersion;
     try {
       const source = await api("models/source", { silent: true });
       if (!alive() || version !== accountLoadVersion) return;
-      const loggedIn = source.source === "sona" && source.connected === true;
-      const name = loggedIn ? String(source.user?.userName || source.user?.userId || "当前用户") : "";
-      accountName.textContent = name;
-      accountName.title = name;
-      accountName.hidden = !loggedIn;
-      sideBottom.classList.toggle("has-account", loggedIn);
+      const profile = workspaceAccountProfile(source);
+      accountName.textContent = profile.name;
+      accountName.title = profile.name;
+      view.querySelector(".wsp-account-description").textContent = profile.description;
+      state.sonaWebsiteUrl = (source.environment === "uat" ? source.uat_url : source.prod_url) || "";
+      if (!modelPicker.hidden) renderModelPicker();
     } catch (_) { /* Keep the current footer when account status is unavailable. */ }
   }
   const content = view.querySelector("#wsp-content");
@@ -619,7 +728,73 @@ function renderWorkspace(view) {
   const composerDock = view.querySelector(".wsp-composer-dock");
   composerDock.hidden = state.tab !== "chat";
   const composer = createWorkspaceComposer(input, skillMention, fileMention);
+  const previewTab = el("button", {class: "wsp-tab", type: "button", "data-wsp-tab": "preview",
+    "aria-controls": "wsp-file-preview", text: "文件预览"});
+  view.querySelector('[data-wsp-tab="changes"]').after(previewTab);
+  const previewPane = el("section", {class: "wsp-file-preview", id: "wsp-file-preview",
+    "aria-label": "文件预览", tabindex: "-1", hidden: true});
+  composerDock.before(previewPane);
+  state.filePreview = createWorkspaceFilePreview(previewPane, {
+    load: (projectId, path, signal) => api("workspace/projects/" + encodeURIComponent(projectId) +
+      "/entries/preview?path=" + encodeURIComponent(path), {silent: true, signal}),
+    content: workspacePreviewContent,
+    system: (projectId, path) => openProjectEntry(projectId, path, "default"),
+    reference: path => addTreeReference(path),
+    close: () => leaveFilePreview(),
+    notify: (message, kind) => toast(message, kind),
+  });
+  addCleanup(() => state.filePreview.dispose());
+
+  function enterFilePreview() {
+    if (state.tab !== "preview") {
+      state.previewReturn = {tab: state.tab, top: scroll.scrollTop, browsingHistory, followLatest,
+        projectId: state.projectId, sessionId: state.sessionId, version: messageVersion};
+    }
+    closeChangePopover(); hideAutocomplete();
+    state.tab = "preview";
+    root.classList.remove("show-side");
+    renderHeader(); renderMain(); state.filePreview.focus();
+  }
+
+  function leaveFilePreview(target) {
+    const previous = state.previewReturn;
+    const sameConversation = previous?.projectId === state.projectId && previous?.sessionId === state.sessionId;
+    state.tab = target || (sameConversation ? previous.tab : "chat");
+    state.previewReturn = null;
+    state.filePreview.maximize(false);
+    workspaceSelection.tab = state.tab;
+    const restore = sameConversation && state.tab === previous.tab;
+    if (restore) { browsingHistory = true; followLatest = false; }
+    view.querySelector("#wsp-chat-body").hidden = false;
+    if (restore) scroll.scrollTop = previous.top;
+    renderHeader(); renderMain(!restore && state.tab === "chat");
+    if (restore) {
+      scroll.scrollTop = previous.top;
+      const unchanged = previous.version === messageVersion;
+      browsingHistory = unchanged ? previous.browsingHistory : true;
+      followLatest = unchanged ? previous.followLatest : false;
+      navigation.render(state);
+    }
+    view.querySelector(`[data-wsp-tab="${state.tab}"]`)?.focus({preventScroll: true});
+    if (state.tab !== "chat") refreshSelected();
+  }
+
+  async function openFilePreview(projectId, path) {
+    if (state.projectId !== projectId) return;
+    enterFilePreview();
+    if (window.matchMedia("(max-width: 700px)").matches) tree.close();
+    await state.filePreview.open(projectId, path);
+  }
+
+  async function openProjectEntry(projectId, path, mode) {
+    try {
+      await api("workspace/projects/" + encodeURIComponent(projectId) + "/entries/open?path=" +
+        encodeURIComponent(path) + "&mode=" + mode, {method: "POST", body: {}, silent: true});
+    } catch (error) { toast("打开路径失败：" + detail(error), "error"); }
+  }
+
   async function loadProjectFiles(projectId, force = false) {
+    if (!projectId || projectId === WORKSPACE_CHAT_ID) return {items: []};
     const cached = projectFiles.get(projectId);
     if (cached && !force) return cached.promise;
     const entry = {lookup: new Map(), promise: null};
@@ -639,16 +814,12 @@ function renderWorkspace(view) {
       "/tree?path=" + encodeURIComponent(path), { silent: true }),
     search: async (projectId, query) => {
       const data = await loadProjectFiles(projectId);
-      return {...data, items: workspaceFuzzyFiles(data.items || [], query)};
+      return {...data, items: workspaceFuzzyFiles(data.items || [], query, Infinity)};
     },
     refresh: projectId => { if (projectId) void loadProjectFiles(projectId, true).catch(() => {}); },
     visibility: visible => view.querySelector("#wsp-tree-trigger").setAttribute("aria-expanded", String(visible)),
-    open: async (projectId, path, mode) => {
-      try {
-        await api("workspace/projects/" + encodeURIComponent(projectId) + "/entries/open?path=" +
-          encodeURIComponent(path) + "&mode=" + mode, { method: "POST", body: {}, silent: true });
-      } catch (error) { toast("打开路径失败：" + detail(error), "error"); }
-    },
+    open: openProjectEntry,
+    preview: openFilePreview,
     reference: (path) => addTreeReference(path),
     error: (message) => toast(message, "error"),
   });
@@ -664,6 +835,8 @@ function renderWorkspace(view) {
     tree.open(project);
   }
   function addTreeReference(path) {
+    if (state.tab === "preview") leaveFilePreview("chat");
+    else if (state.tab !== "chat") view.querySelector('[data-wsp-tab="chat"]').click();
     const refs = composer.fileReferences;
     if (state.attachments.length + refs.length >= 8 && !refs.some(item => item.path === path)) {
       toast("一条消息最多添加 8 个附件或文件引用", "error"); return;
@@ -720,6 +893,7 @@ function renderWorkspace(view) {
   const modelPicker = view.querySelector("#wsp-model-picker");
   const modelSearch = view.querySelector("#wsp-model-search");
   const modelList = view.querySelector("#wsp-model-list");
+  modelPicker.append(el("div", { class: "wsp-model-footer", id: "wsp-model-footer" }));
   let modelLoadVersion = 0;
   const agentSelect = view.querySelector("#wsp-agent");
   const agentTrigger = view.querySelector("#wsp-agent-trigger");
@@ -748,6 +922,47 @@ function renderWorkspace(view) {
   let queueDialog = null;
   addCleanup(() => queueDialog?.close());
 
+  const sendButton = view.querySelector("#wsp-send");
+  const sendActions = el("div", { class: "wsp-send-actions" });
+  const sendLabel = el("span", { class: "wsp-send-label", text: "发送" });
+  sendButton.replaceChildren(workspaceIcon("send"), sendLabel);
+  const sendMore = el("button", { type: "button", class: "wsp-send-more", hidden: true,
+    title: "更多发送方式", "aria-label": "更多发送方式", "aria-haspopup": "menu",
+    "aria-expanded": "false", "aria-controls": "wsp-send-menu" }, workspaceIcon("chevronDown"));
+  const queueSend = el("button", { type: "submit", class: "wsp-send-option", role: "menuitem",
+    "data-delivery": "queue", title: "加入队列 · Alt+Enter" }, workspaceIcon("queue"),
+    el("span", {}, el("strong", { text: "加入队列" }), el("small", { text: "本轮结束后发送" })),
+    el("kbd", { text: "Alt ↵" }));
+  const sendMenu = el("div", { class: "wsp-send-menu", id: "wsp-send-menu", role: "menu",
+    "aria-label": "发送方式", hidden: true }, queueSend);
+  sendButton.before(sendActions);
+  sendActions.append(sendButton, sendMore, sendMenu);
+  function closeSendMenu(focus = false) {
+    sendMenu.hidden = true;
+    sendMore.setAttribute("aria-expanded", "false");
+    if (focus) sendMore.focus();
+  }
+  sendMore.addEventListener("click", () => {
+    sendMenu.hidden = !sendMenu.hidden;
+    sendMore.setAttribute("aria-expanded", String(!sendMenu.hidden));
+    if (!sendMenu.hidden) queueSend.focus();
+  });
+  sendMore.addEventListener("keydown", event => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault(); sendMenu.hidden = false;
+      sendMore.setAttribute("aria-expanded", "true"); queueSend.focus();
+    }
+  });
+  sendActions.addEventListener("keydown", event => {
+    if (event.key === "Escape" && !sendMenu.hidden) { event.preventDefault(); closeSendMenu(true); }
+  });
+  sendActions.addEventListener("focusout", event => {
+    if (!sendActions.contains(event.relatedTarget)) closeSendMenu();
+  });
+  const dismissSendMenu = event => { if (!sendActions.contains(event.target)) closeSendMenu(); };
+  document.addEventListener("pointerdown", dismissSendMenu);
+  addCleanup(() => document.removeEventListener("pointerdown", dismissSendMenu));
+
   function waitingForReply() {
     const status = state.statuses?.[state.sessionId]?.type;
     return compactionRunning() || status === "busy" || status === "retry" ||
@@ -760,6 +975,32 @@ function renderWorkspace(view) {
     queueUpdateVersion++;
     state.queueLoaded = true;
     renderHeader();
+  }
+
+  function conversationMessages() {
+    if (!outgoingMessages.size) return state.messages;
+    const key = workspaceConversationKey(state.projectId, state.sessionId);
+    const outgoing = [...outgoingMessages.values()].filter(item => item.key === key);
+    const projection = workspaceOutgoingProjection(state.messages, outgoing);
+    for (const id of projection.confirmed) outgoingMessages.delete(id);
+    return projection.messages;
+  }
+
+  function restoreOutgoingDraft(item) {
+    const selected = item.key === workspaceConversationKey(state.projectId, state.sessionId);
+    if (selected) {
+      if (composer.value || state.attachments.length || composer.fileReferences.length) return false;
+      composer.restore(item.draft);
+      state.attachments = item.draft.attachments.map(attachment => ({ ...attachment }));
+      state.fileReferences = composer.fileReferences;
+      updateSkillInput(); renderAttachments(); saveDraft();
+    } else {
+      const saved = workspaceReadDraft(item.key);
+      if (saved?.text || saved?.attachments?.length) return false;
+      workspaceWriteDraft(item.key, item.draft);
+    }
+    outgoingMessages.delete(item.id);
+    return true;
   }
 
   async function queueAction(suffix, method, body) {
@@ -886,6 +1127,89 @@ function renderWorkspace(view) {
     const day = sameDay(date, today) ? "今天" : sameDay(date, yesterday) ? "昨天" : date.toLocaleDateString("zh-CN", { month: "long", day: "numeric" });
     return `更新于${day} ${date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
   }
+
+  const sessionTooltip = el("div", { class: "wsp-session-tooltip", id: "wsp-session-tooltip", role: "tooltip", hidden: true });
+  view.append(sessionTooltip);
+  let sessionTooltipTarget = null;
+  let sessionTooltipTimer = null;
+  function hideSessionTooltip() {
+    clearTimeout(sessionTooltipTimer);
+    sessionTooltipTimer = null;
+    sessionTooltipTarget?.removeAttribute("aria-describedby");
+    sessionTooltipTarget = null;
+    sessionTooltip.hidden = true;
+  }
+  function showSessionTooltip(button, immediate = false) {
+    if (button === sessionTooltipTarget && (!immediate || !sessionTooltip.hidden)) return;
+    hideSessionTooltip();
+    sessionTooltipTarget = button;
+    const show = () => {
+      sessionTooltipTimer = null;
+      if (!button.isConnected || !button.getClientRects().length || activeRowMenu || subagentPopover) {
+        hideSessionTooltip(); return;
+      }
+      const info = button.workspaceSessionDetails;
+      if (!info) return;
+      const fields = [["项目", info.project], ["状态", info.status]];
+      if (info.children) fields.push(["子代理", `${info.children} 个`]);
+      if (info.parent) fields.push(["主会话", info.parent]);
+      for (const [label, value] of [["创建", info.time?.created], ["更新", info.time?.updated]]) {
+        const date = new Date(value);
+        if (value && !Number.isNaN(date.getTime())) fields.push([label, date.toLocaleString("zh-CN", { hour12: false })]);
+      }
+      sessionTooltip.replaceChildren(el("strong", { text: info.title }), ...fields.map(([label, text]) =>
+        el("div", { class: "wsp-session-tooltip-field" }, el("span", { text: label }), el("span", { text }))));
+      sessionTooltip.hidden = false;
+      button.setAttribute("aria-describedby", sessionTooltip.id);
+      const anchor = button.closest(".wsp-thread-row").getBoundingClientRect();
+      const bounds = sessionTooltip.getBoundingClientRect();
+      const beside = window.innerWidth - anchor.right >= bounds.width + 16;
+      sessionTooltip.style.left = `${Math.max(8, Math.min(beside ? anchor.right + 9 : anchor.left,
+        window.innerWidth - bounds.width - 8))}px`;
+      const top = beside ? anchor.top : anchor.bottom + bounds.height + 16 <= window.innerHeight
+        ? anchor.bottom + 7 : anchor.top - bounds.height - 7;
+      sessionTooltip.style.top = `${Math.max(8, Math.min(top, window.innerHeight - bounds.height - 8))}px`;
+    };
+    if (immediate) show();
+    else sessionTooltipTimer = setTimeout(show, 350);
+  }
+  const sessionTooltipOver = event => {
+    if (event.pointerType === "touch") return;
+    const button = event.target.closest(".wsp-thread");
+    if (button) showSessionTooltip(button);
+  };
+  const sessionTooltipOut = event => {
+    if (sessionTooltipTarget && !sessionTooltipTarget.contains(event.relatedTarget)) hideSessionTooltip();
+  };
+  const sessionTooltipFocus = event => {
+    const button = event.target.closest(".wsp-thread");
+    if (button) showSessionTooltip(button, true);
+  };
+  const sessionTooltipEscape = event => { if (event.key === "Escape") hideSessionTooltip(); };
+  const sessionTooltipScroll = view.querySelector(".wsp-side-list");
+  sideList.addEventListener("pointerover", sessionTooltipOver);
+  sideList.addEventListener("pointerout", sessionTooltipOut);
+  sideList.addEventListener("focusin", sessionTooltipFocus);
+  sideList.addEventListener("focusout", sessionTooltipOut);
+  document.addEventListener("pointerdown", hideSessionTooltip);
+  sideList.addEventListener("click", hideSessionTooltip);
+  sideList.addEventListener("dragstart", hideSessionTooltip);
+  sessionTooltipScroll.addEventListener("scroll", hideSessionTooltip, { passive: true });
+  window.addEventListener("resize", hideSessionTooltip);
+  document.addEventListener("keydown", sessionTooltipEscape);
+  addCleanup(() => {
+    hideSessionTooltip(); sessionTooltip.remove();
+    sideList.removeEventListener("pointerover", sessionTooltipOver);
+    sideList.removeEventListener("pointerout", sessionTooltipOut);
+    sideList.removeEventListener("focusin", sessionTooltipFocus);
+    sideList.removeEventListener("focusout", sessionTooltipOut);
+    document.removeEventListener("pointerdown", hideSessionTooltip);
+    sideList.removeEventListener("click", hideSessionTooltip);
+    sideList.removeEventListener("dragstart", hideSessionTooltip);
+    sessionTooltipScroll.removeEventListener("scroll", hideSessionTooltip);
+    window.removeEventListener("resize", hideSessionTooltip);
+    document.removeEventListener("keydown", sessionTooltipEscape);
+  });
   function compactionRunning() {
     if (!state.sessionId) return false;
     if (state.compactingSessionId === state.sessionId) return true;
@@ -951,6 +1275,24 @@ function renderWorkspace(view) {
     composer.setSelectionRange(composer.value.length);
   }
 
+  function sessionCanFork(projectId, sessionId) {
+    const key = workspaceConversationKey(projectId, sessionId);
+    const status = state.projectStatuses.get(projectId)?.[sessionId]?.type;
+    if (!sessionId || sessionId.startsWith("creating:") || sendingConversations.has(key) ||
+        (status && status !== "idle")) return false;
+    const current = state.projectId === projectId && state.sessionId === sessionId;
+    const cached = current ? state : conversationViews.get(key);
+    if (current && (!state.messagesLoaded || waitingForReply())) return false;
+    if (cached?.queue?.items?.length) return false;
+    const messages = cached?.messages || [];
+    const lastUser = messages.findLastIndex(message => message.info?.role === "user");
+    return lastUser < 0 || messages.slice(lastUser + 1).some(message => {
+      const info = message.info;
+      return info?.role === "assistant" && (info.error ||
+        (info.time?.completed && !["tool-calls", "unknown"].includes(info.finish)));
+    });
+  }
+
   function messageActions(message) {
     const projectId = state.projectId;
     const sessionId = state.sessionId;
@@ -967,7 +1309,7 @@ function renderWorkspace(view) {
     actions.append(copy);
     if (info.role === "assistant") {
       const fork = actionButton("在新对话中分支", "fork", async () => {
-        if (fork.disabled) return;
+        if (fork.disabled || !sessionCanFork(projectId, sessionId)) return;
         fork.disabled = true;
         try {
           const session = await api(`${sessionPath(projectId, sessionId)}/fork`, {
@@ -977,13 +1319,14 @@ function renderWorkspace(view) {
           if (!session?.id) throw new Error("未返回分支会话 ID");
           const items = state.sessions.get(projectId) || [];
           state.sessions.set(projectId, [session, ...items.filter((item) => item.id !== session.id)]);
+          applyLatestModel(projectId, session.id);
           selectSession(projectId, session.id);
           input.focus();
           toast("已创建会话分支");
         } catch (error) { toast("创建分支失败：" + detail(error), "error"); }
-        finally { fork.disabled = !info.id; }
+        finally { fork.disabled = !info.id || !sessionCanFork(projectId, sessionId); }
       });
-      fork.disabled = !info.id;
+      fork.disabled = !info.id || !sessionCanFork(projectId, sessionId);
       actions.append(fork);
     }
     if (info.role === "user" && info.id === lastUserMessage()?.info.id) {
@@ -1337,7 +1680,11 @@ function renderWorkspace(view) {
     if (action === "delete" && !await confirmDeletion("删除对话", `确定删除对话“${sessionTitle(session)}”及其全部消息？此操作无法撤销。`)) return;
     try {
       if (action === "fork") {
+        if (!sessionCanFork(projectId, session.id)) {
+          toast("请等待当前会话回复和消息队列完成后再创建分支", "error"); return;
+        }
         const fork = await api(`${base}/fork`, { method: "POST", body: {}, silent: true });
+        applyLatestModel(projectId, fork.id);
         await loadSessions(state.projects.find((item) => item.id === projectId));
         selectSession(projectId, fork.id);
         return;
@@ -1426,6 +1773,186 @@ function renderWorkspace(view) {
     });
   }
 
+  function knownSession(projectId, sessionId) {
+    return state.sessionDetails.get(workspaceConversationKey(projectId, sessionId)) ||
+      (state.sessions.get(projectId) || []).find(session => session.id === sessionId);
+  }
+
+  async function openRelatedSession(projectId, sessionId) {
+    closeSubagentPopover();
+    const request = ++relatedSessionRequest;
+    if (!knownSession(projectId, sessionId)) {
+      try {
+        const session = await api(sessionPath(projectId, sessionId), { silent: true });
+        if (!alive() || request !== relatedSessionRequest) return;
+        if (!session?.id || session.id !== sessionId) throw new Error("未找到会话");
+        state.sessionDetails.set(workspaceConversationKey(projectId, sessionId), session);
+      } catch (error) {
+        if (alive() && request === relatedSessionRequest) toast(`无法打开会话：${detail(error)}`, "error");
+        return;
+      }
+    }
+    if (alive() && request === relatedSessionRequest) selectSession(projectId, sessionId);
+  }
+
+  function subagentStatus(projectId, sessionId) {
+    const currentProject = state.projectId === projectId;
+    const messages = currentProject ? state.messages : [];
+    const cached = conversationViews.get(workspaceConversationKey(projectId, sessionId));
+    let task = null;
+    for (const [key, entry] of conversationViews) for (const message of entry.messages || []) {
+      if (JSON.parse(key)[0] !== projectId) continue;
+      for (const part of message.parts || []) if (workspaceTaskSessionId(part) === sessionId) task = part;
+    }
+    for (const message of messages) for (const part of message.parts || [])
+      if (workspaceTaskSessionId(part) === sessionId) task = part;
+    return workspaceSubagentStatus(sessionId, state.projectStatuses.get(projectId),
+      currentProject ? [...state.permissions, ...state.questions] : [], task,
+      currentProject && state.sessionId === sessionId ? messages : cached?.messages || [],
+      workspaceUnreadCompletions.has(workspaceConversationKey(projectId, sessionId)));
+  }
+
+  function subagentSummary(projectId, children) {
+    const counts = { busy: 0, attention: 0, error: 0 };
+    for (const child of children) {
+      const status = subagentStatus(projectId, child.id);
+      if (status.kind in counts) counts[status.kind]++;
+    }
+    const labels = [];
+    if (counts.busy) labels.push(`${counts.busy} 运行中`);
+    if (counts.attention) labels.push(`${counts.attention} 待确认`);
+    if (counts.error) labels.push(`${counts.error} 失败`);
+    return { counts, label: labels.join(" · ") || "查看执行记录" };
+  }
+
+  function subagentEntries(projectId, parentId) {
+    const sessions = [...(state.sessions.get(projectId) || [])];
+    // Tasks may announce their child before the next session-list refresh.
+    for (const [key, session] of state.sessionDetails) {
+      if (JSON.parse(key)[0] === projectId && !session.time?.archived && !sessions.some(item => item.id === session.id))
+        sessions.push(session);
+    }
+    return workspaceSessionTree(sessions).descendants.get(parentId) || [];
+  }
+
+  function closeSubagentPopover(restoreFocus = false) {
+    if (!subagentPopover) return;
+    const { panel, trigger } = subagentPopover;
+    subagentPopover = null;
+    closeRowMenus();
+    panel.remove();
+    trigger.setAttribute("aria-expanded", "false");
+    if (restoreFocus && trigger.isConnected) trigger.focus({ preventScroll: true });
+  }
+
+  function positionSubagentPopover() {
+    if (!subagentPopover) return;
+    const { panel, trigger } = subagentPopover;
+    if (!trigger.isConnected || !trigger.getClientRects().length) { closeSubagentPopover(); return; }
+    const anchor = trigger.getBoundingClientRect();
+    panel.style.maxHeight = `${Math.min(420, Math.max(80, window.innerHeight - 16))}px`;
+    const bounds = panel.getBoundingClientRect();
+    const top = window.innerHeight - anchor.bottom >= bounds.height + 13
+      ? anchor.bottom + 5 : anchor.top - bounds.height - 5;
+    panel.style.left = `${Math.max(8, Math.min(anchor.left, window.innerWidth - bounds.width - 8))}px`;
+    panel.style.top = `${Math.max(8, Math.min(top, window.innerHeight - bounds.height - 8))}px`;
+  }
+
+  function renderSubagentPopover() {
+    if (!subagentPopover) return;
+    const { projectId, parentId, list, title, summary, rows } = subagentPopover;
+    const children = subagentEntries(projectId, parentId);
+    if (!children.length) { closeSubagentPopover(); return; }
+    title.textContent = `子代理 · ${children.length}`;
+    summary.textContent = subagentSummary(projectId, children).label;
+    const nodes = [];
+    for (const child of children) {
+      let row = rows.get(child.id);
+      if (!row) {
+        const name = el("span", { class: "wsp-subagent-name" });
+        const label = el("span", { class: "wsp-subagent-state" });
+        const button = el("button", { class: "wsp-subagent-item", type: "button",
+          onclick: () => { void openRelatedSession(projectId, child.id); } }, name, label);
+        row = { node: el("div", { class: "wsp-subagent-row" }, button), button, name, label, icon: null };
+        rows.set(child.id, row);
+      }
+      const status = subagentStatus(projectId, child.id);
+      row.name.textContent = sessionTitle(child);
+      row.button.title = `${sessionTitle(child)} · ${status.label}`;
+      row.button.classList.toggle("active", projectId === state.projectId && child.id === state.sessionId);
+      if (projectId === state.projectId && child.id === state.sessionId) row.button.setAttribute("aria-current", "page");
+      else row.button.removeAttribute("aria-current");
+      row.label.textContent = status.label;
+      row.label.className = `wsp-subagent-state ${status.kind}`;
+      if (row.kind !== status.kind) {
+        row.icon?.remove();
+        row.icon = el("span", { class: "wsp-subagent-icon" }, workspaceIcon("agent"));
+        row.button.prepend(row.icon);
+        row.kind = status.kind;
+      }
+      // Menus retain rename/fork/delete for sessions no longer shown in the sidebar.
+      row.session = child;
+      if (!row.menu) {
+        row.menu = rowMenu([["重命名", () => performSessionAction(projectId, row.session, "rename")],
+          ["分叉会话", () => performSessionAction(projectId, row.session, "fork")],
+          ["删除", () => performSessionAction(projectId, row.session, "delete")]]);
+        row.node.append(row.menu);
+      }
+      nodes.push(row.node);
+    }
+    const focused = document.activeElement;
+    workspaceSyncChildren(list, nodes);
+    for (const [id, row] of rows) if (!children.some(child => child.id === id)) {
+      if (row.node.contains(focused)) subagentPopover.trigger.focus({ preventScroll: true });
+      rows.delete(id);
+    }
+    positionSubagentPopover();
+  }
+
+  function toggleSubagentPopover(projectId, parentId, trigger) {
+    const open = subagentPopover?.trigger !== trigger;
+    closeSubagentPopover();
+    if (!open) return;
+    const title = el("strong");
+    const summary = el("div", { class: "wsp-subagent-summary" });
+    const list = el("div", { class: "wsp-subagent-list" });
+    const panel = el("section", { class: "wsp-subagent-popover", id: "wsp-subagent-popover",
+      role: "dialog", "aria-label": `子代理 · ${sessionTitle(knownSession(projectId, parentId))}` },
+      el("div", { class: "wsp-subagent-head" }, title,
+        el("button", { type: "button", "aria-label": "关闭子代理列表",
+          onclick: () => closeSubagentPopover(true) }, workspaceIcon("close"))), summary, list);
+    subagentPopover = { projectId, parentId, trigger, panel, title, summary, list, rows: new Map() };
+    trigger.setAttribute("aria-expanded", "true");
+    document.body.append(panel);
+    renderSubagentPopover();
+    list.querySelector(".wsp-subagent-item.active, .wsp-subagent-item")?.focus({ preventScroll: true });
+  }
+
+  function syncSidebarScope(projectId) {
+    const mode = projectId === WORKSPACE_CHAT_ID ? "chat" : "project";
+    if (mode === state.sidebarMode) return;
+    sidebarViews.set(state.sidebarMode, {projectId: state.projectId, sessionId: state.sessionId,
+      tab: state.tab, search: state.search, top: view.querySelector(".wsp-side-list").scrollTop});
+    state.sidebarMode = mode;
+    state.search = sidebarViews.get(mode)?.search || "";
+    view.querySelector("#wsp-search").value = state.search;
+  }
+
+  function switchSidebarScope(mode) {
+    if (mode === state.sidebarMode) return;
+    const saved = sidebarViews.get(mode);
+    const project = state.projects.find(item => item.id === saved?.projectId) ||
+      state.projects.find(item => mode === "chat" ? workspaceIsChat(item) : !workspaceIsChat(item));
+    if (project && saved?.projectId === project.id && (!saved.sessionId ||
+        state.sessions.get(project.id)?.some(item => item.id === saved.sessionId))) {
+      selectSession(project.id, saved.sessionId || null);
+      state.tab = saved.tab === "preview" ? "chat" : saved.tab || "chat";
+      workspaceSelection.tab = state.tab; persistWorkspaceSelection();
+      renderHeader(); renderMain();
+    } else selectProject(project?.id || null);
+    view.querySelector(".wsp-side-list").scrollTop = saved?.top || 0;
+  }
+
   let locatingSession = false;
   let locatedRow = null;
   let locateTimer = null;
@@ -1443,11 +1970,13 @@ function renderWorkspace(view) {
       // A child conversation can be opened from a task before list polling sees it.
       if (!sessions.some(item => item.id === sessionId) && session && !session.time?.archived)
         sessions.push(session);
-      const index = sessions.findIndex(item => item.id === sessionId);
+      const tree = workspaceSessionTree(sessions);
+      const rootId = tree.rootIds.get(sessionId);
+      const index = tree.roots.findIndex(item => item.id === rootId);
       if (index < 0) { toast("未找到当前会话，请刷新项目列表", "error"); return; }
       const query = state.search.trim().toLocaleLowerCase();
       if (query && !project.name.toLocaleLowerCase().includes(query) &&
-          !sessionTitle(sessions[index]).toLocaleLowerCase().includes(query)) {
+          !sessionTitle(tree.byId.get(sessionId)).toLocaleLowerCase().includes(query)) {
         state.search = ""; view.querySelector("#wsp-search").value = "";
       }
       state.collapsedProjects.delete(projectId);
@@ -1458,7 +1987,9 @@ function renderWorkspace(view) {
         try { localStorage.setItem("sona-code:sidebar-collapsed", "0"); } catch (_) {}
       }
       updateSidebarButton(); renderSidebar();
-      const row = sidebarRows.get(workspaceConversationKey(projectId, sessionId))?.button;
+      const currentRow = sidebarRows.get(workspaceConversationKey(projectId, sessionId));
+      const parentRow = sidebarRows.get(workspaceConversationKey(projectId, rootId));
+      const row = currentRow?.button?.isConnected ? currentRow.button : parentRow?.button;
       if (!row?.isConnected) return;
       const container = view.querySelector(".wsp-side-list");
       const rect = row.getBoundingClientRect(), area = container.getBoundingClientRect();
@@ -1468,7 +1999,11 @@ function renderWorkspace(view) {
       locatedRow = row;
       row.classList.add("wsp-thread-located");
       locateTimer = setTimeout(() => { locatedRow?.classList.remove("wsp-thread-located"); locatedRow = null; }, 1200);
-      row.focus({preventScroll: true});
+      if (rootId !== sessionId && !currentRow?.button?.isConnected && parentRow?.subagentTrigger) {
+        if (subagentPopover?.trigger !== parentRow.subagentTrigger)
+          toggleSubagentPopover(projectId, rootId, parentRow.subagentTrigger);
+        else subagentPopover.list.querySelector(".wsp-subagent-item.active")?.focus({ preventScroll: true });
+      } else row.focus({preventScroll: true});
     } finally { locatingSession = false; }
   }
   view.querySelector("#wsp-locate-session").addEventListener("click", () => { void locateCurrentSession(); });
@@ -1479,16 +2014,29 @@ function renderWorkspace(view) {
     const sections = [];
     const sectionKeys = new Set();
     const rowKeys = new Set();
-    view.querySelector("#wsp-project-count").textContent = `${state.projects.length} 个项目`;
+    const visibleProjects = state.projects.filter(project => state.sidebarMode === "chat" ? project.id === "chat" : project.id !== "chat");
+    view.querySelector("#wsp-project-count").textContent = state.sidebarMode === "chat"
+      ? `${state.sessions.get(WORKSPACE_CHAT_ID)?.length || 0} 段对话` : `${visibleProjects.length} 个项目`;
+    view.querySelector(".wsp-side-label > span").textContent = state.sidebarMode === "chat" ? "普通对话" : "我的项目";
+    view.querySelector("#wsp-new span").textContent = state.sidebarMode === "chat" ? "新建对话" : "新建项目";
+    const searchInput = view.querySelector("#wsp-search");
+    searchInput.placeholder = state.sidebarMode === "chat" ? "搜索普通对话" : "搜索项目和项目对话";
+    searchInput.setAttribute("aria-label", searchInput.placeholder);
+    view.querySelectorAll("[data-wsp-scope]").forEach(button =>
+      button.setAttribute("aria-pressed", String(button.dataset.wspScope === (state.sidebarMode || "project"))));
     const query = state.search.trim().toLocaleLowerCase();
     let visible = 0;
-    for (const project of state.projects) {
+    for (const project of visibleProjects) {
+      const chat = project.id === "chat";
       const all = state.sessions.get(project.id);
       const projectMatches = project.name.toLocaleLowerCase().includes(query);
-      const sessions = (all || []).filter((session) => !query || projectMatches || sessionTitle(session).toLocaleLowerCase().includes(query));
+      const tree = workspaceSessionTree(all || []);
+      const matches = session => !query || projectMatches || sessionTitle(session).toLocaleLowerCase().includes(query);
+      const sessions = tree.roots.filter(session => matches(session) ||
+        (tree.descendants.get(session.id) || []).some(matches));
       if (query && !projectMatches && !sessions.length) continue;
       visible++;
-      const collapsed = state.collapsedProjects.has(project.id) && !query;
+      const collapsed = !chat && state.collapsedProjects.has(project.id) && !query;
       sectionKeys.add(project.id);
       let cached = sidebarSections.get(project.id);
       if (!cached) {
@@ -1496,7 +2044,7 @@ function renderWorkspace(view) {
         sidebarSections.set(project.id, cached);
       }
       const {section, threads} = cached;
-      section.className = "wsp-project" + (collapsed ? " collapsed" : "");
+      section.className = "wsp-project" + (chat ? " wsp-chat-section" : "") + (collapsed ? " collapsed" : "");
       const heading = el("button", { class: "wsp-project-head", type: "button", title: project.path,
         "aria-expanded": String(!collapsed), onclick: () => {
           state.sessionLimits.delete(project.id);
@@ -1508,7 +2056,7 @@ function renderWorkspace(view) {
         } },
         el("span", { class: "wsp-project-mark", text: workspaceProjectMark(project.name) }),
         el("span", { class: "wsp-project-name", text: project.name }),
-        el("span", { class: "wsp-project-count", text: all ? String(all.length) :
+        el("span", { class: "wsp-project-count", text: all ? String(tree.roots.length) :
           Number.isInteger(project.session_count) ? String(project.session_count) : "…" }));
       const projectRow = el("div", { class: "wsp-project-row" }, heading,
         rowMenu([["重命名", () => openRenameProject(project)], ["打开目录", () => openProjectDirectory(project)],
@@ -1521,9 +2069,9 @@ function renderWorkspace(view) {
           title: `在 ${project.name} 中新建对话`, "aria-label": `在 ${project.name} 中新建对话`,
           onclick: () => { state.collapsedProjects.delete(project.id); renderSidebar(); createSession(project.id); } }, workspaceIcon("plus")));
       bindSidebarDrag(projectRow, "project", project.id, project.id);
-      const projectUnread = collapsed && [...workspaceUnreadCompletions].some(key => JSON.parse(key)[0] === project.id);
+      const projectUnread = collapsed && tree.roots.some(session => workspaceUnreadCompletions.has(workspaceConversationKey(project.id, session.id)));
       if (projectUnread) heading.append(unreadIndicator("项目内有任务已完成，尚未查看"));
-      const projectRunning = collapsed && Object.values(state.projectStatuses.get(project.id) || {}).some(status => ["busy", "retry"].includes(status?.type));
+      const projectRunning = collapsed && tree.roots.some(session => ["busy", "retry"].includes(state.projectStatuses.get(project.id)?.[session.id]?.type));
       if (projectRunning && !cached.indicator) cached.indicator = el("span", {
         class: "wsp-thread-running", role: "img", "aria-label": "项目内有任务正在运行", title: "项目内有任务正在运行",
       }, statusIcon("busy"));
@@ -1537,8 +2085,10 @@ function renderWorkspace(view) {
       } else if (all && !sessions.length) {
         threadNodes.push(el("div", { class: "wsp-thread-time", text: query ? "无匹配对话" : "暂无对话" }));
       }
-      const limit = state.sessionLimits.get(project.id) || 6;
-      for (const session of sessions.slice(0, limit)) {
+      const limit = state.sessionLimits.get(project.id) || (chat ? 30 : 6);
+      const displayed = sessions.slice(0, limit).flatMap(session => [session,
+        ...(query ? (tree.descendants.get(session.id) || []).filter(matches) : [])]);
+      for (const session of displayed) {
         const status = state.projectStatuses.get(project.id)?.[session.id];
         const running = ["busy", "retry"].includes(status?.type);
         const key = workspaceConversationKey(project.id, session.id);
@@ -1554,22 +2104,29 @@ function renderWorkspace(view) {
           bindSidebarDrag(row.button, "session", project.id, session.id);
           sidebarRows.set(key, row);
         }
-        row.button.className = "wsp-thread" + (session.parentID ? " child" : "") +
+        const rootId = tree.rootIds.get(session.id);
+        const child = rootId !== session.id;
+        const children = tree.descendants.get(session.id) || [];
+        row.button.className = "wsp-thread" + (child ? " subagent-search" : "") +
           (project.id === state.projectId && session.id === state.sessionId ? " active" : "");
-        row.button.title = sessionTitle(session);
-        row.title.textContent = `${session.parentID ? "↳ " : ""}${sessionTitle(session)}`;
-        row.preview.textContent = stamp(session);
-        const unread = workspaceUnreadCompletions.has(key);
+        row.button.setAttribute("aria-label", sessionTitle(session));
+        row.title.textContent = `${child ? "↳ " : ""}${sessionTitle(session)}`;
+        row.preview.textContent = child ? `来自 ${sessionTitle(tree.byId.get(rootId))} · ${subagentStatus(project.id, session.id).label}` : "";
+        row.preview.hidden = !child;
+        const unread = !child && workspaceUnreadCompletions.has(key);
+        row.button.workspaceSessionDetails = { title: sessionTitle(session), project: project.name, time: session.time,
+          status: child ? subagentStatus(project.id, session.id).label : running ? (status.type === "retry" ? "重试中" : "运行中") : unread ? "已完成未读" : "空闲",
+          children: children.length, parent: child ? sessionTitle(tree.byId.get(rootId)) : "" };
         if (unread && !row.unread) {
           row.unread = unreadIndicator("任务已完成，尚未查看");
           row.button.append(row.unread);
         } else if (!unread && row.unread) {
           row.unread.remove(); row.unread = null;
         }
-        if (running && !row.indicator) {
+        if (running && !child && !row.indicator) {
           row.indicator = el("span", {class: "wsp-thread-running", role: "img"}, statusIcon("busy"));
           row.button.append(row.indicator);
-        } else if (!running && row.indicator) {
+        } else if ((!running || child) && row.indicator) {
           row.indicator.remove(); row.indicator = null;
         }
         if (row.indicator) {
@@ -1580,7 +2137,34 @@ function renderWorkspace(view) {
         const menu = rowMenu([["重命名", () => performSessionAction(project.id, session, "rename")],
           ["分叉会话", () => performSessionAction(project.id, session, "fork")],
           ["删除", () => performSessionAction(project.id, session, "delete")]]);
-        workspaceSyncChildren(row.node, [row.button, menu]);
+        if (children.length) {
+          if (!row.subagentTrigger) row.subagentTrigger = el("button", {
+            class: "wsp-subagent-badge", type: "button", "aria-haspopup": "dialog", "aria-expanded": "false",
+            "aria-controls": "wsp-subagent-popover", onclick: () => toggleSubagentPopover(project.id, session.id, row.subagentTrigger),
+          }, el("span", { class: "wsp-subagent-badge-icon" }, workspaceIcon("agent")),
+          el("span", { class: "wsp-subagent-count" }));
+          const summary = subagentSummary(project.id, children);
+          const selected = project.id === state.projectId && children.some(child => child.id === state.sessionId);
+          row.subagentTrigger.querySelector(".wsp-subagent-count").textContent = String(children.length);
+          row.subagentTrigger.title = `子代理 · ${children.length} · ${summary.label}`;
+          row.subagentTrigger.setAttribute("aria-label", row.subagentTrigger.title);
+          row.subagentTrigger.className = "wsp-subagent-badge" + (selected ? " active" : "") +
+            (summary.counts.attention ? " attention" : summary.counts.error ? " error" : "");
+          if (row.subagentKind !== "idle") {
+            row.subagentTrigger.querySelector(".wsp-subagent-badge-icon").replaceChildren(
+              workspaceIcon("agent"));
+            row.subagentKind = "idle";
+          }
+          if (subagentPopover?.trigger === row.subagentTrigger) row.subagentTrigger.setAttribute("aria-expanded", "true");
+          row.node.className = "wsp-thread-row has-subagents" + (selected ? " parent-active" : "");
+        } else {
+          if (row.subagentTrigger && subagentPopover?.trigger === row.subagentTrigger) closeSubagentPopover();
+          row.subagentTrigger = null; row.subagentUnread = null;
+          row.subagentKind = null;
+          row.node.className = "wsp-thread-row";
+        }
+        if (project.id === state.projectId && session.id === state.sessionId) row.node.className += " selected";
+        workspaceSyncChildren(row.node, [row.button, ...(row.subagentTrigger ? [row.subagentTrigger] : []), menu]);
         threadNodes.push(row.node);
       }
       if (sessions.length > limit) {
@@ -1594,24 +2178,45 @@ function renderWorkspace(view) {
           ? unreadIndicator("更多会话中有已完成的任务，尚未查看") : null));
       }
       workspaceSyncChildren(threads, threadNodes);
-      workspaceSyncChildren(section, [projectRow, ...(cached.indicator ? [cached.indicator] : []), threads]);
+      workspaceSyncChildren(section, [...(chat ? [] : [projectRow]), ...(cached.indicator ? [cached.indicator] : []), threads]);
       sections.push(section);
     }
     if (query && !visible) sections.push(el("p", { class: "wsp-empty-search", text: "没有找到匹配的项目或对话。" }));
-    else if (!state.projects.length) sections.push(el("div", { class: "wsp-empty", style: "min-height:200px" },
-      el("p", { text: "还没有项目。点击上方按钮选择已有目录。" })));
+    else if (!visibleProjects.length) sections.push(el("div", { class: "wsp-empty", style: "min-height:200px" },
+      el("p", { text: state.sidebarMode === "chat" ? "正在读取普通对话…" : "还没有项目。点击上方按钮选择已有目录。" })));
     workspaceSyncChildren(sideList, sections);
     for (const key of sidebarSections.keys()) if (!sectionKeys.has(key)) sidebarSections.delete(key);
     for (const key of sidebarRows.keys()) if (!rowKeys.has(key)) sidebarRows.delete(key);
+    if (subagentPopover) renderSubagentPopover();
   }
 
   function renderHeader() {
     const project = activeProject();
+    const chat = project?.id === "chat";
+    view.querySelector("#wsp-tree-trigger").hidden = chat;
+    view.querySelector("#wsp-return-projects").hidden = !chat;
+    view.querySelectorAll(".wsp-tab").forEach(button => {
+      button.hidden = chat && ["changes", "tasks", "preview"].includes(button.dataset.wspTab);
+    });
+    agentTrigger.disabled = chat;
     const session = activeSession();
     view.querySelector("#wsp-tree-trigger").disabled = !project;
     view.querySelector("#wsp-locate-session").disabled = !project || !state.sessionId;
-    view.querySelector("#wsp-breadcrumb").textContent = project ? `${project.name} / 对话记录` : "工作区";
-    view.querySelector("#wsp-title").textContent = session ? sessionTitle(session) : (project ? "新建或选择对话" : "选择项目");
+    const breadcrumb = view.querySelector("#wsp-breadcrumb");
+    if (session?.parentID && project) {
+      const parent = knownSession(project.id, session.parentID);
+      const key = JSON.stringify([project.id, project.name, session.parentID, parent?.title]);
+      if (breadcrumb.workspaceParentKey !== key) breadcrumb.replaceChildren(el("span", { text: `${project.name} / ` }), el("button", {
+        class: "wsp-parent-session", type: "button", text: `返回 ${parent ? sessionTitle(parent) : "主会话"}`,
+        title: `返回主会话${parent ? `：${sessionTitle(parent)}` : ""}`,
+        onclick: () => { void openRelatedSession(project.id, session.parentID); },
+      }, workspaceIcon("undo")), el("span", { text: " / 子代理" }));
+      breadcrumb.workspaceParentKey = key;
+    } else {
+      breadcrumb.workspaceParentKey = null;
+      breadcrumb.textContent = chat ? "工作区 / 普通对话" : project ? `${project.name} / 对话记录` : "工作区";
+    }
+    view.querySelector("#wsp-title").textContent = session ? sessionTitle(session) : (chat ? "新对话" : project ? "新建或选择对话" : "选择项目");
     const status = state.statuses?.[state.sessionId];
     const pending = state.permissions.some((item) => item.sessionID === state.sessionId) ||
       state.questions.some((item) => item.sessionID === state.sessionId);
@@ -1634,18 +2239,15 @@ function renderWorkspace(view) {
     view.querySelectorAll(".wsp-tab").forEach((button) => button.classList.toggle("active", button.dataset.wspTab === state.tab));
     const send = view.querySelector("#wsp-send");
     send.disabled = state.sending || (!!project && !state.check?.found) || session?.creating || (!!state.sessionId && !state.queueLoaded);
-    const queued = waitingForReply() || state.queue.items.length > 0 || state.queue.paused;
-    const sendLabel = queued ? "加入队列" : "发送消息";
-    send.title = sendLabel;
-    send.setAttribute("aria-label", sendLabel);
-    send.classList.toggle("queuing", queued);
-    if (send.dataset.mode !== String(queued)) {
-      send.replaceChildren(workspaceIcon(queued ? "queue" : "send"));
-      send.dataset.mode = String(queued);
-    }
-    view.querySelector(".wsp-composer-hint").textContent = `Enter ${queued ? "加入队列" : "发送"} · Shift+Enter 换行`;
-    input.dataset.placeholder = state.queue.paused ? "队列已暂停，继续输入可加入队列…" :
-      queued ? "继续输入，本轮结束后发送…" : "向 Sona Code 描述你的需求…";
+    const steering = waitingForReply();
+    sendLabel.textContent = steering ? "补充" : "发送";
+    send.title = steering ? "补充消息 · 在后续步骤处理" : "发送消息";
+    send.setAttribute("aria-label", steering ? "补充消息" : "发送消息");
+    sendMore.hidden = !session;
+    sendMore.disabled = queueSend.disabled = send.disabled;
+    if (sendMore.hidden || send.disabled) closeSendMenu();
+    view.querySelector(".wsp-composer-hint").textContent = `Enter ${steering ? "补充" : "发送"} · Shift+Enter 换行`;
+    input.dataset.placeholder = steering ? "补充要求或调整方向…" : chat ? "发送消息，聊聊你的想法…" : "向 Sona Code 描述你的需求…";
     renderQueue();
     view.querySelector("#wsp-attach").disabled = state.sending || state.pendingImageCount > 0 || !project;
     modelButton.disabled = false;
@@ -1656,6 +2258,20 @@ function renderWorkspace(view) {
       el("h2", { text: title }), el("p", { text: description }));
     if (action) box.append(el("button", { class: "wsp-mini primary", style: "margin-top:14px", type: "button", text: action[0], onclick: action[1] }));
     return box;
+  }
+
+  function chatWelcome() {
+    const prompts = [["写点什么", "润色邮件，让表达更清晰", "帮我润色一封邮件，语气专业但亲切。", "pencil"],
+      ["学点新东西", "把复杂概念，讲得简单一点", "用简单的例子解释一下，什么是大语言模型的上下文窗口？", "info"],
+      ["一起做个计划", "为周末、学习或下一步做准备", "帮我规划一个轻松的周末，不想安排得太满。", "todo"],
+      ["聊聊代码", "理解代码，探索实现思路", "我刚开始学 Python，帮我制定一个两周的入门学习计划。", "fileCode"]];
+    return el("section", {class: "wsp-chat-welcome"}, el("div", {class: "wsp-chat-welcome-mark", text: "✦"}),
+      el("h2", {text: "有什么想聊的？"}), el("p", {text: "一个问题、一段灵感，或一个还没成形的想法。\n从这里开始，和 Sona 一起理清思路。"}),
+      el("div", {class: "wsp-chat-suggestions"}, ...prompts.map(([title, description, text, icon]) =>
+        el("button", {type: "button", onclick: () => {
+          composer.value = text; updateSkillInput(); saveDraft(); input.focus();
+        }}, el("strong", {}, workspaceIcon(icon), title), el("small", {text: description})))),
+      el("small", {class: "wsp-chat-welcome-foot", text: "普通对话独立保存，随时可以返回项目继续工作"}));
   }
 
   function textPart(part, role, references = []) {
@@ -1746,7 +2362,7 @@ function renderWorkspace(view) {
     const match = draft.match(/^\/([A-Za-z0-9_-]+)(?:\s|$)/);
     const name = match?.[1] || (draft.startsWith("/") ? draft.slice(1).split(/\s/)[0] : "");
     const skill = state.skills.find(item => item.name === name);
-    const command = state.commands.find(item => item.name === name) || builtInCommands.find(item => item.name === name);
+    const command = state.commands.find(item => item.name === name) || availableBuiltInCommands().find(item => item.name === name);
     const known = !!command;
     const invalid = !!name && !known && !skill;
     errorLine.hidden = !invalid;
@@ -1798,7 +2414,19 @@ function renderWorkspace(view) {
     body.append(el("div", { class: "wsp-tool-label", text: stateInfo.error ? "错误" : "结果" }),
       el("pre", { text: (output || "等待结果…").slice(0, 12000) }));
     card.append(body);
+    const link = taskSessionLink(part);
+    if (link) return el("div", { class: "wsp-subagent-tool" }, card, link);
     return card;
+  }
+
+  function taskSessionLink(part) {
+    const sessionId = workspaceTaskSessionId(part);
+    if (!sessionId) return null;
+    const projectId = state.projectId;
+    return el("button", { class: "wsp-task-session-link", type: "button",
+      title: "查看子代理会话与执行记录", onclick: () => { void openRelatedSession(projectId, sessionId); } },
+      workspaceIcon("agent"), el("span", { text: "查看子代理会话" }),
+      ...(part.state?.input?.subagent_type ? [el("small", { text: part.state.input.subagent_type })] : []), workspaceIcon("open"));
   }
 
   function toolGroup(parts) {
@@ -1830,6 +2458,8 @@ function renderWorkspace(view) {
         el("pre", { text: (output || "等待结果…").slice(0, 12000) })));
       row.style.setProperty("--wsp-progress-delay", `-${(Date.now() % 1600) / 1000}s`);
       group.append(row);
+      const link = taskSessionLink(part);
+      if (link) group.append(link);
     }
     return group;
   }
@@ -1857,6 +2487,8 @@ function renderWorkspace(view) {
     if (!question) return card;
     const group = el("fieldset", { class: "wsp-question-group" },
       el("legend", { text: question.question || question.header || `问题 ${page + 1}` }));
+    const optionInputs = [];
+    let customInput = null;
     if (question.multiple) group.append(el("p", { text: "可多选" }));
     for (const option of question.options || []) {
       const inputOption = el("input", {
@@ -1870,23 +2502,35 @@ function renderWorkspace(view) {
             draft.selected = event.target.checked
               ? [...draft.selected, option.label]
               : draft.selected.filter((label) => label !== option.label);
-          } else draft.selected = [option.label];
+          } else {
+            draft.selected = [option.label];
+            draft.custom = "";
+            if (customInput) customInput.value = "";
+          }
         },
       });
+      optionInputs.push(inputOption);
       group.append(el("label", { class: "wsp-question-option" }, inputOption,
         el("span", {}, el("strong", { text: option.label }),
           option.description ? el("small", { text: option.description }) : null)));
     }
-    if (question.custom !== false) group.append(el("input", {
-      class: "wsp-question-custom", type: "text", placeholder: "或输入自己的回答",
-      "data-request-id": request.id, "data-question-index": page,
-      value: draft.custom, oninput: (event) => {
-        draft.custom = event.target.value;
-        state.questionErrors.delete(request.id);
-        errorLine.textContent = "";
-        card.workspaceQuestionSignature = JSON.stringify([request, page, ""]);
-      },
-    }));
+    if (question.custom !== false) {
+      customInput = el("input", {
+        class: "wsp-question-custom", type: "text", placeholder: "或输入自己的回答",
+        "data-request-id": request.id, "data-question-index": page,
+        value: draft.custom, oninput: (event) => {
+          draft.custom = event.target.value;
+          if (!question.multiple && draft.custom.trim()) {
+            draft.selected = [];
+            for (const optionInput of optionInputs) optionInput.checked = false;
+          }
+          state.questionErrors.delete(request.id);
+          errorLine.textContent = "";
+          card.workspaceQuestionSignature = JSON.stringify([request, page, ""]);
+        },
+      });
+      group.append(customInput);
+    }
     card.append(group);
     const errorLine = el("p", { class: "wsp-question-error", text: state.questionErrors.get(request.id) || "" });
     const actions = el("div", { class: "wsp-question-actions" });
@@ -1951,18 +2595,20 @@ function renderWorkspace(view) {
   }
 
   function renderMessages(target) {
+    const messages = conversationMessages();
     const turns = workspaceMessageTurns(state.messages);
     const existing = new Map(Array.from(content.children)
       .filter(row => row.workspaceMessageKey)
       .map(row => [row.workspaceMessageKey, row]));
-    if (!state.sessionId) {
+    if (!state.sessionId && !messages.length) {
+      if (activeProject()?.id === "chat") { target.append(chatWelcome()); return; }
       target.append(empty("开始一段新对话", activeProject()
         ? "选择项目后新建对话，Sona Code 会在该项目目录中工作。"
         : "可以先选择模型或登录 Sona。发送消息时再创建项目，Sona Code 会在该项目目录中工作。",
         activeProject() ? ["新建对话", () => createSession()] : ["新建项目", openAddProject]));
       return;
     }
-    if (!state.messages.length && !state.permissions.some((item) => item.sessionID === state.sessionId) &&
+    if (!messages.length && !state.permissions.some((item) => item.sessionID === state.sessionId) &&
       !state.questions.some((item) => item.sessionID === state.sessionId)) {
       if (state.messageLoadError) {
         target.append(el("div", { class: "wsp-error", text: state.messageLoadError }));
@@ -1972,14 +2618,14 @@ function renderWorkspace(view) {
         target.append(el("div", { class: "wsp-action-progress", role: "status", text: "正在加载对话…" }));
         return;
       }
-      target.append(empty("输入你的开发需求", "发送第一条消息后，这里会实时显示回复和工具操作。"));
+      target.append(activeProject()?.id === "chat" ? chatWelcome() : empty("输入你的开发需求", "发送第一条消息后，这里会实时显示回复和工具操作。"));
       if (state.compactingSessionId === state.sessionId) target.append(compactionCard("busy"));
       if (state.pendingAction) target.append(el("div", { class: "wsp-action-progress", text: `正在执行 ${state.pendingAction}…` }));
       if (state.actionError) target.append(el("div", { class: "wsp-error", text: state.actionError }));
       return;
     }
     const displayMessages = [];
-    for (const message of state.messages) {
+    for (const message of messages) {
       const previous = displayMessages.at(-1);
       if (message.info?.role === "assistant" && previous?.info?.role === "assistant" &&
           message.info.parentID && previous.info.parentID === message.info.parentID) {
@@ -1988,13 +2634,20 @@ function renderWorkspace(view) {
         if (message.info.error) previous.errorInfo = message.info;
         previous.modelInfo = message.info;
       } else displayMessages.push({ info: message.info, parts: [...(message.parts || [])],
-        errorInfo: message.info?.error ? message.info : null, modelInfo: message.info, skillUse: message.skillUse });
+        errorInfo: message.info?.error ? message.info : null, modelInfo: message.info, skillUse: message.skillUse,
+        outgoing: message.outgoing });
     }
     const sessionStatus = state.statuses?.[state.sessionId];
     const running = ["busy", "retry"].includes(sessionStatus?.type) && !compactionRunning() &&
       !state.permissions.some(item => item.sessionID === state.sessionId) &&
       !state.questions.some(item => item.sessionID === state.sessionId);
-    if (running && displayMessages.at(-1)?.info?.role === "user") {
+    const awaitingContinuation = running && displayMessages.at(-1)?.info?.role === "user" &&
+      displayMessages.some(message => message.info?.role === "assistant" && !message.errorInfo &&
+        !!turns.get(message.info.parentID)?.user &&
+        ((message.modelInfo || message.info)?.time?.completed == null || message.parts.some(part =>
+          part.type === "tool" && ["pending", "running"].includes(part.state?.status))));
+    if (running && displayMessages.at(-1)?.info?.role === "user" && !awaitingContinuation &&
+        !displayMessages.at(-1).outgoing) {
       const user = displayMessages.at(-1);
       displayMessages.push({ info: { id: `waiting:${user.info.id}`, role: "assistant", parentID: user.info.id,
         time: user.info.time }, parts: [], awaitingReply: true });
@@ -2028,16 +2681,18 @@ function renderWorkspace(view) {
       const modelInfo = message.modelInfo || message.info;
       const modelLabel = modelInfo?.modelID ? modelDisplayName(modelInfo.providerID, modelInfo.modelID) : "";
       const laterReply = lastReplies.get(message.info?.parentID) > messageIndex;
-      const currentTurnActive = message.info?.parentID === activeUserId &&
-        (["busy", "retry"].includes(sessionStatus?.type) ||
-          state.permissions.some(item => item.sessionID === state.sessionId) ||
-          state.questions.some(item => item.sessionID === state.sessionId));
+      const sessionActive = ["busy", "retry"].includes(sessionStatus?.type) ||
+        state.permissions.some(item => item.sessionID === state.sessionId) ||
+        state.questions.some(item => item.sessionID === state.sessionId);
+      const currentTurnActive = sessionActive && (message.info?.parentID === activeUserId ||
+        !!turns.get(message.info?.parentID)?.user && (modelInfo?.time?.completed == null ||
+          message.parts.some(part => part.type === "tool" && ["pending", "running"].includes(part.state?.status))));
       const presentation = role === "assistant" && !laterReply ? workspaceTurnPresentation(message,
         turns.get(message.info?.parentID), currentTurnActive) : null;
       const diffs = role === "assistant" && !laterReply
         ? workspaceTurnDiffs(state.messages, message, activeProject()?.path, turns.get(message.info?.parentID)) : [];
       let progressLabel = "";
-      if (running && role === "assistant" && messageIndex === displayMessages.length - 1 && !message.errorInfo) {
+      if (running && role === "assistant" && currentTurnActive && !laterReply && !message.errorInfo) {
         const activeTool = message.parts.some(part => part.type === "tool" &&
           ["pending", "running"].includes(part.state?.status));
         const streamingText = message.parts.some(part => part.type === "text" && !part.synthetic &&
@@ -2048,7 +2703,8 @@ function renderWorkspace(view) {
       const key = JSON.stringify([state.projectId, state.sessionId, message.info?.id || messageIndex]);
       const signatureData = [message, modelLabel, diffs, progressLabel, presentation,
         role === "user" ? [message.info?.id === lastUserId, state.sending,
-          state.statuses?.[state.sessionId]?.type] : null,
+          state.statuses?.[state.sessionId]?.type, awaitingContinuation] :
+          [state.statuses?.[state.sessionId]?.type, state.sending, state.queue?.items?.length],
         !message.parts.length ? state.statuses?.[state.sessionId]?.type : null,
         message.parts.filter(part => part.type === "tool").map(skillForTool), state.fileIndexVersion];
       const signature = JSON.stringify(signatureData);
@@ -2063,7 +2719,7 @@ function renderWorkspace(view) {
         for (const [index, part] of message.parts.entries()) if (part.type === "reasoning") {
           workspaceReasoningNode(cached,
             `reasoning:${state.projectId}:${state.sessionId}:${part.id || `${message.info?.id}:${index}`}`,
-            part.text || "", state.expandedTools, running && message.info.parentID === lastUserId &&
+            part.text || "", state.expandedTools, running && currentTurnActive &&
               part.time?.end == null && modelInfo?.time?.completed == null);
         }
         cached.workspaceMessageSignature = signature;
@@ -2139,7 +2795,7 @@ function renderWorkspace(view) {
         else if (part.type === "reasoning") {
           const key = `reasoning:${state.projectId}:${state.sessionId}:${part.id || `${message.info?.id}:${partIndex}`}`;
           const reasoning = workspaceReasoningNode(cached, key, part.text || "", state.expandedTools,
-            running && message.info.parentID === lastUserId && part.time?.end == null && modelInfo?.time?.completed == null,
+            running && currentTurnActive && part.time?.end == null && modelInfo?.time?.completed == null,
             partIndex === lastReasoningIndex ? pendingReasoningKey : null);
           partTarget.append(reasoning);
         } else if (part.type === "file") {
@@ -2176,12 +2832,25 @@ function renderWorkspace(view) {
       }
       if (diffs.length) body.append(changeSummary(message.info.parentID, diffs));
       const column = el("div", { class: "wsp-message-column" }, body);
-      if (!message.awaitingReply) column.append(messageActions(presentation ?
+      if (role === "user" && message.info.id === lastUserId && awaitingContinuation)
+        column.append(el("div", { class: "wsp-steering-status", role: "status",
+          text: "已加入对话 · 后续步骤处理" }));
+      if (message.outgoing) {
+        const item = outgoingMessages.get(message.outgoing.id);
+        column.append(el("div", { class: "wsp-steering-status", role: "status",
+          text: item.error ? `发送失败：${item.error}` : item.nativeId ? "已提交 · 等待同步" : "发送中…" }));
+        if (item.error) column.append(el("button", { class: "wsp-mini", type: "button", text: "恢复到输入框",
+          onclick: () => {
+            if (!restoreOutgoingDraft(item)) { toast("请先保存或清空当前草稿", "error"); return; }
+            renderMain(); input.focus({ preventScroll: true });
+          } }));
+      }
+      else if (!message.awaitingReply) column.append(messageActions(presentation ?
         {...message, parts: presentation.finalIndexes.map(index => parts[index])} : message));
       row.append(column);
       target.append(row);
     }
-    if (state.compactingSessionId === state.sessionId && !state.messages.some((message) =>
+    if (state.compactingSessionId && state.compactingSessionId === state.sessionId && !state.messages.some((message) =>
       message.info?.role === "user" && message.parts?.some((part) => part.type === "compaction"))) {
       target.append(compactionCard("busy"));
     }
@@ -2638,12 +3307,19 @@ function renderWorkspace(view) {
 
   function renderMain(forceBottom = false) {
     composerDock.hidden = state.tab !== "chat";
+    const previewPane = view.querySelector("#wsp-file-preview");
+    const chatBody = view.querySelector("#wsp-chat-body");
+    if (previewPane) previewPane.hidden = state.tab !== "preview";
+    if (chatBody) chatBody.hidden = state.tab === "preview";
+    if (state.tab === "preview") { renderTodoPanel(); return; }
     const previousTop = scroll.scrollTop;
     const previousMaximum = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
     const nearBottom = previousMaximum - previousTop <= 80;
     renderTodoPanel();
     if (forceBottom) browsingHistory = false;
-    const stickToBottom = state.tab === "chat" && (forceBottom || (!browsingHistory && followLatest && nearBottom));
+    const welcome = state.projectId === "chat" && !conversationMessages().length;
+    const stickToBottom = state.tab === "chat" && !welcome &&
+      (forceBottom || (!browsingHistory && followLatest && nearBottom));
     const active = document.activeElement;
     const editingQuestion = active?.classList?.contains("wsp-question-custom")
       ? { id: active.dataset.requestId, index: active.dataset.questionIndex,
@@ -2728,18 +3404,22 @@ function renderWorkspace(view) {
   }
 
   async function fetchSessions(project) {
+    const previous = state.sessions.get(project.id);
     try {
       const data = await api(`workspace/projects/${encodeURIComponent(project.id)}/sessions`, { silent: true });
       if (!alive()) return;
+      if (state.sessions.get(project.id) !== previous) return;
       const items = storeSessions(project, data.items || []);
       if (state.projectId === project.id) lastSessionListRefresh = Date.now();
       state.errors.delete(project.id);
-      if (state.projectId === project.id && !items.some((item) => item.id === state.sessionId) &&
+      // An unselected conversation holds a draft, not a missing native session.
+      if (state.projectId === project.id && state.sessionId && !items.some((item) => item.id === state.sessionId) &&
           !state.sessionDetails.has(workspaceConversationKey(project.id, state.sessionId))) {
         saveDraft();
         saveConversationView();
         cancelSelectedRefresh();
-        state.sessionId = items[0]?.id || null;
+        state.sessionId = workspaceSessionTree(items).roots[0]?.id || null;
+        restoreModelSelection();
         restoreConversationView();
         restoreDraft();
         scrollToLatestOnLoad = true;
@@ -2766,11 +3446,16 @@ function renderWorkspace(view) {
     const items = sessions.filter(item => !item.time?.archived);
     for (const session of state.sessions.get(project.id) || []) {
       if (session.creating && !items.some(item => item.id === session.id)) items.push(session);
+      else if (!items.some(item => item.id === session.id))
+        state.sessionDetails.delete(workspaceConversationKey(project.id, session.id));
     }
     items.sort((a, b) => (b.time?.updated || 0) - (a.time?.updated || 0));
     state.sessions.set(project.id, workspaceOrderItems(items, `sona-code:session-order:${project.id}`));
     project.session_count = items.length;
-    for (const item of items) state.sessionDetails.set(workspaceConversationKey(project.id, item.id), item);
+    for (const item of items) {
+      state.sessionDetails.set(workspaceConversationKey(project.id, item.id), item);
+      if (item.parentID) workspaceMarkSessionRead(project.id, item.id);
+    }
     state.errors.delete(project.id);
     return items;
   }
@@ -2788,8 +3473,29 @@ function renderWorkspace(view) {
     return [providerName, provider?.models?.[modelId]?.name || modelId].filter(Boolean).join(" / ");
   }
 
+  function restoreModelSelection(projectId = state.projectId, sessionId = state.sessionId) {
+    const key = workspaceConversationKey(projectId, sessionId);
+    if (!state.chosenModels.has(key)) {
+      let value = "";
+      try {
+        value = localStorage.getItem(`sona-code:session-model:${key}`) ??
+          (sessionId ? localStorage.getItem(`sona-code:model:${projectId}`) : localStorage.getItem("sona-code:last-model")) ?? "";
+      } catch (_) {}
+      state.chosenModels.set(key, value);
+    }
+    updateModelButton(false);
+  }
+
+  function migrateModelSelection(oldKey, newKey) {
+    if (!state.chosenModels.has(oldKey)) return;
+    const value = state.chosenModels.get(oldKey);
+    state.chosenModels.set(newKey, value);
+    state.chosenVariants.set(newKey, state.chosenVariants.get(oldKey) || "");
+    try { localStorage.setItem(`sona-code:session-model:${newKey}`, value); } catch (_) {}
+  }
+
   function selectedModel() {
-    const [providerID, modelID] = (state.chosenModels.get(state.projectId) || "").split("\u0000");
+    const [providerID, modelID] = (state.chosenModels.get(workspaceConversationKey(state.projectId, state.sessionId)) || "").split("\u0000");
     return providerID && modelID ? { provider_id: providerID, model_id: modelID }
       : state.defaultModel ? { provider_id: state.defaultModel.providerID, model_id: state.defaultModel.modelID } : {};
   }
@@ -2807,9 +3513,9 @@ function renderWorkspace(view) {
     variantSelect.replaceChildren(el("option", { value: "", text: "默认" }),
       ...variants.map((variant) => el("option", { value: variant, text: variant })));
     variantSelect.hidden = true;
-    const chosen = state.chosenVariants.get(state.projectId) || "";
+    const chosen = state.chosenVariants.get(workspaceConversationKey(state.projectId, state.sessionId)) || "";
     variantSelect.value = variants.includes(chosen) ? chosen : "";
-    if (clearInvalidVariant && chosen && !variants.includes(chosen)) state.chosenVariants.set(state.projectId, "");
+    if (clearInvalidVariant && chosen && !variants.includes(chosen)) state.chosenVariants.set(workspaceConversationKey(state.projectId, state.sessionId), "");
     variantTrigger.hidden = !variants.length;
     variantLabel.textContent = variantSelect.value || "默认";
     variantTrigger.dataset.default = String(!variantSelect.value);
@@ -2930,10 +3636,11 @@ function renderWorkspace(view) {
   }
 
   function chooseModel(value) {
-    state.chosenModels.set(state.projectId, value);
-    state.chosenVariants.set(state.projectId, "");
+    const key = workspaceConversationKey(state.projectId, state.sessionId);
+    state.chosenModels.set(key, value);
+    state.chosenVariants.set(key, "");
     try {
-      if (state.projectId) localStorage.setItem(`sona-code:model:${state.projectId}`, value);
+      localStorage.setItem(`sona-code:session-model:${key}`, value);
       localStorage.setItem("sona-code:last-model", value);
     } catch (_) { /* Storage may be unavailable. */ }
     updateModelButton();
@@ -2947,10 +3654,12 @@ function renderWorkspace(view) {
     const loggedIn = state.modelSource === "sona" && state.sonaConnected === true;
     refresh.hidden = !loggedIn;
     view.querySelector("#wsp-sona-logout").hidden = !loggedIn;
+    view.querySelector("#wsp-model-footer").replaceChildren(
+      el("span", { text: "前往 Sona 网站" }), sonaWebsiteLink(state.sonaWebsiteUrl, "wsp-model-subscribe"));
     modelList.replaceChildren();
     if (state.modelSource === "sona" && state.sonaConnected === false) {
       modelList.append(el("p", { class: "wsp-picker-empty", text: state.modelLoadError || "请登录 Sona 网站以获取已订阅模型。" }),
-        sonaLoginButton(state.sonaEnvironment, "wsp-model-option", "登录 Sona", async () => {
+        sonaLoginButton(state.sonaEnvironment, "wsp-model-login", "登录 Sona", async () => {
           if (alive()) await loadModels(state.projectId);
         }, error => {
           if (alive()) { state.modelLoadError = error ? detail(error) : ""; renderModelPicker(); }
@@ -2963,7 +3672,7 @@ function renderWorkspace(view) {
       return;
     }
     const query = modelSearch.value.trim().toLocaleLowerCase();
-    const selected = state.chosenModels.get(state.projectId) || "";
+    const selected = state.chosenModels.get(workspaceConversationKey(state.projectId, state.sessionId)) || "";
     if (!query) modelList.append(el("button", { type: "button", class: "wsp-model-option" + (!selected ? " selected" : ""),
       onclick: () => chooseModel("") },
       el("span", { text: "当前来源默认模型" }), el("small", { text: "使用当前来源的默认模型" })));
@@ -3042,15 +3751,15 @@ function renderWorkspace(view) {
       const data = entry.pending ? await entry.pending : entry.data;
       if (!alive() || state.projectId !== projectId || version !== modelLoadVersion) return;
       apply(data);
-      const value = state.chosenModels.get(projectId) || "";
+      const key = workspaceConversationKey(state.projectId, state.sessionId);
+      const value = state.chosenModels.get(key) || "";
       if (value) {
         const [providerID, modelID] = value.split("\u0000");
         if (!state.providers.some((provider) => provider.id === providerID && provider.models?.[modelID])) {
-          state.chosenModels.set(projectId, "");
-          state.chosenVariants.set(projectId, "");
+          state.chosenModels.set(key, "");
+          state.chosenVariants.set(key, "");
           try {
-            if (projectId) localStorage.removeItem(`sona-code:model:${projectId}`);
-            else localStorage.removeItem("sona-code:last-model");
+            localStorage.setItem(`sona-code:session-model:${key}`, "");
           } catch (_) {}
           if (state.modelSource !== "sona" || state.sonaConnected) toast("原模型已不可用，请重新选择模型", "error");
         }
@@ -3124,6 +3833,15 @@ function renderWorkspace(view) {
   }
 
   async function loadAgents(projectId) {
+    if (projectId === WORKSPACE_CHAT_ID) {
+      state.agents = [{name: WORKSPACE_CHAT_AGENT, mode: "primary"}];
+      state.chosenAgents.set(projectId, WORKSPACE_CHAT_AGENT);
+      agentSelect.replaceChildren(el("option", {value: WORKSPACE_CHAT_AGENT, text: "聊天"}));
+      agentSelect.value = WORKSPACE_CHAT_AGENT; renderAgentPicker();
+      state.commands = []; state.skills = []; updateSkillInput();
+      return;
+    }
+    if (!projectId) return;
     try {
       const data = await api(`workspace/projects/${encodeURIComponent(projectId)}/agents`, { silent: true });
       if (!alive() || state.projectId !== projectId) return;
@@ -3139,6 +3857,7 @@ function renderWorkspace(view) {
   }
 
   async function loadCommands(projectId) {
+    if (!projectId || projectId === WORKSPACE_CHAT_ID) { state.commands = []; state.skills = []; updateSkillInput(); return; }
     const request = ++commandLoadRequest;
     try {
       const [data, skills] = await Promise.all([
@@ -3169,6 +3888,10 @@ function renderWorkspace(view) {
     { name: "stop", description: "停止当前任务" },
     { name: "settings", description: "打开设置" },
   ];
+  function availableBuiltInCommands() {
+    return state.projectId === WORKSPACE_CHAT_ID
+      ? builtInCommands.filter(command => !["agents", "skills"].includes(command.name)) : builtInCommands;
+  }
   let commandPaletteOpen = false;
 
   function hideAutocomplete() {
@@ -3255,7 +3978,7 @@ function renderWorkspace(view) {
 
   function renderCommandMenu() {
     const mention = currentFileMention();
-    if (!commandPaletteOpen && mention && state.projectId) {
+    if (!commandPaletteOpen && mention && state.projectId && state.projectId !== WORKSPACE_CHAT_ID) {
       renderFileMenu(mention);
       return;
     }
@@ -3268,8 +3991,9 @@ function renderWorkspace(view) {
     fileMentionRange = null;
     const query = commandPaletteOpen ? "" : draft.slice(1).toLocaleLowerCase();
     commandMenu.replaceChildren(el("div", { class: "wsp-command-heading", text: "命令 · ↑ ↓ 选择 · Enter 选中" }));
-    const commands = [...builtInCommands, ...state.commands.filter((item) =>
-      !builtInCommands.some((builtIn) => builtIn.name === item.name) &&
+    const builtIns = availableBuiltInCommands();
+    const commands = [...builtIns, ...state.commands.filter((item) =>
+      !builtIns.some((builtIn) => builtIn.name === item.name) &&
       !(item.source === "skill" && item.integration === "openspec" && state.commands.some(command => command.name !== item.name && command.skill_name === item.name)))];
     const matches = commands.filter((item) => item.name.toLocaleLowerCase().includes(query));
     state.commandSelectedIndex = Math.max(0, Math.min(state.commandSelectedIndex, matches.length - 1));
@@ -3431,6 +4155,14 @@ function renderWorkspace(view) {
 
   function observeSessionStatus(projectId, sessionId, previous, current) {
     const key = workspaceConversationKey(projectId, sessionId);
+    const session = state.sessionDetails?.get(key) || state.sessions?.get(projectId)?.find(item => item.id === sessionId);
+    if (session?.parentID) {
+      workspaceMarkSessionRead(projectId, sessionId);
+      const watch = completionWatches.get(key);
+      if (watch?.timer) clearTimeout(watch.timer);
+      completionWatches.delete(key);
+      return;
+    }
     const wasRunning = previous && previous !== "idle";
     const running = current && current !== "idle";
     if (running && !wasRunning) {
@@ -3471,6 +4203,8 @@ function renderWorkspace(view) {
           timestamp(lastAssistant.time.completed) < watch.startedAt) return;
       if (!state.projects.some(project => project.id === projectId) ||
           (workspaceSessionReadVersions.get(key) || 0) !== watch.readVersion) return;
+      const session = state.sessionDetails?.get(key) || state.sessions?.get(projectId)?.find(item => item.id === sessionId);
+      if (session?.parentID) return;
       if (!sessionIsVisible(projectId, sessionId)) {
         workspaceUnreadCompletions.add(key);
         workspacePersistUnreadCompletions();
@@ -3483,6 +4217,7 @@ function renderWorkspace(view) {
   }
 
   function connectEvents(projectId) {
+    if (projectId === WORKSPACE_CHAT_ID && !state.sessionId) projectId = null;
     if (eventProjectId === projectId) return;
     if (events) events.close();
     events = null;
@@ -3498,6 +4233,9 @@ function renderWorkspace(view) {
           (update.type === "session.updated" ? properties.info?.id : null);
         if ((!sessionId || sessionId === state.sessionId) && !["server.heartbeat", "server.connected"].includes(update.type)) scheduleRefresh();
         applyMessageEvent(projectId, update);
+        if (sessionId && sessionId !== state.sessionId &&
+            ["permission.asked", "permission.replied", "question.asked", "question.replied", "question.rejected"].includes(update.type))
+          scheduleRefresh();
         if (update.type === "file.edited" || update.type === "session.status" && properties.status?.type === "idle" &&
             state.statuses?.[properties.sessionID]?.type !== "idle") {
           if (fileIndexTimer) clearTimeout(fileIndexTimer);
@@ -3526,7 +4264,10 @@ function renderWorkspace(view) {
             if (update.properties.sessionID === state.sessionId) renderMain();
           }
         }
-        if (update.type === "session.updated" && Date.now() - lastSessionListRefresh > 700) {
+        if (["session.created", "session.updated", "session.deleted"].includes(update.type) &&
+            (update.type !== "session.updated" || Date.now() - lastSessionListRefresh > 700)) {
+          if (update.type === "session.deleted" && properties.info?.id)
+            state.sessionDetails.delete(workspaceConversationKey(projectId, properties.info.id));
           const project = activeProject();
           if (project) loadSessions(project);
         }
@@ -3707,12 +4448,14 @@ function renderWorkspace(view) {
           const permissions = Array.isArray(value) ? value : [];
           const changed = JSON.stringify(state.permissions) !== JSON.stringify(permissions);
           state.permissions = permissions;
+          if (changed) renderSidebar();
           return changed;
         }),
         read(`workspace/projects/${encodeURIComponent(projectId)}/questions`, value => {
           const questions = Array.isArray(value) ? value : [];
           const changed = JSON.stringify(state.questions) !== JSON.stringify(questions);
           state.questions = questions;
+          if (changed) renderSidebar();
           return changed;
         }),
         read(`${base}/diff`, value => {
@@ -3757,11 +4500,26 @@ function renderWorkspace(view) {
     conversationViews.set(key, {
       messages: state.messages, diffs: state.diffs, diffsLoaded: state.diffsLoaded, todos: state.todos, children: state.children,
       permissions: state.permissions, questions: state.questions, queue: state.queue, queueLoaded: state.queueLoaded,
-      nodes: state.tab === "chat" ? Array.from(content.childNodes) : [],
-      scrollTop: state.tab === "chat" ? scroll.scrollTop : null,
+      nodes: state.tab === "chat" || state.tab === "preview" && state.previewReturn?.tab === "chat"
+        ? Array.from(content.childNodes) : [],
+      scrollTop: state.tab === "preview" ? state.previewReturn?.top ?? null : state.tab === "chat" ? scroll.scrollTop : null,
       browsingHistory, followLatest,
     });
-    while (conversationViews.size > 6) conversationViews.delete(conversationViews.keys().next().value);
+    // Keep the return path while inspecting many siblings, within the same
+    // bounded cache. Unrelated conversations still follow normal LRU eviction.
+    const parents = new Set();
+    let parentId = state.sessionDetails.get(key)?.parentID;
+    while (parentId) {
+      const parentKey = workspaceConversationKey(state.projectId, parentId);
+      if (parents.has(parentKey)) break;
+      parents.add(parentKey);
+      parentId = state.sessionDetails.get(parentKey)?.parentID;
+    }
+    while (conversationViews.size > 6) {
+      const oldest = [...conversationViews.keys()].find(item => item !== key && !parents.has(item)) ||
+        conversationViews.keys().next().value;
+      conversationViews.delete(oldest);
+    }
   }
 
   function restoreConversationView() {
@@ -3784,13 +4542,22 @@ function renderWorkspace(view) {
     if (state.tab === "chat" && cached?.scrollTop != null) {
       scroll.scrollTop = cached.scrollTop;
       scrollToLatestOnLoad = false;
+    } else if (state.projectId === "chat" && !state.sessionId) {
+      scroll.scrollTop = 0;
+      scrollToLatestOnLoad = false;
     }
   }
 
   function selectProject(projectId) {
+    syncSidebarScope(projectId);
+    relatedSessionRequest++;
+    closeSubagentPopover();
     if (tree.projectId && tree.projectId !== projectId) tree.close();
     saveDraft();
     saveConversationView();
+    if (state.filePreview?.projectId !== projectId) state.filePreview?.reset();
+    else state.filePreview?.maximize(false);
+    state.previewReturn = null;
     cancelSelectedRefresh();
     hideAutocomplete();
     scrollToLatestOnLoad = true;
@@ -3798,20 +4565,13 @@ function renderWorkspace(view) {
     state.projectId = projectId;
     state.queue = { items: [], paused: false, error: "" }; state.queueLoaded = false;
     state.skills = []; state.commands = []; updateSkillInput();
-    if (!state.chosenModels.has(projectId)) {
-      const initial = withoutProject ? state.chosenModels.get(null) || "" : "";
-      try {
-        state.chosenModels.set(projectId, localStorage.getItem(`sona-code:model:${projectId}`) ?? initial);
-        if (withoutProject) localStorage.setItem(`sona-code:model:${projectId}`, state.chosenModels.get(projectId));
-      }
-      catch (_) { state.chosenModels.set(projectId, initial); }
-      if (withoutProject) state.chosenVariants.set(projectId, state.chosenVariants.get(null) || "");
-    }
     const saved = workspaceSelection.projectId === projectId ? workspaceSelection.sessionId : null;
     const project = activeProject();
     const remembered = saved && (!Array.isArray(project?.sessions) ||
       state.sessions.get(projectId)?.some(session => session.id === saved)) ? saved : null;
-    state.sessionId = remembered || (state.sessions.get(projectId) || [])[0]?.id || null;
+    state.sessionId = remembered || workspaceSessionTree(state.sessions.get(projectId) || []).roots[0]?.id || null;
+    if (withoutProject) migrateModelSelection(workspaceConversationKey(null, null), workspaceConversationKey(state.projectId, state.sessionId));
+    restoreModelSelection();
     if (withoutProject) migrateCreationDraft(workspaceConversationKey(null, null), workspaceConversationKey(projectId, state.sessionId));
     state.statuses = state.projectStatuses.get(projectId) || {};
     restoreDraft();
@@ -3827,7 +4587,7 @@ function renderWorkspace(view) {
     updateSidebarButton();
     renderSidebar(); renderHeader(); renderMain();
     refreshSelected();
-    if (!state.sessions.has(projectId)) {
+    if (projectId === WORKSPACE_CHAT_ID || !state.sessions.has(projectId)) {
       const project = activeProject();
       if (project) loadSessions(project);
     }
@@ -3838,23 +4598,29 @@ function renderWorkspace(view) {
   }
 
   function selectSession(projectId, sessionId) {
+    syncSidebarScope(projectId);
+    relatedSessionRequest++;
+    closeSubagentPopover();
     markSessionRead(projectId, sessionId);
-    if (draftContextReady && state.projectId === projectId && state.sessionId === sessionId) return;
+    if (draftContextReady && state.projectId === projectId && state.sessionId === sessionId) {
+      if (state.tab === "preview") leaveFilePreview("chat");
+      return;
+    }
     saveDraft();
     saveConversationView();
     cancelSelectedRefresh();
     hideAutocomplete();
     scrollToLatestOnLoad = true;
     const projectChanged = state.projectId !== projectId;
+    if (projectChanged) state.filePreview?.reset();
+    else state.filePreview?.maximize(false);
+    state.previewReturn = null;
     if (projectChanged && tree.projectId) tree.close();
     state.projectId = projectId;
     state.queue = { items: [], paused: false, error: "" }; state.queueLoaded = false;
     if (projectChanged) { state.skills = []; state.commands = []; updateSkillInput(); }
-    if (!state.chosenModels.has(projectId)) {
-      try { state.chosenModels.set(projectId, localStorage.getItem(`sona-code:model:${projectId}`) || ""); }
-      catch (_) { state.chosenModels.set(projectId, ""); }
-    }
     state.sessionId = sessionId;
+    restoreModelSelection();
     state.statuses = state.projectStatuses.get(projectId) || {};
     restoreDraft();
     closeChangePopover();
@@ -3874,10 +4640,11 @@ function renderWorkspace(view) {
       void loadProjectFiles(projectId).catch(() => {});
       loadModels(projectId);
       loadAgents(projectId);
+      if (projectId === WORKSPACE_CHAT_ID) loadSessions(activeProject());
     }
   }
 
-  function applyLatestModel(projectId) {
+  function applyLatestModel(projectId, sessionId = null) {
     try {
       const value = localStorage.getItem("sona-code:last-model");
       if (value === null) return;
@@ -3885,10 +4652,11 @@ function renderWorkspace(view) {
         const [providerId, modelId] = value.split("\u0000");
         if (!state.providers.some(provider => provider.id === providerId && provider.models?.[modelId])) return;
       }
-      state.chosenModels.set(projectId, value);
-      state.chosenVariants.set(projectId, "");
-      localStorage.setItem("sona-code:model:" + projectId, value);
-      updateModelButton();
+      const key = workspaceConversationKey(projectId, sessionId);
+      state.chosenModels.set(key, value);
+      state.chosenVariants.set(key, "");
+      localStorage.setItem(`sona-code:session-model:${key}`, value);
+      if (state.projectId === projectId && state.sessionId === sessionId) updateModelButton();
     } catch (_) { /* Storage may be unavailable. */ }
   }
 
@@ -3903,15 +4671,20 @@ function renderWorkspace(view) {
     }
     pendingImages.delete(oldKey);
     conversationViews.delete(oldKey);
+    migrateModelSelection(oldKey, newKey);
   }
 
   async function createSession(projectId = state.projectId || state.projects[0]?.id) {
+    if (projectId === WORKSPACE_CHAT_ID) {
+      applyLatestModel(projectId);
+      selectSession(projectId, null); state.queueLoaded = true; renderHeader(); input.focus(); return;
+    }
     if (!projectId) { openAddProject(); return; }
     const id = `creating:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     const placeholder = {id, title: "新对话", creating: true, time: {created: Date.now(), updated: Date.now()}};
     creatingSessions.add(id);
     state.sessions.set(projectId, [placeholder, ...(state.sessions.get(projectId) || [])]);
-    applyLatestModel(projectId);
+    applyLatestModel(projectId, id);
     selectSession(projectId, id);
     state.messagesLoaded = true;
     renderHeader(); renderMain(); input.focus();
@@ -3928,6 +4701,7 @@ function renderWorkspace(view) {
       migrateCreationDraft(oldKey, newKey);
       if (state.projectId === projectId && state.sessionId === id) {
         state.sessionId = session.id;
+        restoreModelSelection();
         workspaceSelection.sessionId = session.id; persistWorkspaceSelection();
         state.queueLoaded = false;
         if (alive()) { renderSidebar(); renderHeader(); refreshSelected(); }
@@ -3939,6 +4713,7 @@ function renderWorkspace(view) {
         saveDraft();
         migrateCreationDraft(workspaceConversationKey(projectId, id), workspaceConversationKey(projectId, null));
         state.sessionId = null;
+        restoreModelSelection();
         workspaceSelection.sessionId = null; persistWorkspaceSelection();
         state.messagesLoaded = true; state.queueLoaded = true;
       }
@@ -3954,9 +4729,10 @@ function renderWorkspace(view) {
     });
     const items = state.sessions.get(projectId) || [];
     state.sessions.set(projectId, [session, ...items.filter((item) => item.id !== session.id)]);
-    applyLatestModel(projectId);
+    migrateModelSelection(workspaceConversationKey(projectId, null), workspaceConversationKey(projectId, session.id));
     if (!alive() || state.projectId !== projectId || state.sessionId) return { projectId, sessionId: session.id };
     state.sessionId = session.id;
+    restoreModelSelection();
     state.queue = { items: [], paused: false, error: "" }; state.queueLoaded = true;
     workspaceSelection = { projectId: state.projectId, sessionId: session.id };
     persistWorkspaceSelection();
@@ -4130,7 +4906,12 @@ function renderWorkspace(view) {
     } catch (error) { toast("删除工作区失败：" + detail(error), "error"); }
   }
 
-  view.querySelector("#wsp-new").addEventListener("click", openAddProject);
+  view.querySelector("#wsp-new").addEventListener("click", () => {
+    if (state.sidebarMode === "chat") createSession(WORKSPACE_CHAT_ID);
+    else openAddProject();
+  });
+  view.querySelectorAll("[data-wsp-scope]").forEach(button => button.addEventListener("click", () => switchSidebarScope(button.dataset.wspScope)));
+  view.querySelector("#wsp-return-projects").addEventListener("click", () => switchSidebarScope("project"));
   const outsideChanges = event => {
     if (!event.target.closest(".wsp-change-summary, .wsp-change-popover")) closeChangePopover();
   };
@@ -4152,6 +4933,7 @@ function renderWorkspace(view) {
   };
   const rowMenuKeydown = (event) => {
     if (event.key === "Escape" && activeRowMenu) {
+      event.preventDefault();
       const trigger = activeRowMenu.trigger;
       closeRowMenus();
       trigger.focus({ preventScroll: true });
@@ -4167,6 +4949,28 @@ function renderWorkspace(view) {
   });
   document.addEventListener("pointerdown", outsideActions);
   addCleanup(() => document.removeEventListener("pointerdown", outsideActions));
+  const outsideSubagents = event => {
+    if (!event.target.closest(".wsp-subagent-popover, .wsp-subagent-badge, .wsp-action-menu")) closeSubagentPopover();
+  };
+  const subagentKeydown = event => {
+    if (event.key === "Escape" && subagentPopover && !event.defaultPrevented) {
+      event.preventDefault(); closeSubagentPopover(true);
+    }
+  };
+  const subagentScroll = () => closeSubagentPopover();
+  const sidebarScroll = view.querySelector(".wsp-side-list");
+  document.addEventListener("pointerdown", outsideSubagents);
+  document.addEventListener("keydown", subagentKeydown);
+  window.addEventListener("resize", positionSubagentPopover);
+  sidebarScroll.addEventListener("scroll", subagentScroll, { passive: true });
+  addCleanup(() => {
+    relatedSessionRequest++;
+    closeSubagentPopover();
+    document.removeEventListener("pointerdown", outsideSubagents);
+    document.removeEventListener("keydown", subagentKeydown);
+    window.removeEventListener("resize", positionSubagentPopover);
+    sidebarScroll.removeEventListener("scroll", subagentScroll);
+  });
   view.querySelector("#wsp-abort").addEventListener("click", async () => {
     if (!state.projectId || !state.sessionId) return;
     try {
@@ -4244,13 +5048,15 @@ function renderWorkspace(view) {
   window.addEventListener("resize", repositionPickers);
   addCleanup(() => window.removeEventListener("resize", repositionPickers));
   variantSelect.addEventListener("change", () => {
-    state.chosenVariants.set(state.projectId, variantSelect.value);
+    state.chosenVariants.set(workspaceConversationKey(state.projectId, state.sessionId), variantSelect.value);
     variantLabel.textContent = variantSelect.value || "默认";
     variantTrigger.dataset.default = String(!variantSelect.value);
     variantTrigger.title = variantSelect.value ? "模型推理强度：" + variantSelect.value : "模型推理强度：默认";
     renderVariantPicker();
   });
   view.querySelectorAll(".wsp-tab").forEach((button) => button.addEventListener("click", () => {
+    if (button.dataset.wspTab === "preview") { enterFilePreview(); return; }
+    if (state.tab === "preview") { leaveFilePreview(button.dataset.wspTab); return; }
     closeChangePopover();
     if (button.dataset.wspTab === "changes") state.selectedChange = null;
     state.tab = button.dataset.wspTab;
@@ -4276,6 +5082,8 @@ function renderWorkspace(view) {
   });
   view.querySelector("#wsp-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const queued = event.submitter?.dataset.delivery === "queue";
+    closeSendMenu();
     if (consumeMenuCommand()) return;
     state.fileReferences = composer.fileReferences;
     const text = composer.value.trim();
@@ -4285,28 +5093,29 @@ function renderWorkspace(view) {
     if (!state.projectId) { openAddProject(); return; }
     if (!state.check?.found) { toast("未找到 Sona Code，请在设置中配置程序路径", "error"); return; }
     const slash = text.match(/^\/([A-Za-z0-9_-]+)(?:\s+([\s\S]*))?$/);
-    const shell = text.startsWith("!") ? text.slice(1).trim() : "";
-    if ((state.attachments.length || state.fileReferences.length) && (text.startsWith("/") || text.startsWith("!"))) {
+    const shell = state.projectId !== WORKSPACE_CHAT_ID && text.startsWith("!") ? text.slice(1).trim() : "";
+    if ((state.attachments.length || state.fileReferences.length) && (text.startsWith("/") || (state.projectId !== WORKSPACE_CHAT_ID && text.startsWith("!")))) {
       toast("附件和文件引用请与普通消息一起发送", "error"); return;
     }
     if (text.startsWith("/") && !slash) { toast("命令格式应为 /命令 参数", "error"); return; }
-    if (text.startsWith("!") && !shell) { toast("请输入要运行的命令", "error"); return; }
-    if (slash && !builtInCommands.some((item) => item.name === slash[1]) && !state.commands.some((item) => item.name === slash[1])) {
+    if (state.projectId !== WORKSPACE_CHAT_ID && text.startsWith("!") && !shell) { toast("请输入要运行的命令", "error"); return; }
+    if (slash && !availableBuiltInCommands().some((item) => item.name === slash[1]) && !state.commands.some((item) => item.name === slash[1])) {
       toast(`未知命令：/${slash[1]}`, "error"); return;
     }
     if (shell && (waitingForReply() || state.queue.items.length)) {
       toast("请等待当前任务和消息队列结束后运行终端命令", "error"); return;
     }
-    let model = selectedModel();
+    const model = selectedModel();
     const variant = variantSelect.value ? { variant: variantSelect.value } : {};
-    const agent = agentSelect.value || "build";
+    const agent = state.projectId === WORKSPACE_CHAT_ID ? WORKSPACE_CHAT_AGENT : agentSelect.value || "build";
     const files = state.attachments.map(({ filename, mime, url }) => ({ filename, mime, url }));
     const references = state.fileReferences.map(({ path }) => ({ path }));
     const sendKey = workspaceConversationKey(state.projectId, state.sessionId);
     let operationKey = sendKey;
     let sendClock = null;
+    let outgoing = null;
     const originalDraft = { ...composer.snapshot(), attachments: state.attachments.map(item => ({ ...item })) };
-    saveDraft();
+    if (slash || shell || queued) saveDraft();
     sendingConversations.add(sendKey); renderHeader();
     hideAutocomplete();
     state.actionError = "";
@@ -4316,13 +5125,34 @@ function renderWorkspace(view) {
         .filter(message => message.info?.role === "user").at(-1)?.info.id};
       roundClocks.set(sendKey, sendClock);
       renderRoundClock();
+      if (!slash && !shell && !queued) {
+        const id = `outgoing:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+        outgoing = { id, key: sendKey, draft: originalDraft,
+          baselineIds: new Set([...state.messages.map(message => message.info?.id),
+            ...[...outgoingMessages.values()].filter(item => item.key === sendKey).map(item => item.nativeId)]),
+          message: { info: { id, role: "user", time: { created: sendClock.startedAt } },
+            parts: [ ...(text ? [{ type: "text", text }] : []),
+              ...files.map(file => ({ type: "file", ...file })),
+              ...references.map(reference => ({ type: "file", filename: reference.path,
+                mime: "text/plain", url: `file:${reference.path}` })) ] } };
+        outgoingMessages.set(id, outgoing);
+        composer.value = "";
+        state.attachments = [];
+        state.fileReferences = composer.fileReferences;
+        updateSkillInput(); renderAttachments(); saveDraft();
+        renderMain(true);
+      }
       if (!shell) void workspacePrepareNotifications();
       const { projectId, sessionId } = await ensureSessionForSend();
-      model = selectedModel();
       operationKey = workspaceConversationKey(projectId, sessionId);
       roundClocks.set(operationKey, sendClock);
       if (operationKey !== sendKey) roundClocks.delete(sendKey);
       sendingConversations.add(operationKey);
+      if (outgoing) {
+        outgoing.key = operationKey;
+        if (operationKey !== sendKey && alive() &&
+            workspaceConversationKey(state.projectId, state.sessionId) === operationKey) renderMain(true);
+      }
       const base = sessionPath(projectId, sessionId);
       if (shell) {
         pendingActions.set(workspaceConversationKey(projectId, sessionId), `!${shell}`);
@@ -4330,20 +5160,23 @@ function renderWorkspace(view) {
         renderMain();
       }
       if (slash) {
-        const queue = await api(`${base}/queue`, {
+        const queue = await api(`${base}/${queued ? "queue" : "send"}`, {
           method: "POST", body: { kind: "command", payload: { command: slash[1], arguments: slash[2] || "", agent, ...model, ...variant } }, silent: true,
         });
-        sendClock.queueId = queue.items?.at(-1)?.id;
+        sendClock.queueId = queue.submitted_id || queue.items?.at(-1)?.id;
+        if (queue.message_id) sendClock.userId = queue.message_id;
         applyQueue(queue, projectId, sessionId);
       } else if (shell) {
         await api(`${base}/shell`, {
           method: "POST", body: { command: shell, agent, ...model }, silent: true,
         });
       } else {
-        const queue = await api(`${base}/queue`, {
+        const queue = await api(`${base}/${queued ? "queue" : "send"}`, {
           method: "POST", body: { kind: "prompt", payload: { text, files, references, agent, ...model, ...variant } }, silent: true,
         });
-        sendClock.queueId = queue.items?.at(-1)?.id;
+        sendClock.queueId = queue.submitted_id || queue.items?.at(-1)?.id;
+        if (queue.message_id) sendClock.userId = queue.message_id;
+        if (outgoing) outgoing.nativeId = queue.message_id;
         applyQueue(queue, projectId, sessionId);
       }
       if (!alive()) return;
@@ -4351,25 +5184,38 @@ function renderWorkspace(view) {
       dismissedTodoPanels.add(deliveredKey);
       renderTodoPanel();
       const saved = workspaceReadDraft(sendKey);
-      if (JSON.stringify(saved) === JSON.stringify(originalDraft)) workspaceWriteDraft(sendKey, null);
-      if (sendKey !== deliveredKey && JSON.stringify(workspaceReadDraft(deliveredKey)) === JSON.stringify(originalDraft)) {
+      if (!outgoing && JSON.stringify(saved) === JSON.stringify(originalDraft)) workspaceWriteDraft(sendKey, null);
+      if (!outgoing && sendKey !== deliveredKey && JSON.stringify(workspaceReadDraft(deliveredKey)) === JSON.stringify(originalDraft)) {
         workspaceWriteDraft(deliveredKey, null);
       }
       if (state.projectId === projectId && state.sessionId === sessionId) {
-        if (composer.value.trim() === text) composer.value = "";
+        const currentDraft = { ...composer.snapshot(), attachments: state.attachments.map(item => ({ ...item })) };
+        if (!outgoing && JSON.stringify(currentDraft) === JSON.stringify(originalDraft)) {
+          composer.value = "";
+          state.attachments = [];
+        }
         updateSkillInput();
-        state.attachments = [];
         state.fileReferences = composer.fileReferences;
         renderAttachments();
         saveDraft();
+        if (document.activeElement === input || sendActions.contains(document.activeElement))
+          input.focus({ preventScroll: true });
       }
+      // Admission is complete. History refreshes must not lock the composer.
+      sendingConversations.delete(operationKey);
+      sendingConversations.delete(sendKey);
+      renderHeader();
       refreshWorkspaceStatuses();
-      await loadSessions(state.projects.find((project) => project.id === projectId));
-      await refreshSelected();
+      void loadSessions(state.projects.find((project) => project.id === projectId));
+      void refreshSelected();
     } catch (error) {
       if (sendClock) sendClock.endedAt = Date.now();
       const failure = `操作失败：${detail(error)}`;
-      if (workspaceConversationKey(state.projectId, state.sessionId) === sendKey) state.actionError = failure;
+      if (outgoing && !outgoing.nativeId) {
+        outgoing.error = detail(error);
+        restoreOutgoingDraft(outgoing);
+      }
+      if ([sendKey, operationKey].includes(workspaceConversationKey(state.projectId, state.sessionId))) state.actionError = failure;
       toast(failure, "error");
     } finally {
       pendingActions.delete(operationKey);
@@ -4449,7 +5295,7 @@ function renderWorkspace(view) {
     }
     if (event.key === "Enter" && !event.shiftKey && !composing) {
       event.preventDefault();
-      view.querySelector("#wsp-form").requestSubmit();
+      view.querySelector("#wsp-form").requestSubmit(event.altKey && !queueSend.disabled ? queueSend : undefined);
     }
   });
 
@@ -4504,32 +5350,36 @@ function renderWorkspace(view) {
   }
 
   async function fetchProjects() {
+    const previousSessions = new Map(state.sessions);
     try {
       const projects = await api("workspace/projects", { silent: true });
       if (!alive()) return;
       const previousIds = new Set(state.projects.map(project => project.id));
+      const chats = state.projects.find(project => project.id === WORKSPACE_CHAT_ID) ||
+        {id: WORKSPACE_CHAT_ID, kind: "chat", name: "普通对话", path: "", session_count: 0};
       state.projects = workspaceOrderItems(projects.items || [], "sona-code:project-order");
+      state.projects.push(chats);
       for (const project of state.projects) {
         if (!previousIds.has(project.id)) state.collapsedProjects.add(project.id);
-        if (Array.isArray(project.sessions)) storeSessions(project, project.sessions);
+        if (project.id !== WORKSPACE_CHAT_ID && Array.isArray(project.sessions) &&
+            state.sessions.get(project.id) === previousSessions.get(project.id)) storeSessions(project, project.sessions);
       }
       refreshWorkspaceStatuses();
-      const selected = state.projects.find((item) => item.id === state.projectId) || state.projects[0];
+      const selected = state.projects.find((item) => item.id === state.projectId) ||
+        state.projects.find(item => item.id !== WORKSPACE_CHAT_ID);
       renderSidebar();
       if (selected && (!draftContextReady || selected.id !== state.projectId)) selectProject(selected.id);
       else if (selected) loadSessions(selected);
       else {
         state.projectId = null; state.sessionId = null;
         if (!draftContextReady) restoreDraft();
-        if (!state.chosenModels.has(null)) {
-          try { state.chosenModels.set(null, localStorage.getItem("sona-code:last-model") || ""); } catch (_) {}
-        }
+        restoreModelSelection();
         loadModels(null);
         renderHeader(); renderMain();
       }
       // Older/custom stores need the native API, but still load their counts
       // without requiring expansion. Limit cold starts to two at a time.
-      const missing = state.projects.filter(project => project.session_count === null && project.id !== selected?.id);
+      const missing = state.projects.filter(project => project.id !== WORKSPACE_CHAT_ID && project.session_count === null && project.id !== selected?.id);
       const loadCounts = async () => {
         while (alive() && missing.length) await loadSessions(missing.shift());
       };
@@ -4539,11 +5389,32 @@ function renderWorkspace(view) {
     }
   }
 
+  async function loadChatScope() {
+    const previous = state.sessions.get(WORKSPACE_CHAT_ID);
+    try {
+      const chats = await api("workspace/chats", {silent: true});
+      if (!alive()) return;
+      const index = state.projects.findIndex(project => project.id === WORKSPACE_CHAT_ID);
+      if (index >= 0) state.projects[index] = chats;
+      else state.projects.push(chats);
+      if (Array.isArray(chats.sessions) && state.sessions.get(WORKSPACE_CHAT_ID) === previous &&
+          (!previous?.length || chats.sessions.length))
+        storeSessions(chats, chats.sessions);
+      if (!chats.sessions?.length && state.projectId === WORKSPACE_CHAT_ID) void loadSessions(chats);
+      renderSidebar();
+    } catch (error) {
+      if (alive()) state.errors.set(WORKSPACE_CHAT_ID, detail(error));
+    }
+  }
+
   loadProjects();
   loadCheck();
+  void loadChatScope();
   return {
     suspend() {
       if (disposed || suspended) return;
+      relatedSessionRequest++;
+      closeSubagentPopover();
       saveDraft();
       suspended = true;
       cancelSelectedRefresh();

@@ -55,6 +55,11 @@ async fn open_website_login(app: tauri::AppHandle, url: String) -> Result<(), St
     .map_err(|error| error.to_string())?
 }
 
+#[tauri::command]
+async fn open_website(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    open_website_login(app, url).await
+}
+
 fn show_main_window(app: &tauri::AppHandle) {
     eprintln!("desktop: restoring main window");
     if let Some(window) = app.get_webview_window("main") {
@@ -226,6 +231,7 @@ pub fn run() {
         ))
         .invoke_handler(tauri::generate_handler![
             open_website_login,
+            open_website,
             desktop_settings::get_autostart,
             desktop_settings::set_autostart,
             request_task_attention,
