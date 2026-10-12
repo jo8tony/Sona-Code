@@ -27,9 +27,36 @@ from sona_code.terminal.manager import resolve_opencode
 from sona_code.admin.models import application_catalog, public_native_catalog, native_provider_id
 from sona_code.workspace.manager import WorkspaceError
 from sona_code.workspace.changes import annotate_changes, history_changes
+from sona_code.workspace.files import FileError, MAX_FILE_BYTES, read_file, save_file
 from sona_code.recording.parse import session_key_from_header
 
 router = APIRouter()
+
+
+class SaveProjectFileBody(BaseModel):
+    content: str = Field(max_length=MAX_FILE_BYTES)
+    revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+@router.get("/workspace/projects/{project_id}/file")
+def read_project_file(project_id: str, request: Request, path: str = Query(max_length=2000)) -> dict:
+    try:
+        return read_file(Path(_project_path(request, project_id)), path)
+    except FileError as exc:
+        raise HTTPException(exc.status, exc.detail) from exc
+
+
+@router.put("/workspace/projects/{project_id}/file")
+def save_project_file(project_id: str, body: SaveProjectFileBody, request: Request,
+                      path: str = Query(max_length=2000)) -> dict:
+    origin = request.headers.get("origin")
+    if ((origin is not None and origin.rstrip("/") != str(request.base_url).rstrip("/"))
+            or request.headers.get("sec-fetch-site") == "cross-site"):
+        raise HTTPException(403, "仅允许从应用内保存文件")
+    try:
+        return save_file(Path(_project_path(request, project_id)), path, body.content, body.revision)
+    except FileError as exc:
+        raise HTTPException(exc.status, exc.detail) from exc
 
 
 def _project_id(path: str) -> str:
@@ -43,9 +70,14 @@ def _project_info(item: dict) -> dict:
 
 
 def _project_path(request: Request, project_id: str) -> str:
-    for item in request.app.state.runtime.terminal_projects.list():
+    return str(registered_project_path(request.app.state.runtime, project_id))
+
+
+def registered_project_path(runtime, project_id: str) -> Path:
+    """Resolve the shared registry for both HTTP and code-navigation sockets."""
+    for item in runtime.terminal_projects.list():
         if _project_id(item["path"]) == project_id:
-            return str(Path(item["path"]).expanduser().resolve())
+            return Path(item["path"]).expanduser().resolve()
     raise HTTPException(status_code=404, detail="项目不存在")
 
 
@@ -146,6 +178,8 @@ async def remove_project(project_id: str, request: Request) -> dict:
     path = _project_path(request, project_id)
     await request.app.state.runtime.workspace_queue.discard(project_id)
     deleted = request.app.state.runtime.terminal_projects.delete(path)
+    await request.app.state.runtime.language_services.close_project(project_id)
+    await asyncio.to_thread(request.app.state.runtime.analysis_settings.remove, project_id)
     await request.app.state.runtime.workspace.stop(path)
     return {"ok": deleted}
 

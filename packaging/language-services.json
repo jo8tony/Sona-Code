@@ -1,0 +1,711 @@
+{
+  "schema": 1,
+  "platform": "windows-x64",
+  "versions": {
+    "node": "22.23.3",
+    "jdk": "21.0.12.1+1",
+    "jdtls": "1.61.0",
+    "pyright": "1.1.414",
+    "typescript_server": "6.0.2",
+    "typescript": "6.0.3"
+  },
+  "archives": {
+    "jdtls-source.tar.gz": {
+      "name": "jdtls-source.tar.gz",
+      "url": "https://codeload.github.com/eclipse-jdtls/eclipse.jdt.ls/tar.gz/refs/tags/v1.61.0",
+      "sha256": "2bb2c3eaa1af51966c74deca5d7822633b28bd16c135b819acc9135ed285751f"
+    },
+    "pyright-source.tar.gz": {
+      "name": "pyright-source.tar.gz",
+      "url": "https://codeload.github.com/microsoft/pyright/tar.gz/refs/tags/1.1.414",
+      "sha256": "7a57e948445b2d61a3aa16872b2a8026951df3186f11b8d6d7357e94924569ac"
+    },
+    "typescript-server-source.tar.gz": {
+      "name": "typescript-server-source.tar.gz",
+      "url": "https://codeload.github.com/typescript-language-server/typescript-language-server/tar.gz/refs/tags/v6.0.2",
+      "sha256": "d3eea925798806bd2b9037d21742c5dea1de9a11d7d7ac2ef0f0b975fb32a5a1"
+    },
+    "typescript-source.tar.gz": {
+      "name": "typescript-source.tar.gz",
+      "url": "https://codeload.github.com/microsoft/TypeScript/tar.gz/refs/tags/v6.0.3",
+      "sha256": "c26953b79c1197e02f5666a0b612d5b9707339557aa9744097e7d5719de1a117"
+    },
+    "jdk-source.tar.gz": {
+      "name": "jdk-source.tar.gz",
+      "url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk-sources_21.0.12.1_1.tar.gz",
+      "sha256": "573057d03584ae793fb7ec9a14c76d826d9187a53efeefd99da47403a5308234"
+    },
+    "jdk.zip": {
+      "name": "jdk.zip",
+      "url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip",
+      "sha256": "f9d6e191ab098c0d416e7d588a24420a8621cd2f4720dab2459b8b7b2d2d8b4e"
+    },
+    "node-source.tar.gz": {
+      "name": "node-source.tar.gz",
+      "url": "https://nodejs.org/dist/v22.23.3/node-v22.23.3.tar.gz",
+      "sha256": "9436c81b284889303d39f5b8bd629bf19e790c665ccb94b4994aa87220d9799a"
+    },
+    "jdtls.tar.gz": {
+      "name": "jdtls.tar.gz",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/jdt-language-server-1.61.0-202609031315.tar.gz",
+      "sha256": "338e7e73d61836651ba2453919a0d34fa763eb4e7c03342092309bffb8934c64"
+    },
+    "node.zip": {
+      "name": "node.zip",
+      "url": "https://nodejs.org/dist/v22.23.3/node-v22.23.3-win-x64.zip",
+      "sha256": "2b0ff57b049cda1bbcea2240eec20467018713c1efe1f7360c2681859b90ed71"
+    },
+    "temurin-build.tar.gz": {
+      "name": "temurin-build.tar.gz",
+      "url": "https://codeload.github.com/adoptium/temurin-build/tar.gz/e6ba7dec3d07654074559310376a3ae89da5f4ac",
+      "sha256": "b1340378b9ed62b32acfacd012dd069ec2b9d940fc39d3c73f32142d64e89713"
+    },
+    "equinox-native-source.tar.gz": {
+      "name": "equinox-native-source.tar.gz",
+      "url": "https://codeload.github.com/eclipse-equinox/equinox/tar.gz/a893f8d5ea8d3714ae0c74251fb0778e502b1592",
+      "sha256": "2ee024904a73c22249a63c16b6669d03cc7d3c24f7cc7f5b4479da9c569b2a4f"
+    },
+    "m2e-workspace-source.jar": {
+      "name": "m2e-workspace-source.jar",
+      "url": "https://repo.maven.apache.org/maven2/io/takari/m2e/workspace/org.eclipse.m2e.workspace.cli/0.4.0/org.eclipse.m2e.workspace.cli-0.4.0-sources.jar",
+      "sha256": "89e7a765e4f173dd464f6f9f9df1c271c955c4ccf9dd087568afd897f2f7bade"
+    },
+    "temurin-build-metadata.json": {
+      "name": "temurin-build-metadata.json",
+      "url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip.json",
+      "sha256": "f8fe05b00bf7005b37eadd6a879d35617b7e142aad7e216811f498f6c9d56017"
+    }
+  },
+  "source_components": {
+    "node-source.tar.gz": "node",
+    "jdk-source.tar.gz": "jdk",
+    "jdtls-source.tar.gz": "jdtls",
+    "pyright-source.tar.gz": "pyright",
+    "typescript-server-source.tar.gz": "typescript_server",
+    "typescript-source.tar.gz": "typescript",
+    "temurin-build.tar.gz": "jdk",
+    "temurin-build-metadata.json": "jdk",
+    "equinox-native-source.tar.gz": "jdtls",
+    "m2e-workspace-source.jar": "jdtls"
+  },
+  "eclipse_sources": [
+    {
+      "name": "ch.qos.logback.classic.source_1.5.32.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/ch.qos.logback.classic.source_1.5.32.jar",
+      "sha256": "7fe3c55001e55e40f938f37b3990cc3ae528549500dd048b474bec3c9b70d2e5",
+      "binary": "servers/jdtls/plugins/ch.qos.logback.classic_1.5.32.jar"
+    },
+    {
+      "name": "ch.qos.logback.core.source_1.5.32.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/ch.qos.logback.core.source_1.5.32.jar",
+      "sha256": "f961b65827764ebadb8c9a4016b51ac704618e050a03bdf6ef65da0e8111dbad",
+      "binary": "servers/jdtls/plugins/ch.qos.logback.core_1.5.32.jar"
+    },
+    {
+      "name": "com.google.gson.source_2.14.0.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/com.google.gson.source_2.14.0.jar",
+      "sha256": "62b12fbc1abc9c9a76c4af24eb39688c6717ea4c56e9d23d032eefc4e8d14f53",
+      "binary": "servers/jdtls/plugins/com.google.gson_2.14.0.jar"
+    },
+    {
+      "name": "com.google.guava.failureaccess.source_1.0.3.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/com.google.guava.failureaccess.source_1.0.3.jar",
+      "sha256": "f13cb14dfdfc680fe071dafe48de1ac59b14733f96e1c5f86395817e4bea3ad5",
+      "binary": "servers/jdtls/plugins/com.google.guava.failureaccess_1.0.3.jar"
+    },
+    {
+      "name": "com.google.guava.source_33.6.0.jre.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/com.google.guava.source_33.6.0.jre.jar",
+      "sha256": "2740b1777f2e281a30c859f57c09b34d7b7a29e64489ed54889437fd0ea2b9dc",
+      "binary": "servers/jdtls/plugins/com.google.guava_33.6.0.jre.jar"
+    },
+    {
+      "name": "com.sun.jna.platform.source_5.19.1.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/com.sun.jna.platform.source_5.19.1.jar",
+      "sha256": "d631cd72b1fdb3ef270a106c48ed466cc78cc2cb951a86ffd38e9d7bed566853",
+      "binary": "servers/jdtls/plugins/com.sun.jna.platform_5.19.1.jar"
+    },
+    {
+      "name": "com.sun.jna.source_5.19.1.v20260612-1000.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/com.sun.jna.source_5.19.1.v20260612-1000.jar",
+      "sha256": "f583f2bfbebce03d0c62bc4e94117ce3d807cc0c310cfcece18d0bfaf65deaf4",
+      "binary": "servers/jdtls/plugins/com.sun.jna_5.19.1.v20260612-1000.jar"
+    },
+    {
+      "name": "jakarta.annotation-api.source_1.3.5.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/jakarta.annotation-api.source_1.3.5.jar",
+      "sha256": "8cd09d5d22c4b18b2c8db6543065e659d2c4cb5ea1705751b4eed37e35f7b259",
+      "binary": "servers/jdtls/plugins/jakarta.annotation-api_1.3.5.jar"
+    },
+    {
+      "name": "jakarta.inject.jakarta.inject-api.source_1.0.5.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/jakarta.inject.jakarta.inject-api.source_1.0.5.jar",
+      "sha256": "041e35e44cd4b6ec37c6dba37a44bc410cbc22843b22c5022dfca81cf79f863b",
+      "binary": "servers/jdtls/plugins/jakarta.inject.jakarta.inject-api_1.0.5.jar"
+    },
+    {
+      "name": "jakarta.servlet-api.source_6.1.0.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/jakarta.servlet-api.source_6.1.0.jar",
+      "sha256": "69190cd448e37356b3c93d8810dd638f2da84d31609f230468d04bdbdbac7233",
+      "binary": "servers/jdtls/plugins/jakarta.servlet-api_6.1.0.jar"
+    },
+    {
+      "name": "org.apache.ant.source_1.10.17.v20260410-1000.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.apache.ant.source_1.10.17.v20260410-1000.jar",
+      "sha256": "f1f7954951a7d382a25afdfba8b78c46a7019f062e37047d8e24ef8991239a4a",
+      "binary": "servers/jdtls/plugins/org.apache.ant_1.10.17.v20260410-1000.jar"
+    },
+    {
+      "name": "org.apache.aries.spifly.dynamic.bundle.source_1.3.7.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.apache.aries.spifly.dynamic.bundle.source_1.3.7.jar",
+      "sha256": "a58ebf4d1ce0acde55eb39de79a0810b5ab2e2b223ea3128875867ef6e2ef03e",
+      "binary": "servers/jdtls/plugins/org.apache.aries.spifly.dynamic.bundle_1.3.7.jar"
+    },
+    {
+      "name": "org.apache.commons.cli.source_1.11.0.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.apache.commons.cli.source_1.11.0.jar",
+      "sha256": "d26af68d57dba67ab2b7f29c6d0ddfee8e26a1b4e4b29107a53205b30dd5e5f4",
+      "binary": "servers/jdtls/plugins/org.apache.commons.cli_1.11.0.jar"
+    },
+    {
+      "name": "org.apache.commons.lang3.source_3.20.0.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.apache.commons.lang3.source_3.20.0.jar",
+      "sha256": "56878cf2341164592aa3c06272e00997871784b532875a9d7aaae8aaf8f5984e",
+      "binary": "servers/jdtls/plugins/org.apache.commons.lang3_3.20.0.jar"
+    },
+    {
+      "name": "org.apache.felix.scr.source_2.2.18.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.apache.felix.scr.source_2.2.18.jar",
+      "sha256": "276f340368af61b37558b42eac151a37d53881533280f9b9e315d326535c049c",
+      "binary": "servers/jdtls/plugins/org.apache.felix.scr_2.2.18.jar"
+    },
+    {
+      "name": "org.commonmark.ext-gfm-tables.source_0.30.0.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.commonmark.ext-gfm-tables.source_0.30.0.jar",
+      "sha256": "78c7e243bacc4a37b5b3d0a38e974316d04ad67f72a5247ba73c4baa40dc085b",
+      "binary": "servers/jdtls/plugins/org.commonmark.ext-gfm-tables_0.30.0.jar"
+    },
+    {
+      "name": "org.commonmark.source_0.30.0.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.commonmark.source_0.30.0.jar",
+      "sha256": "9ab993943b60d0d21acb9a04327883f05e48a2bc800efd9005463538c72ee8f3",
+      "binary": "servers/jdtls/plugins/org.commonmark_0.30.0.jar"
+    },
+    {
+      "name": "org.eclipse.ant.core.source_3.7.1000.v20260602-0655.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.ant.core.source_3.7.1000.v20260602-0655.jar",
+      "sha256": "e4d05651ee6b514ae8ca95dd5f30ec74da491dd358ed3cb16771c230ad5cec1c",
+      "binary": "servers/jdtls/plugins/org.eclipse.ant.core_3.7.1000.v20260602-0655.jar"
+    },
+    {
+      "name": "org.eclipse.buildship.compat.source_3.1.12.v20260901-1217-s.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.buildship.compat.source_3.1.12.v20260901-1217-s.jar",
+      "sha256": "74a2cc83d9448be0f1bbc2065c1cf4b299f0276ac45b692741ee9f474f09cf9f",
+      "binary": "servers/jdtls/plugins/org.eclipse.buildship.compat_3.1.12.v20260901-1217-s.jar"
+    },
+    {
+      "name": "org.eclipse.buildship.core.source_3.1.12.v20260901-1217-s.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.buildship.core.source_3.1.12.v20260901-1217-s.jar",
+      "sha256": "9c3ef24d08cb610ddfef7c0e48af723525dc950166eb6bdb4fa3ba6b4781f3bc",
+      "binary": "servers/jdtls/plugins/org.eclipse.buildship.core_3.1.12.v20260901-1217-s.jar"
+    },
+    {
+      "name": "org.eclipse.compare.core.source_3.8.900.v20260731-0809.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.compare.core.source_3.8.900.v20260731-0809.jar",
+      "sha256": "94c558930811b818277eb5aa579dc6ed12958ee304f937ce477097aa5bd9721b",
+      "binary": "servers/jdtls/plugins/org.eclipse.compare.core_3.8.900.v20260731-0809.jar"
+    },
+    {
+      "name": "org.eclipse.core.commands.source_3.13.0.v20260605-1749.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.core.commands.source_3.13.0.v20260605-1749.jar",
+      "sha256": "97691a91b483f43c47406d8c8974a528a39e0c48483ad04380a3a5e2b8105c3b",
+      "binary": "servers/jdtls/plugins/org.eclipse.core.commands_3.13.0.v20260605-1749.jar"
+    },
+    {
+      "name": "org.eclipse.core.contenttype.source_3.9.900.v20260617-0626.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.core.contenttype.source_3.9.900.v20260617-0626.jar",
+      "sha256": "505f4a05db88811c0c06ef90b37ffae5c1109c69794dcb540b27611e2ee075f3",
+      "binary": "servers/jdtls/plugins/org.eclipse.core.contenttype_3.9.900.v20260617-0626.jar"
+    },
+    {
+      "name": "org.eclipse.core.expressions.source_3.9.700.v20260710-0925.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.core.expressions.source_3.9.700.v20260710-0925.jar",
+      "sha256": "ed9b83c00f5dcbbd2ca01117f67373157614d108210dffc88b3f310f0e6e06ba",
+      "binary": "servers/jdtls/plugins/org.eclipse.core.expressions_3.9.700.v20260710-0925.jar"
+    },
+    {
+      "name": "org.eclipse.core.filebuffers.source_3.8.600.v20260426-1223.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.core.filebuffers.source_3.8.600.v20260426-1223.jar",
+      "sha256": "15e7b543b320eb6425b38e1d54c9fe4bba7ef2bd039773656c8b368e2a19b474",
+      "binary": "servers/jdtls/plugins/org.eclipse.core.filebuffers_3.8.600.v20260426-1223.jar"
+    },
+    {
+      "name": "org.eclipse.core.filesystem.source_1.11.500.v20260721-1509.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.core.filesystem.source_1.11.500.v20260721-1509.jar",
+      "sha256": "4b1ae09b66478bb9fcec7c1392b12dd24b4867a89686031b98491e4da57c4566",
+      "binary": "servers/jdtls/plugins/org.eclipse.core.filesystem_1.11.500.v20260721-1509.jar"
+    },
+    {
+      "name": "org.eclipse.core.jobs.source_3.15.900.v20260604-0622.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.core.jobs.source_3.15.900.v20260604-0622.jar",
+      "sha256": "afe53db881df39d8928b2b5a029391bd9c163222297128a37b25e2ed51c79a83",
+      "binary": "servers/jdtls/plugins/org.eclipse.core.jobs_3.15.900.v20260604-0622.jar"
+    },
+    {
+      "name": "org.eclipse.core.net.source_1.5.900.v20260507-0401.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.core.net.source_1.5.900.v20260507-0401.jar",
+      "sha256": "3b3f7d914e806d0d5c0133e276554755dfb9ca0dfa9b8098cedf7e5c46df93c5",
+      "binary": "servers/jdtls/plugins/org.eclipse.core.net_1.5.900.v20260507-0401.jar"
+    },
+    {
+      "name": "org.eclipse.core.resources.source_3.24.100.v20260812-0827.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.core.resources.source_3.24.100.v20260812-0827.jar",
+      "sha256": "9caac696715ad74c836d0b181d96cc9ac584620c0ca1b85f4996e92e96aba418",
+      "binary": "servers/jdtls/plugins/org.eclipse.core.resources_3.24.100.v20260812-0827.jar"
+    },
+    {
+      "name": "org.eclipse.core.runtime.source_3.35.0.v20260623-1631.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.core.runtime.source_3.35.0.v20260623-1631.jar",
+      "sha256": "7e17258fa310db401c612d258a96749637ffa9ac271da1eb2abe22b390a9420f",
+      "binary": "servers/jdtls/plugins/org.eclipse.core.runtime_3.35.0.v20260623-1631.jar"
+    },
+    {
+      "name": "org.eclipse.core.variables.source_3.6.900.v20260602-0702.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.core.variables.source_3.6.900.v20260602-0702.jar",
+      "sha256": "4c2f7cefd4d019f75b8fa2c18f8ddf5bee44647872fe3461f0ea15c83578d55c",
+      "binary": "servers/jdtls/plugins/org.eclipse.core.variables_3.6.900.v20260602-0702.jar"
+    },
+    {
+      "name": "org.eclipse.debug.core.source_3.24.0.v20260714-0955.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.debug.core.source_3.24.0.v20260714-0955.jar",
+      "sha256": "7905368af9eaf45c5049210c402bb1def1ae91926af3d642a43049810aff7929",
+      "binary": "servers/jdtls/plugins/org.eclipse.debug.core_3.24.0.v20260714-0955.jar"
+    },
+    {
+      "name": "org.eclipse.equinox.app.source_1.7.600.v20251211-1038.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.equinox.app.source_1.7.600.v20251211-1038.jar",
+      "sha256": "64a7ee0ea38d93dc2e13c091ba6915deee91592cf238ac5a24e393f1d48ee7d9",
+      "binary": "servers/jdtls/plugins/org.eclipse.equinox.app_1.7.600.v20251211-1038.jar"
+    },
+    {
+      "name": "org.eclipse.equinox.common.source_3.21.0.v20260604-1221.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.equinox.common.source_3.21.0.v20260604-1221.jar",
+      "sha256": "65685bcb3fdab96770403759ac48624bc928adc989be050eb2b4d696fed06c70",
+      "binary": "servers/jdtls/plugins/org.eclipse.equinox.common_3.21.0.v20260604-1221.jar"
+    },
+    {
+      "name": "org.eclipse.equinox.frameworkadmin.equinox.source_1.3.400.v20250515-0513.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.equinox.frameworkadmin.equinox.source_1.3.400.v20250515-0513.jar",
+      "sha256": "96d136a0c8404b5304ead09bb512302287469e53402fb7ef004171ca411c96f4",
+      "binary": "servers/jdtls/plugins/org.eclipse.equinox.frameworkadmin.equinox_1.3.400.v20250515-0513.jar"
+    },
+    {
+      "name": "org.eclipse.equinox.frameworkadmin.source_2.3.600.v20260306-0554.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.equinox.frameworkadmin.source_2.3.600.v20260306-0554.jar",
+      "sha256": "c4ecbe6b22f985379fa8cbe49bdd9415818a270fccb0f84088edbfd78c250c75",
+      "binary": "servers/jdtls/plugins/org.eclipse.equinox.frameworkadmin_2.3.600.v20260306-0554.jar"
+    },
+    {
+      "name": "org.eclipse.equinox.launcher.source_1.8.0.v20260804-1928.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.equinox.launcher.source_1.8.0.v20260804-1928.jar",
+      "sha256": "52ccefbc287ee364f026b274a6011faa0105a04bfcdd0a19a62f7f74d521378e",
+      "binary": "servers/jdtls/plugins/org.eclipse.equinox.launcher_1.8.0.v20260804-1928.jar"
+    },
+    {
+      "name": "org.eclipse.equinox.preferences.source_3.12.100.v20251111-0704.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.equinox.preferences.source_3.12.100.v20251111-0704.jar",
+      "sha256": "7488421cb2ca889373d8b6d2ebe25987d9b010f921e0062de8934ae69267392c",
+      "binary": "servers/jdtls/plugins/org.eclipse.equinox.preferences_3.12.100.v20251111-0704.jar"
+    },
+    {
+      "name": "org.eclipse.equinox.registry.source_3.12.600.v20250906-0651.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.equinox.registry.source_3.12.600.v20250906-0651.jar",
+      "sha256": "89a66885d7439e030bbcf1b13de941f64796e2bcd639260f1fad57ca9e44bdfc",
+      "binary": "servers/jdtls/plugins/org.eclipse.equinox.registry_3.12.600.v20250906-0651.jar"
+    },
+    {
+      "name": "org.eclipse.equinox.security.linux.source_1.1.400.v20250521-0415.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.equinox.security.linux.source_1.1.400.v20250521-0415.jar",
+      "sha256": "7653e83329ce285d02b809554a15b257ad5a94bd6ccc8dff0a9824e16f39b803",
+      "binary": "servers/jdtls/plugins/org.eclipse.equinox.security.linux_1.1.400.v20250521-0415.jar"
+    },
+    {
+      "name": "org.eclipse.equinox.security.macosx.source_1.102.500.v20250521-0414.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.equinox.security.macosx.source_1.102.500.v20250521-0414.jar",
+      "sha256": "77f8aee5d8792e95c9359148cabfc0915d6f214263e10eec5be084acf16baa21",
+      "binary": "servers/jdtls/plugins/org.eclipse.equinox.security.macosx_1.102.500.v20250521-0414.jar"
+    },
+    {
+      "name": "org.eclipse.equinox.security.win32.source_1.3.0.v20240419-2334.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.equinox.security.win32.source_1.3.0.v20240419-2334.jar",
+      "sha256": "bbb7b1bac753e4300f13206a40562eab9fa0aae9cbd5a41dee07e4cff13f0f2c",
+      "binary": "servers/jdtls/plugins/org.eclipse.equinox.security.win32_1.3.0.v20240419-2334.jar"
+    },
+    {
+      "name": "org.eclipse.equinox.security.source_1.4.700.v20250622-1644.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.equinox.security.source_1.4.700.v20250622-1644.jar",
+      "sha256": "14ffa555debb7fc36e8439edb5ab06ef2ef8e49618cccb5e31cd1270a66b5420",
+      "binary": "servers/jdtls/plugins/org.eclipse.equinox.security_1.4.700.v20250622-1644.jar"
+    },
+    {
+      "name": "org.eclipse.equinox.simpleconfigurator.manipulator.source_2.3.700.v20260306-0556.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.equinox.simpleconfigurator.manipulator.source_2.3.700.v20260306-0556.jar",
+      "sha256": "b87cbe6baf5d176756e7485ae912aa153f517b5fac2587c24e1aaaa790b72dbc",
+      "binary": "servers/jdtls/plugins/org.eclipse.equinox.simpleconfigurator.manipulator_2.3.700.v20260306-0556.jar"
+    },
+    {
+      "name": "org.eclipse.equinox.simpleconfigurator.source_1.5.700.v20251111-1031.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.equinox.simpleconfigurator.source_1.5.700.v20251111-1031.jar",
+      "sha256": "c86ec5201c26ebe51aa0542df482be5143c5d086685fe871442d258ca62916f5",
+      "binary": "servers/jdtls/plugins/org.eclipse.equinox.simpleconfigurator_1.5.700.v20251111-1031.jar"
+    },
+    {
+      "name": "org.eclipse.jdt.apt.core.source_3.8.800.v20260608-1927.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.jdt.apt.core.source_3.8.800.v20260608-1927.jar",
+      "sha256": "8b48014ba266898272a7686655d35355c04cb0e08f4d60ae400e5c984e020c44",
+      "binary": "servers/jdtls/plugins/org.eclipse.jdt.apt.core_3.8.800.v20260608-1927.jar"
+    },
+    {
+      "name": "org.eclipse.jdt.apt.pluggable.core.source_1.4.700.v20251202-0459.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.jdt.apt.pluggable.core.source_1.4.700.v20251202-0459.jar",
+      "sha256": "c6b039db38d03d6f1df3a8faeae3db201c2bad72b56e6baafcfd5abcb5e841ca",
+      "binary": "servers/jdtls/plugins/org.eclipse.jdt.apt.pluggable.core_1.4.700.v20251202-0459.jar"
+    },
+    {
+      "name": "org.eclipse.jdt.core.compiler.batch.source_3.46.100.v20260826-1225.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.jdt.core.compiler.batch.source_3.46.100.v20260826-1225.jar",
+      "sha256": "e27368e8dd83da80575cd5dfd50f60078fb638b69a10e427284686c2eaa34e1c",
+      "binary": "servers/jdtls/plugins/org.eclipse.jdt.core.compiler.batch_3.46.100.v20260826-1225.jar"
+    },
+    {
+      "name": "org.eclipse.jdt.core.javac.source_1.0.0.z20260430-1959.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.jdt.core.javac.source_1.0.0.z20260430-1959.jar",
+      "sha256": "da6c80fd9a6afbd613fe24da0b3c9fd69417a1315b607b5138870bc6ca47c675",
+      "binary": "servers/jdtls/plugins/org.eclipse.jdt.core.javac_1.0.0.z20260430-1959.jar"
+    },
+    {
+      "name": "org.eclipse.jdt.core.manipulation.source_1.25.0.v20260813-1704.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.jdt.core.manipulation.source_1.25.0.v20260813-1704.jar",
+      "sha256": "5e86ede7cf625552aaab515f41feafa98b616e1c39f04a237be6d6196dd9470a",
+      "binary": "servers/jdtls/plugins/org.eclipse.jdt.core.manipulation_1.25.0.v20260813-1704.jar"
+    },
+    {
+      "name": "org.eclipse.jdt.core.source_3.47.0.v20260828-1141.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.jdt.core.source_3.47.0.v20260828-1141.jar",
+      "sha256": "ab81af3f5e72769aded99c9f1c38b1d6be72519bc48c16b0c8a8e9819b62da52",
+      "binary": "servers/jdtls/plugins/org.eclipse.jdt.core_3.47.0.v20260828-1141.jar"
+    },
+    {
+      "name": "org.eclipse.jdt.debug.source_3.26.100.v20260714-1432.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.jdt.debug.source_3.26.100.v20260714-1432.jar",
+      "sha256": "b4c0e331fdc91b82a0c41ef0d3d97d7564716bf5ac288d127269d813f24fa525",
+      "binary": "servers/jdtls/plugins/org.eclipse.jdt.debug_3.26.100.v20260714-1432.jar"
+    },
+    {
+      "name": "org.eclipse.jdt.junit.core.source_3.15.0.v20260713-1834.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.jdt.junit.core.source_3.15.0.v20260713-1834.jar",
+      "sha256": "c3c21c9985bf41a2213e2fc54360bfe6fd438cccf7e314bb74fa536ade834674",
+      "binary": "servers/jdtls/plugins/org.eclipse.jdt.junit.core_3.15.0.v20260713-1834.jar"
+    },
+    {
+      "name": "org.eclipse.jdt.junit.runtime.source_3.8.100.v20260507-0922.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.jdt.junit.runtime.source_3.8.100.v20260507-0922.jar",
+      "sha256": "b3ddff463e7b7a2e2e617b65396e56fade5b6fdb2654f24ade595f51175f45f6",
+      "binary": "servers/jdtls/plugins/org.eclipse.jdt.junit.runtime_3.8.100.v20260507-0922.jar"
+    },
+    {
+      "name": "org.eclipse.jdt.launching.source_3.24.300.v20260609-0435.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.jdt.launching.source_3.24.300.v20260609-0435.jar",
+      "sha256": "6f59175a492c35ead78198a9a80aaaca1f124985dbb0fc1bbefd30bacadfe455",
+      "binary": "servers/jdtls/plugins/org.eclipse.jdt.launching_3.24.300.v20260609-0435.jar"
+    },
+    {
+      "name": "org.eclipse.jdt.ls.core.source_1.61.0.202609031315.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.jdt.ls.core.source_1.61.0.202609031315.jar",
+      "sha256": "98d8851a42c32e9575edc4ef8d3a49562fd69790ead8ba8801aabefd524ebbb0",
+      "binary": "servers/jdtls/plugins/org.eclipse.jdt.ls.core_1.61.0.202609031315.jar"
+    },
+    {
+      "name": "org.eclipse.jdt.ls.filesystem.source_1.61.0.202609031315.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.jdt.ls.filesystem.source_1.61.0.202609031315.jar",
+      "sha256": "a9d63929705aa59640ea58cd91804fbede98e6979a3a35ac2e7fab9a3a545913",
+      "binary": "servers/jdtls/plugins/org.eclipse.jdt.ls.filesystem_1.61.0.202609031315.jar"
+    },
+    {
+      "name": "org.eclipse.jdt.ls.logback.appender.source_1.61.0.202609031315.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.jdt.ls.logback.appender.source_1.61.0.202609031315.jar",
+      "sha256": "0cea2aaba8ed0bd8dc5722095beb58defae5418b5d61bce0c5c60a96a7a2bcbf",
+      "binary": "servers/jdtls/plugins/org.eclipse.jdt.ls.logback.appender_1.61.0.202609031315.jar"
+    },
+    {
+      "name": "org.eclipse.lsp4j.jsonrpc.source_1.0.0.v20260209-1721.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.lsp4j.jsonrpc.source_1.0.0.v20260209-1721.jar",
+      "sha256": "a4b8e4aec42bfa272f4e1ec47b9c45d1d4fe9241201cd0504010bdfba4d69bd4",
+      "binary": "servers/jdtls/plugins/org.eclipse.lsp4j.jsonrpc_1.0.0.v20260209-1721.jar"
+    },
+    {
+      "name": "org.eclipse.lsp4j.source_1.0.0.v20260209-1721.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.lsp4j.source_1.0.0.v20260209-1721.jar",
+      "sha256": "e5a5ed6ddc23508af07700b79217212376ddcd45f7e8dffbd29c8aecf8de8944",
+      "binary": "servers/jdtls/plugins/org.eclipse.lsp4j_1.0.0.v20260209-1721.jar"
+    },
+    {
+      "name": "org.eclipse.ltk.core.refactoring.source_3.16.0.v20260702-0744.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.ltk.core.refactoring.source_3.16.0.v20260702-0744.jar",
+      "sha256": "c42e494958f7603c4f66d6563a6c8d1120a5f89f034b11018dab9fe1c30f71ce",
+      "binary": "servers/jdtls/plugins/org.eclipse.ltk.core.refactoring_3.16.0.v20260702-0744.jar"
+    },
+    {
+      "name": "org.eclipse.m2e.apt.core.source_2.3.100.20250418-1315.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.m2e.apt.core.source_2.3.100.20250418-1315.jar",
+      "sha256": "79e45dd9c26bb4c60c6b32d4b62124fda02cfe57e90c6c448ca7057ee6f2e21c",
+      "binary": "servers/jdtls/plugins/org.eclipse.m2e.apt.core_2.3.100.20250418-1315.jar"
+    },
+    {
+      "name": "org.eclipse.m2e.core.source_2.7.800.20260522-0510.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.m2e.core.source_2.7.800.20260522-0510.jar",
+      "sha256": "ae7ce0f62a565e70b6489968f290a3a2fbc3c147e310e14ffd989bb4cea7e4cd",
+      "binary": "servers/jdtls/plugins/org.eclipse.m2e.core_2.7.800.20260522-0510.jar"
+    },
+    {
+      "name": "org.eclipse.m2e.jdt.source_2.5.200.20260602-0749.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.m2e.jdt.source_2.5.200.20260602-0749.jar",
+      "sha256": "cf4f3c7d2c299bf3d5cbce517ca9c8bad7b9a9421086d25368a8452823ff71ef",
+      "binary": "servers/jdtls/plugins/org.eclipse.m2e.jdt_2.5.200.20260602-0749.jar"
+    },
+    {
+      "name": "org.eclipse.m2e.maven.runtime.source_3.9.1600.20260522-0510.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.m2e.maven.runtime.source_3.9.1600.20260522-0510.jar",
+      "sha256": "db509b5ea6641e66017a9926ce5040a10dc842744b2b6976ca5476724564bd83",
+      "binary": "servers/jdtls/plugins/org.eclipse.m2e.maven.runtime_3.9.1600.20260522-0510.jar"
+    },
+    {
+      "name": "org.eclipse.osgi.compatibility.state.source_1.3.0.v20251022-1724.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.osgi.compatibility.state.source_1.3.0.v20251022-1724.jar",
+      "sha256": "2340d5dee5605b8f86f9910aa5fc47a7a9c1c442a11e48a497dbe7d211b127ae",
+      "binary": "servers/jdtls/plugins/org.eclipse.osgi.compatibility.state_1.3.0.v20251022-1724.jar"
+    },
+    {
+      "name": "org.eclipse.osgi.source_3.24.300.v20260721-1251.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.osgi.source_3.24.300.v20260721-1251.jar",
+      "sha256": "5ec5b96e7e996c02839a8819ec27fec0c235594d3dd305612dd61f9451e815af",
+      "binary": "servers/jdtls/plugins/org.eclipse.osgi_3.24.300.v20260721-1251.jar"
+    },
+    {
+      "name": "org.eclipse.search.core.source_3.16.700.v20260505-0615.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.search.core.source_3.16.700.v20260505-0615.jar",
+      "sha256": "90a7c94a650d8561871c613fcaff9153f83f6e2c497ca188a314f206094dc9d6",
+      "binary": "servers/jdtls/plugins/org.eclipse.search.core_3.16.700.v20260505-0615.jar"
+    },
+    {
+      "name": "org.eclipse.text.source_3.14.800.v20260815-0849.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.text.source_3.14.800.v20260815-0849.jar",
+      "sha256": "03b66a06cea09d1c073cba091ae4662b09d0b41e1eff341715aacc87ab17c48d",
+      "binary": "servers/jdtls/plugins/org.eclipse.text_3.14.800.v20260815-0849.jar"
+    },
+    {
+      "name": "org.eclipse.xtext.xbase.lib.source_2.42.0.v20260223-0608.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.eclipse.xtext.xbase.lib.source_2.42.0.v20260223-0608.jar",
+      "sha256": "046eb5449c760323acb1e606c93db1a6e17fb1b9f7a737b6bb02eeccffca17f8",
+      "binary": "servers/jdtls/plugins/org.eclipse.xtext.xbase.lib_2.42.0.v20260223-0608.jar"
+    },
+    {
+      "name": "org.hamcrest.source_3.0.0.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.hamcrest.source_3.0.0.jar",
+      "sha256": "51218287512b2de3c666e61127a4352357d69cd4c4ff7083b509e0040ad52a98",
+      "binary": "servers/jdtls/plugins/org.hamcrest_3.0.0.jar"
+    },
+    {
+      "name": "org.jsoup.source_1.19.1.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.jsoup.source_1.19.1.jar",
+      "sha256": "88df075e9374341d0ffcc82a018287042b0e672c2c0bf71d69114069cc6ae402",
+      "binary": "servers/jdtls/plugins/org.jsoup_1.19.1.jar"
+    },
+    {
+      "name": "org.junit.source_4.13.2.v20240929-1000.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.junit.source_4.13.2.v20240929-1000.jar",
+      "sha256": "5b41ebc47f621b7d1da6027ba89e86988d3861a76b2446b98cb17905b1ea602e",
+      "binary": "servers/jdtls/plugins/org.junit_4.13.2.v20240929-1000.jar"
+    },
+    {
+      "name": "org.objectweb.asm.commons.source_9.10.1.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.objectweb.asm.commons.source_9.10.1.jar",
+      "sha256": "22389a82d01aba30f80955703de7b6445bb60502582d7d9dda57f9189fc9276f",
+      "binary": "servers/jdtls/plugins/org.objectweb.asm.commons_9.10.1.jar"
+    },
+    {
+      "name": "org.objectweb.asm.tree.analysis.source_9.10.1.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.objectweb.asm.tree.analysis.source_9.10.1.jar",
+      "sha256": "76304b74b79549ff109039e8b988065dfed3f0c9c8c0e9eeb377be477bf1b990",
+      "binary": "servers/jdtls/plugins/org.objectweb.asm.tree.analysis_9.10.1.jar"
+    },
+    {
+      "name": "org.objectweb.asm.tree.source_9.10.1.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.objectweb.asm.tree.source_9.10.1.jar",
+      "sha256": "2b260c53050293c1b942dc464e1867b510a218503d594072c9c2f40ca80637d8",
+      "binary": "servers/jdtls/plugins/org.objectweb.asm.tree_9.10.1.jar"
+    },
+    {
+      "name": "org.objectweb.asm.util.source_9.10.1.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.objectweb.asm.util.source_9.10.1.jar",
+      "sha256": "30a0939d4c3d4998bc8d27c9e31b2a6bd463939733b3613fe3846df632736932",
+      "binary": "servers/jdtls/plugins/org.objectweb.asm.util_9.10.1.jar"
+    },
+    {
+      "name": "org.objectweb.asm.source_9.10.1.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.objectweb.asm.source_9.10.1.jar",
+      "sha256": "defe0344c0cc4cc568fc9109d43a8f0e6a04467ec0f8b40aeca2bdfc13c50b89",
+      "binary": "servers/jdtls/plugins/org.objectweb.asm_9.10.1.jar"
+    },
+    {
+      "name": "org.osgi.service.component.source_1.5.1.202212101352.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.osgi.service.component.source_1.5.1.202212101352.jar",
+      "sha256": "6a2eb08e3d25297d845e370d4ffb4d304ac33ea962f423c51ba8c1cab598aac0",
+      "binary": "servers/jdtls/plugins/org.osgi.service.component_1.5.1.202212101352.jar"
+    },
+    {
+      "name": "org.osgi.service.prefs.source_1.1.2.202109301733.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.osgi.service.prefs.source_1.1.2.202109301733.jar",
+      "sha256": "f87f1d0d72aa517309b935f7aeb445b52f019e80653d6525822313ee0c1cc9a4",
+      "binary": "servers/jdtls/plugins/org.osgi.service.prefs_1.1.2.202109301733.jar"
+    },
+    {
+      "name": "org.osgi.util.function.source_1.2.0.202109301733.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.osgi.util.function.source_1.2.0.202109301733.jar",
+      "sha256": "b1b647ebec507e4c60633376e2f90fedb34004b50a45786cc04ed2cbcc0b4cb7",
+      "binary": "servers/jdtls/plugins/org.osgi.util.function_1.2.0.202109301733.jar"
+    },
+    {
+      "name": "org.osgi.util.promise.source_1.3.0.202212101352.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/org.osgi.util.promise.source_1.3.0.202212101352.jar",
+      "sha256": "b05e38969e48c2c0eadc0ab33f9ae38fcab5af81e55acc30affebb9d1a13dd1b",
+      "binary": "servers/jdtls/plugins/org.osgi.util.promise_1.3.0.202212101352.jar"
+    },
+    {
+      "name": "slf4j.api.source_2.0.18.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/slf4j.api.source_2.0.18.jar",
+      "sha256": "677121cde71f7c021da3eab1fc2cb4742538a16080f3d867586677cd5469ca77",
+      "binary": "servers/jdtls/plugins/slf4j.api_2.0.18.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-ext-emoji.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-ext-emoji.source_0.64.8.jar",
+      "sha256": "20fdaa279219b6b1acbd8640b41cf51499e50f967e3b443bf721f5db410760c4",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-ext-emoji_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-ext-gfm-strikethrough.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-ext-gfm-strikethrough.source_0.64.8.jar",
+      "sha256": "74d5dfa212c29bce32733715cf6fc9053780d8c8627c11ef07e1f06d4fc2d344",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-ext-gfm-strikethrough_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-ext-ins.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-ext-ins.source_0.64.8.jar",
+      "sha256": "77aa563126d968d40d8b8deb63fd2f5d38e4d1d09b73a0dbb21ffc785ef61b84",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-ext-ins_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-ext-superscript.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-ext-superscript.source_0.64.8.jar",
+      "sha256": "7366eb8ca70775bf0eda2af317b4726b30580e1160349e1e4c0f7b8e8ce0e4c5",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-ext-superscript_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-ext-tables.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-ext-tables.source_0.64.8.jar",
+      "sha256": "9ffbb9d9033f3941be131c80d2c9e1be7c325e9bd7628ea86e9e78c435b1f77d",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-ext-tables_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-ext-wikilink.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-ext-wikilink.source_0.64.8.jar",
+      "sha256": "08059e2809c53ba35606a6374d9fd5414bd0bf566120601eec7ead6e43a72156",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-ext-wikilink_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-html2md-converter.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-html2md-converter.source_0.64.8.jar",
+      "sha256": "fe08061147f41f772be35c8f25433b6b2a1cb5cfa9ce34153ccf38aa6eb67998",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-html2md-converter_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-jira-converter.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-jira-converter.source_0.64.8.jar",
+      "sha256": "d5a9cc8083ad57049156f0a7a95b710e1bcf7f01ac2f92f54f86a7d89fccc87b",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-jira-converter_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-util-ast.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-util-ast.source_0.64.8.jar",
+      "sha256": "5f689c920d271c0dfabd0b16eb869ddcb58e691499e7df091fa105c248ee6e07",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-util-ast_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-util-builder.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-util-builder.source_0.64.8.jar",
+      "sha256": "1296d111f76aa22fd281fe36489891bfbc6a4db673dcc124cf33ef4b93060910",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-util-builder_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-util-collection.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-util-collection.source_0.64.8.jar",
+      "sha256": "903dc6905ed5add40c066a269e4c330acfaa0a965247feb35c6921e28db60491",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-util-collection_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-util-data.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-util-data.source_0.64.8.jar",
+      "sha256": "1ef6b44e1344287fd48376922e08865da94cb263ec83d6b7b3152d81db2e75c8",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-util-data_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-util-dependency.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-util-dependency.source_0.64.8.jar",
+      "sha256": "f0ffe8080058e9fb177ef5e004d5724adc1809fa9981d952d1dbe1f9af60db7d",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-util-dependency_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-util-format.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-util-format.source_0.64.8.jar",
+      "sha256": "2592eb9a7fd553e636cb1a88d4f9bbe1183c22ccda55e0ce0bcb822d2c5141ec",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-util-format_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-util-html.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-util-html.source_0.64.8.jar",
+      "sha256": "45e9ac470cb654f8d316cfd87e240f76ad4c49f3f60962ecf333ed5eaefe098b",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-util-html_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-util-misc.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-util-misc.source_0.64.8.jar",
+      "sha256": "403231a9b4b487746cbe32e53385b8f7184ff660b5bb2d9e5667dc2373dd0f4a",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-util-misc_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-util-options.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-util-options.source_0.64.8.jar",
+      "sha256": "578e4d824294ff6d0cdf62c9d5d5c150716cd60ae8be14d0606d30c0a595f8f7",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-util-options_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-util-sequence.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-util-sequence.source_0.64.8.jar",
+      "sha256": "b65d359512fbe441d07bd9f31ca2826442408c76b54d78b5cb76e5eb7a47447d",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-util-sequence_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark-util-visitor.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark-util-visitor.source_0.64.8.jar",
+      "sha256": "e2089326deb32c04d69f328b45912f0ddc7079548b6ac760d6270ea999ff5fe3",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark-util-visitor_0.64.8.jar"
+    },
+    {
+      "name": "wrapped.com.vladsch.flexmark.flexmark.source_0.64.8.jar",
+      "url": "https://download.eclipse.org/jdtls/milestones/1.61.0/repository/plugins/wrapped.com.vladsch.flexmark.flexmark.source_0.64.8.jar",
+      "sha256": "7bbfac3d125acd69df7c51f2ab0749ae8a97511a01698d93c1ca985cea843d08",
+      "binary": "servers/jdtls/plugins/wrapped.com.vladsch.flexmark.flexmark_0.64.8.jar"
+    }
+  ]
+}

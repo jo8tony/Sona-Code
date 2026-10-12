@@ -1,0 +1,65 @@
+.wsp-editor { position: absolute; inset: 0; z-index: 30; padding: 0;
+  background: var(--panel); color: var(--text); overflow: hidden; display: flex; flex-direction: column; }
+.wsp-editor[hidden] { display: none; }
+.wsp-editor-toolbar { display: flex; gap: 8px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.wsp-editor-path { flex: 1; min-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.wsp-editor-toolbar select { width: 140px; }
+.wsp-editor-toolbar > button[title^="Ctrl+"] { flex-shrink: 0; }
+.wsp-editor button, .wsp-editor select { border: 1px solid var(--border); background: var(--panel); color: var(--text);
+  padding: 6px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+.wsp-editor button:disabled, .wsp-editor select:disabled { opacity: .45; cursor: default; }
+.wsp-editor button:focus-visible, .wsp-editor select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wsp-editor .wsp-editor-save { color: white; background: var(--accent); border-color: var(--accent); }
+.wsp-editor-tabs { display: flex; overflow-x: auto; flex-shrink: 0; background: var(--bg-soft); border-bottom: 1px solid var(--border); }
+.wsp-editor-options { display: flex; gap: 18px; align-items: center; padding: 7px 14px; border-bottom: 1px solid var(--border); font-size: 12px; flex-shrink: 0; }
+.wsp-editor-options label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.wsp-editor-options input { width: auto; margin: 0; accent-color: var(--accent); }
+.wsp-editor-tab { display: flex; flex: 0 0 auto; max-width: 240px; border-right: 1px solid var(--border); white-space: nowrap; }
+.wsp-editor-tab[hidden] { display: none; }
+.wsp-editor-tab.active { background: var(--panel); box-shadow: inset 0 2px var(--accent); }
+.wsp-editor-tab button { border: 0; border-radius: 0; background: transparent; padding: 10px 12px; }
+.wsp-editor-tab button:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.wsp-editor-tab button:last-child { flex: 0 0 30px; padding: 10px 6px; }
+.wsp-editor-message { margin: 0; padding: 10px 14px; background: var(--accent-soft); color: var(--text); font-size: 12px; overflow-wrap: anywhere; flex-shrink: 0; }
+.wsp-editor-message[hidden], .wsp-editor-canvas[hidden] { display: none; }
+.wsp-editor-canvas { flex: 1; min-height: 0; width: 100%; position: relative; }
+.wsp-definition-menu { position: absolute; top: 12px; right: 14px; z-index: 50; max-height: 280px;
+  overflow-y: auto; min-width: 220px; max-width: 90%; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 8px 24px #0003; padding: 6px; }
+.wsp-definition-menu button { display: block; width: 100%; text-align: left; border: 0; overflow-wrap: anywhere; }
+.wsp-definition-menu button[aria-selected="true"] { background: var(--accent-soft); }
+.wsp-navigation-title { padding: 6px 10px; color: var(--text-dim); font-size: 12px; }
+/* Monaco renders menus in a shadow root outside its themed text node.
+   Variables on the canvas inherit through that boundary; selectors do not. */
+.wsp-editor-canvas {
+  --vscode-menu-background: var(--panel);
+  --vscode-menu-foreground: var(--text);
+  --vscode-menu-border: var(--border);
+  --vscode-menu-separatorBackground: var(--border);
+  --vscode-list-hoverBackground: var(--accent-soft);
+  --vscode-list-hoverForeground: var(--text);
+  --vscode-menu-selectionBorder: var(--accent);
+  --vscode-widget-shadow: #0003;
+  --vscode-cornerRadius-large: 6px;
+}
+.wsp-editor .monaco-menu-container {
+  background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; box-shadow: 0 8px 24px #0003;
+}
+.wsp-editor .monaco-menu-container .monaco-scrollable-element { background: var(--panel); }
+.wsp-analysis-status { flex-basis: 100%; }
+.wsp-analysis-settings { width: min(560px, 90vw); max-height: 85vh; overflow: auto; background: var(--panel);
+  color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 22px; }
+.wsp-analysis-settings::backdrop { background: #0006; }
+.wsp-analysis-settings form { display: grid; gap: 12px; }
+.wsp-analysis-settings h3, .wsp-analysis-hint { margin: 0; }
+.wsp-analysis-settings label { display: grid; gap: 5px; font-size: 13px; }
+.wsp-analysis-settings input, .wsp-analysis-settings textarea, .wsp-analysis-settings select { width: 100%;
+  box-sizing: border-box; border: 1px solid var(--border); background: var(--bg-soft); color: var(--text); padding: 8px; border-radius: 6px; }
+.wsp-analysis-hint { font-size: 12px; color: var(--text-dim); }
+.wsp-analysis-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.wsp-analysis-actions button { padding: 8px 14px; cursor: pointer; border: 1px solid var(--border); border-radius: 6px; }
+.wsp-editor-status { margin-top: auto; display: flex; gap: 12px; justify-content: space-between; padding: 8px 14px;
+  font-size: 11px; color: var(--text-dim); border-top: 1px solid var(--border); flex-wrap: wrap; }
+@media (max-width: 700px) { .wsp-editor-path { flex-basis: 100%; }
+  .wsp-editor-toolbar { gap: 5px; padding: 9px; } .wsp-editor button, .wsp-editor select { padding: 6px; } }

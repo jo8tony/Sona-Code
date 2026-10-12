@@ -978,3 +978,25 @@ button.wsp-file-mention:hover { background: var(--accent-soft); text-decoration:
 .wsp-attachment button .wsp-icon { width: 13px; height: 13px; }
 .wsp-change-close { display: inline-grid; place-items: center; }
 .wsp-change-close .wsp-icon, .wsp-queue-remove .wsp-icon { width: 17px; height: 17px; }
+
+/* Stable project shell panel lives next to content, outside SSE redraws. */
+.wsp-scroll.wsp-scroll-terminal { overflow: hidden; padding-right: 0 !important; }
+.wsp-terminal { display: flex; flex-direction: column; height: 100%; min-height: 0; background: #181d27; color: #e6e9ef; }
+.wsp-terminal[hidden], .wsp-terminal-project[hidden], .wsp-terminal-box[hidden] { display: none; }
+.wsp-terminal-toolbar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid #303746; }
+.wsp-terminal-toolbar > button { flex: none; color: #dce4f3; background: #293447; border-color: #43516a; }
+.wsp-terminal-tabs { display: flex; gap: 5px; overflow-x: auto; flex: 1; min-width: 0; }
+.wsp-terminal-tab { display: flex; flex: none; align-items: center; border-radius: 5px; background: #222b3b; }
+.wsp-terminal-tab.active { background: #334560; }
+.wsp-terminal-select, .wsp-terminal-close { background: transparent; color: inherit; border: 0; cursor: pointer; padding: 7px 9px; }
+.wsp-terminal-close:hover { background: #7c3444; }
+.wsp-terminal-select:focus-visible, .wsp-terminal-close:focus-visible { outline: 2px solid #86b7ff; outline-offset: -2px; }
+.wsp-terminal-status { flex: none; min-height: 20px; padding: 5px 12px; font-size: 12px; color: #aab8cd; overflow-wrap: anywhere; }
+.wsp-terminal-status.error { color: #ff9ca6; }
+.wsp-terminal-area, .wsp-terminal-project { flex: 1; min-height: 0; position: relative; display: flex; }
+.wsp-terminal-box { position: absolute; inset: 0; padding: 8px 12px; }
+.wsp-terminal-box .xterm { height: 100%; }
+.wsp-terminal-box .xterm-viewport { scrollbar-width: thin; }
+.wsp-tabs { flex-shrink: 0; overflow-x: auto; scrollbar-width: thin; }
+.wsp-tab { flex-shrink: 0; white-space: nowrap; }
+.wsp-terminal-group-tabs { display: flex; gap: 5px; }

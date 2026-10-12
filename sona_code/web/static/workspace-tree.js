@@ -88,13 +88,14 @@ function createWorkspaceTree(pane, callbacks) {
     closeMenu();
     menu = el("div", { class: "wsp-tree-menu", role: "menu" });
     const actions = [
-      ["打开", () => callbacks.open(project.id, item.path, "default")],
+      ...(item.directory ? [] : [["在应用内打开", () => callbacks.open(project.id, item.path, "editor")]]),
+      ["系统打开", () => callbacks.open(project.id, item.path, "default")],
       ["在文件管理器中显示", () => callbacks.open(project.id, item.path, "reveal")],
       ...(item.directory || !browserFile(item.path) ? [] :
         [["在浏览器中打开", () => callbacks.open(project.id, item.path, "browser")]]),
       ["添加到对话引用", () => callbacks.reference(item.path)],
     ];
-    const icons = { "打开": "open", "在文件管理器中显示": "reveal",
+    const icons = { "在应用内打开": "fileCode", "系统打开": "open", "在文件管理器中显示": "reveal",
       "在浏览器中打开": "globe", "添加到对话引用": "reference" };
     for (const [label, action] of actions) menu.append(el("button", {
       type: "button", role: "menuitem",
@@ -117,15 +118,15 @@ function createWorkspaceTree(pane, callbacks) {
       "aria-expanded": item.directory ? String(expanded.has(item.path)) : null,
       title: item.path, draggable: true,
       onclick: () => {
-        if (results) { void locate(project, item.path); return; }
+        if (results) { void locate(project, item.path); }
         selected = item.path;
         if (item.directory) {
           if (expanded.has(item.path)) expanded.delete(item.path);
           else { expanded.add(item.path); void load(item.path); }
         }
         render();
+        if (!item.directory) void callbacks.open(project.id, item.path, "editor");
       },
-      ondblclick: () => { if (!item.directory) void callbacks.open(project.id, item.path, "default"); },
       oncontextmenu: (event) => showMenu(event, item),
       ondragstart: (event) => {
         event.dataTransfer.setData("application/x-sona-project-reference",

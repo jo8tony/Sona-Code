@@ -8,21 +8,23 @@ def test_electron_quit_waits_once_and_retries_after_cleanup_failure():
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
 const source = fs.readFileSync("electron/main.js", "utf8").replace(/\r\n/g, "\n");
 const begin = source.indexOf('app.on("before-quit",');
-const end = source.indexOf('\n}\n\nasync function stopBackend', begin);
+const end = source.indexOf('\n}\n\nasync function confirmQuit', begin);
 let handler, resolve, reject, calls = 0, quits = 0, failures = 0, prevented = 0;
 const context = vm.createContext({quitting: false, quitReady: false, shutdownPromise: undefined,
   app: {on(name, fn) {handler = fn;}, quit() {quits++;}},
   stopBackend() {calls++; return new Promise((yes, no) => {resolve = yes; reject = no;});},
+  confirmQuit: async () => true,
   dialog: {showErrorBox() {failures++;}},
 });
 vm.runInContext(source.slice(begin, end), context);
 const event = {preventDefault() {prevented++;}};
 (async () => {
   handler(event); handler(event);
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(calls, 1); assert.equal(quits, 0); assert.equal(prevented, 2);
   reject(new Error("blocked")); await context.shutdownPromise;
   assert.equal(quits, 0); assert.equal(failures, 1); assert.equal(context.quitting, false);
-  handler(event); assert.equal(calls, 2); resolve(); await context.shutdownPromise;
+  handler(event); await new Promise(resolve => setImmediate(resolve)); assert.equal(calls, 2); resolve(); await context.shutdownPromise;
   assert.equal(quits, 1); assert.equal(context.quitReady, true);
   handler(event); assert.equal(calls, 2); assert.equal(prevented, 3);
 })().catch(error => {console.error(error); process.exitCode = 1;});
@@ -47,4 +49,27 @@ assert.equal(card.class, "wsp-tool error");
 assert(texts(card).includes("已停止")); assert(texts(group).includes("已停止 · 1s"));
 assert(!texts(card).includes("运行中")); assert(!texts(group).includes("运行中"));
 assert(texts(context.toolPart({...stopped, state: {status: "error", error: "other"}})).includes("失败"));
+''')
+
+
+def test_cancel_quit_with_unsaved_code_keeps_backend_running():
+    run_node(r'''
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const source = fs.readFileSync("electron/main.js", "utf8").replace(/\r\n/g, "\n");
+let handler, stops = 0, quits = 0, shown = 0, response = 0;
+const context = vm.createContext({quitting:false, quitReady:false, shutdownPromise:undefined,
+  app:{on(name, fn){handler=fn;}, quit(){quits++;}},
+  window:{isDestroyed:()=>false, webContents:{executeJavaScript:async()=>true}},
+  showWindow(){shown++;}, stopBackend:async()=>{stops++;},
+  dialog:{showMessageBox:async()=>({response}), showErrorBox(){assert.fail('Unexpected exit failure');}},
+});
+const begin = source.indexOf('app.on("before-quit",');
+const end = source.indexOf('\n}\n\nasync function confirmQuit', begin);
+vm.runInContext(source.slice(begin, end) + source.slice(source.indexOf('async function confirmQuit'), source.indexOf('async function stopBackend')), context);
+(async()=>{
+  handler({preventDefault(){}}); const canceled=context.shutdownPromise; await canceled;
+  assert.equal(stops,0); assert.equal(quits,0); assert.equal(context.quitting,false); assert.equal(shown,1);
+  response=1; handler({preventDefault(){}}); await context.shutdownPromise;
+  assert.equal(stops,1); assert.equal(quits,1); assert.equal(context.quitReady,true);
+})().catch(error=>{console.error(error);process.exitCode=1;});
 ''')

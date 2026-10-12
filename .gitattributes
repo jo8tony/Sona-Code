@@ -1,4 +1,24 @@
-# Preserve patch matching and recipe hashes across Windows/Unix checkouts.
-/packaging/opencode-locale-plugin.mjs text eol=lf
-/scripts/prepare-opencode.py text eol=lf
-/tests/fixtures/y18n-5.0.8/index.mjs text eol=lf
+# Generated assets and dependency fingerprints must survive Windows checkouts byte-for-byte.
+sona_code/web/static/vendor/monaco/** -text
+package.json text eol=lf
+package-lock.json text eol=lf
+pyproject.toml text eol=lf
+packaging/opencode.json text eol=lf
+packaging/openspec.json text eol=lf
+packaging/opencode-locale-plugin.mjs text eol=lf
+packaging/openspec-package/** text eol=lf
+packaging/opencode-sdk/** text eol=lf
+packaging/openspec-launcher/** text eol=lf
+packaging/command-runner/** text eol=lf
+scripts/prepare-opencode.py text eol=lf
+scripts/prepare-openspec.py text eol=lf
+scripts/prepare-native-sdk.py text eol=lf
+packaging/language-services.json text eol=lf
+packaging/language-services-package/** text eol=lf
+scripts/prepare-language-services.py text eol=lf
+THIRD_PARTY_NOTICES.md text eol=lf
+electron/verify-package.cjs text eol=lf
+scripts/offline-kit.py text eol=lf
+scripts/build-offline-windows.ps1 text eol=lf
+sona_code/language_services/** text eol=lf
+tests/fixtures/y18n-5.0.8/index.mjs text eol=lf

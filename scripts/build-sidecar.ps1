@@ -1,6 +1,8 @@
 $ErrorActionPreference = "Stop"
 
 $ProjectDir = Split-Path -Parent $PSScriptRoot
+& node (Join-Path $PSScriptRoot "build-editor.mjs") --check
+if ($LASTEXITCODE -ne 0) { throw "Local Monaco resources are missing or corrupt; run npm run editor:build" }
 $BuildPython = if ($env:BUILD_PYTHON) {
     $env:BUILD_PYTHON
 } elseif (Test-Path (Join-Path $ProjectDir ".venv-build\Scripts\python.exe")) {
@@ -21,6 +23,10 @@ $BinaryDir = Join-Path $ProjectDir "src-tauri\binaries"
 $BinaryName = "sona-code-sidecar"
 
 New-Item -ItemType Directory -Force -Path $OutputDir, $BinaryDir | Out-Null
+& $BuildPython (Join-Path $PSScriptRoot "prepare-language-services.py") --prepare
+if ($LASTEXITCODE -ne 0) { throw "Preparing offline language services failed" }
+& $BuildPython (Join-Path $PSScriptRoot "prepare-native-sdk.py")
+if ($LASTEXITCODE -ne 0) { throw "Preparing offline OpenCode plugin SDK failed" }
 & $BuildPython -m PyInstaller `
     --noconfirm `
     --clean `

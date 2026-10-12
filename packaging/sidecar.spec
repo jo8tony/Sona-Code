@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import sys
+import subprocess
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_submodules
@@ -15,6 +16,11 @@ hiddenimports = collect_submodules("uvicorn")
 binaries = []
 
 if sys.platform == "win32":
+    subprocess.run([sys.executable, str(ROOT / 'scripts/prepare-native-sdk.py'), '--check'], check=True)
+    sdk = ROOT / 'build/opencode-sdk'
+    if not (sdk / 'manifest.json').is_file() or not (sdk / 'config.zip').is_file():
+        raise SystemExit('Offline plugin SDK missing; run scripts/prepare-native-sdk.py')
+    datas.append((str(sdk), 'opencode-sdk'))
     import winpty
 
     winpty_runtime_dir = Path(winpty.__file__).resolve().parent

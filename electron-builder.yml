@@ -9,6 +9,8 @@ files:
   - desktop/index.html
   - package.json
 extraResources:
+  - from: build/language-services
+    to: tools/language-services
   - from: build/openspec
     to: tools/openspec
   - from: src-tauri/icons/icon.ico

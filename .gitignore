@@ -1,6 +1,7 @@
 # 虚拟环境与依赖
 .venv/
 .venv-build/
+.venv-offline/
 venv/
 env/
 *.egg-info/

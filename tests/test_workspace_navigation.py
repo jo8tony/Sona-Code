@@ -94,11 +94,12 @@ def test_prompt_jump_keeps_near_bottom_history_pinned_during_refresh():
     run_node(r'''
 const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
 const source = fs.readFileSync("sona_code/web/static/workspace.js", "utf8");
-const scroll = {scrollTop: 440, scrollHeight: 1000, clientHeight: 500}; // Inside the 80px follow threshold.
+const scroll = {scrollTop: 440, scrollHeight: 1000, clientHeight: 500, classList: {toggle() {}}}; // Inside the 80px follow threshold.
 const content = {children: [], childNodes: [], classList: {remove() {}}};
 const state = {projectId: "p", sessionId: "s", tab: "chat"};
 const frames = [], row = {};
 const context = vm.createContext({state, scroll, content, composerDock: {},
+  projectTerminal: {hide() {}},
   browsingHistory: true, followLatest: false, navigation: {render() {}},
   document: {activeElement: null}, view: {querySelector: () => ({})},
   trajectoryView: null, changePopover: null, changeTriggers: new Map(),
