@@ -73,6 +73,7 @@ function createCodeNavigation({monaco, editor, canvas, client, snapshot, openTar
     }
   }
   disposables.push(editor.addAction({id: "sona-code.goto-definition", label: "转到项目定义", keybindings: [monaco.KeyCode.F12],
+    contextMenuGroupId: "navigation", contextMenuOrder: 1.5,
     precondition: "editorTextFocus && !inComposition", run: () => perform(editor.getPosition())}));
   disposables.push(editor.addAction({id: "sona-code.goto-implementation", label: "转到实现",
     keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyB],

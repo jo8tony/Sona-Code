@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import os
 import shutil
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import NavigationError
 from .settings import jdk_runtime_name
+from sona_code.workspace.files import FileError, project_file_path
 
 SYSTEM_ENV = {'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP', 'USERPROFILE',
               'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA',
@@ -38,6 +40,43 @@ def _source_roots(project: Path) -> list[str]:
         if len(roots) >= 100 or visited >= 20000:
             break
     return roots or ['.']
+
+
+def _source_project(project: Path, cache: Path, roots: list[str], libraries: list[str], runtime: str) -> Path:
+    """Import a linked Eclipse project without writing metadata into user sources.
+
+    JDT's invisible-project importer refuses folders containing Maven/Gradle
+    descriptors even when those build importers are disabled. An explicit
+    cache-only project also indexes unopened sources in that default mode.
+    """
+    folder = cache / 'source-project'
+    folder.mkdir(parents=True, exist_ok=True)
+    description = ET.Element('projectDescription')
+    ET.SubElement(description, 'name').text = 'sona-source'
+    ET.SubElement(description, 'comment')
+    ET.SubElement(description, 'projects')
+    ET.SubElement(description, 'buildSpec')
+    ET.SubElement(ET.SubElement(description, 'natures'), 'nature').text = 'org.eclipse.jdt.core.javanature'
+    link = ET.SubElement(ET.SubElement(description, 'linkedResources'), 'link')
+    ET.SubElement(link, 'name').text = 'sources'
+    ET.SubElement(link, 'type').text = '2'
+    ET.SubElement(link, 'locationURI').text = project.as_uri()
+    ET.ElementTree(description).write(folder / '.project', encoding='utf-8', xml_declaration=True)
+    classpath = ET.Element('classpath')
+    for root in roots:
+        ET.SubElement(classpath, 'classpathentry', kind='src', path='sources' + ('' if root == '.' else '/' + root))
+    candidates = libraries or [path.relative_to(project).as_posix() for path in (project / 'lib').glob('**/*.jar')]
+    for name in candidates:
+        try:
+            library = project_file_path(project, name)
+        except (FileError, OSError, ValueError):
+            continue
+        ET.SubElement(classpath, 'classpathentry', kind='lib', path=str(library))
+    ET.SubElement(classpath, 'classpathentry', kind='con',
+                  path='org.eclipse.jdt.launching.JRE_CONTAINER/org.eclipse.jdt.internal.debug.ui.launcher.StandardVMType/' + runtime)
+    ET.SubElement(classpath, 'classpathentry', kind='output', path='bin')
+    ET.ElementTree(classpath).write(folder / '.classpath', encoding='utf-8', xml_declaration=True)
+    return folder
 
 
 def build_launch(bundle, family: str, project: Path, settings, cache: Path) -> ServerLaunch:
@@ -93,6 +132,12 @@ def build_launch(bundle, family: str, project: Path, settings, cache: Path) -> S
             config['configuration']['runtimes'] = [{'name': jdk_runtime_name(Path(java.project_jdk)), 'path': java.project_jdk, 'default': True}]
         configuration = {'java': config}
         initialize['initializationOptions'] = {'settings': configuration}
+        if java.mode == 'source':
+            runtime = jdk_runtime_name(Path(java.project_jdk)) if java.project_jdk else 'JavaSE-21'
+            source_project = _source_project(project, cache, config['project']['sourcePaths'], java.libraries, runtime)
+            initialize['workspaceFolders'] = [{'uri': source_project.as_uri(), 'name': project.name}]
+            # JDT 1.61 reads this extension rather than LSP workspaceFolders.
+            initialize['initializationOptions']['workspaceFolders'] = [source_project.as_uri()]
         argv = [str(paths['java']), '-Xmx1G', '-Declipse.application=org.eclipse.jdt.ls.core.id1',
                 '-Dosgi.bundles.defaultStartLevel=4', '-Declipse.product=org.eclipse.jdt.ls.core.product',
                 '--add-modules=ALL-SYSTEM', '--add-opens=java.base/java.util=ALL-UNNAMED',

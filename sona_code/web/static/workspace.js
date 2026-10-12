@@ -3837,6 +3837,7 @@ function renderWorkspace(view) {
     scrollToLatestOnLoad = true;
     const withoutProject = !state.projectId;
     state.projectId = projectId;
+    codeEditor.setProject(projectId);
     state.queue = { items: [], paused: false, error: "" }; state.queueLoaded = false;
     state.skills = []; state.commands = []; updateSkillInput();
     if (!state.chosenModels.has(projectId)) {
@@ -3889,6 +3890,7 @@ function renderWorkspace(view) {
     const projectChanged = state.projectId !== projectId;
     if (projectChanged && tree.projectId) tree.close();
     state.projectId = projectId;
+    codeEditor.setProject(projectId);
     state.queue = { items: [], paused: false, error: "" }; state.queueLoaded = false;
     if (projectChanged) { state.skills = []; state.commands = []; updateSkillInput(); }
     if (!state.chosenModels.has(projectId)) {
@@ -4140,8 +4142,8 @@ function renderWorkspace(view) {
   }
 
   function openProjectTerminal(project) {
-    codeEditor.hide();
     if (state.projectId !== project.id) selectProject(project.id);
+    codeEditor.hide();
     state.tab = workspaceSelection.tab = "terminal";
     persistWorkspaceSelection();
     renderHeader(); renderMain();
@@ -4168,6 +4170,7 @@ function renderWorkspace(view) {
         cancelSelectedRefresh();
         saveDraft();
         state.projectId = null; state.sessionId = null; state.messages = [];
+        codeEditor.setProject(null);
         draftContextReady = false;
         state.selectedChange = null;
         closeChangePopover();
@@ -4571,6 +4574,7 @@ function renderWorkspace(view) {
       else if (selected) loadSessions(selected);
       else {
         state.projectId = null; state.sessionId = null;
+        codeEditor.setProject(null);
         if (!draftContextReady) restoreDraft();
         if (!state.chosenModels.has(null)) {
           try { state.chosenModels.set(null, localStorage.getItem("sona-code:last-model") || ""); } catch (_) {}

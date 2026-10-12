@@ -147,6 +147,7 @@ const methods = ["saveDraft", "cancelSelectedRefresh", "hideAutocomplete", "clos
   "loadCheck", "refreshSelected", "connectEvents", "loadModels", "loadAgents", "refreshSidebarAccount", "markVisibleSessionRead"];
 const context = vm.createContext({state, disposed: false, suspended: false,
   codeEditor: {suspend() {calls.push("suspendEditor");}, resume() {calls.push("resumeEditor");}},
+  projectTerminal: {hide() {}},
     navigation: {close() {}},
   events: {close() {calls.push("closeEvents");}}, eventProjectId: "p", queueDialog: null, deleteDialog: null,
   workspaceModelCache: new Map([["p", {data: {old: true}}]]), cleanups: [() => calls.push("dispose")],

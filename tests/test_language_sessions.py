@@ -159,7 +159,9 @@ async def test_duplicate_connection_capacity_and_shutdown(service):
     with pytest.raises(NavigationError) as error:
         await manager.connect('p', project, 'window-7', 'python', emit)
     assert error.value.code == 'service_limit'
-    await manager.shutdown()
+    await asyncio.wait_for(asyncio.gather(*(s._init_task for s in sessions)), 10)
+    assert all(s.ready.is_set() for s in sessions), 'Concurrent services must not starve the default executor'
+    await asyncio.wait_for(manager.shutdown(), 10)
     assert all(s.closed for s in sessions)
     assert all(s.rpc is None or s.rpc.process.poll() is not None for s in sessions)
     with pytest.raises(NavigationError):

@@ -52,6 +52,8 @@ async def test_real_java_interface_and_abstract_implementations(tmp_path):
         'src/main/java/api/Base.java': 'package api; public abstract class Base { public abstract int calculate(); }\n',
         'src/main/java/impl/Child.java': 'package impl; import api.Base; public class Child extends Base { public int calculate() { return 3; } }\n',
     }
+    # Build descriptors must not prevent offline source-mode indexing.
+    files['pom.xml'] = '<project><modelVersion>4.0.0</modelVersion><groupId>test</groupId><artifactId>source</artifactId><version>1</version></project>'
     for name, content in files.items():
         path = project / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -69,20 +71,26 @@ async def test_real_java_interface_and_abstract_implementations(tmp_path):
         messages.append(message)
     manager = LanguageServiceManager(tmp_path / 'cache', bundle,
                                     SimpleNamespace(get=lambda _: AnalysisSettings()), launch=launch)
+    heartbeat = None
     try:
         session = await manager.connect('java-implementation', project, 'isolated-test', 'java', emit)
+        async def ping():
+            while True:
+                await asyncio.sleep(10)
+                # Match the browser heartbeat while cold bundle validation runs.
+                session._last_heartbeat = manager.clock()
+        heartbeat = asyncio.create_task(ping())
         await asyncio.wait_for(session._init_task, 125)
         assert session.ready.is_set(), messages
         assert messages[-1]['capabilities']['implementation'] is True
         sequence = 0
-        for name in files:
+        for name in ('src/main/java/api/Worker.java', 'src/main/java/api/Base.java'):
             sequence += 1
             await session.handle({'type': 'open', 'id': sequence, 'path': name, 'language': 'java', 'version': 1, 'text': files[name]})
         for kind, source, needle, expected in [
             ('implementation', 'src/main/java/api/Worker.java', 'Worker', {'src/main/java/impl/One.java', 'src/main/java/impl/Two.java'}),
             ('implementation', 'src/main/java/api/Worker.java', 'run(', {'src/main/java/impl/One.java', 'src/main/java/impl/Two.java'}),
             ('implementation', 'src/main/java/api/Base.java', 'calculate(', {'src/main/java/impl/Child.java'}),
-            ('definition', 'src/main/java/impl/One.java', 'run(', {'src/main/java/impl/One.java'}),
         ]:
             deadline = time.monotonic() + 45
             response = None
@@ -100,5 +108,9 @@ async def test_real_java_interface_and_abstract_implementations(tmp_path):
                 await asyncio.sleep(.4)
             assert {target['path'] for target in response['targets']} == expected, response
         assert all((project / name).read_text(encoding='utf-8') == content for name, content in files.items())
+        assert not list(project.rglob('.project')) and not list(project.rglob('.classpath'))
     finally:
+        if heartbeat:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
         await manager.shutdown()

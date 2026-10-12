@@ -30,6 +30,7 @@ global.composer = {snapshot: () => structuredClone(editor), restore: draft => {e
   get fileReferences() {return [];}};
 global.draftTimer = null; global.draftContextReady = true;
 global.tree = {}; global.root = {classList: {remove() {}}}; global.input = {focus() {}};
+const editorProjects = []; global.codeEditor = {setProject: id => editorProjects.push(id)};
 global.pendingImages = new Map(); global.creationDraftDestinations = new Map(); global.conversationViews = new Map();
 for (const name of ["updateSkillInput", "renderAttachments", "saveConversationView", "cancelSelectedRefresh",
   "hideAutocomplete", "closeChangePopover", "restoreConversationView", "updateSidebarButton", "renderSidebar",
@@ -44,6 +45,7 @@ const choice = "demo\u0000second-model";
 chooseModel(choice); state.chosenVariants.set(null, "high");
 assert.equal(state.chosenModels.get(null), choice); assert.equal(stored.get("sona-code:last-model"), choice);
 selectProject("first");
+assert.deepEqual(editorProjects, ["first"], "Selecting a project updates the file preview context");
 assert.equal(state.chosenModels.get("first"), choice); assert.equal(state.chosenVariants.get("first"), "high");
 assert.equal(stored.get("sona-code:model:first"), choice);
 assert.equal(editor.text, "Message written before creating a project");
@@ -277,7 +279,8 @@ const file = () => ({dataset: {changeFile: "large.py"}, body: body(), querySelec
 global.content = {children: [], classList: {remove() {}},
   querySelectorAll(selector) {return selector === ".wsp-diff-file" ? this.children : [];},
   get firstChild() {return this.children[0];}, replaceChildren() {throw Error("Diff content must not be cleared");}};
-global.scroll = {scrollTop: 300, scrollHeight: 2000, clientHeight: 500};
+global.scroll = {scrollTop: 300, scrollHeight: 2000, clientHeight: 500, classList: {toggle() {}}};
+global.projectTerminal = {hide() {}};
 global.state = {tab: "changes", sessionId: "s", projectId: "p", selectedChange: null};
 global.composerDock = {}; global.document = {activeElement: null};
 global.view = {querySelector: () => ({})}; global.changeTriggers = new Map();

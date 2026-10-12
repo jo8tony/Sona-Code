@@ -3,9 +3,10 @@
 function createWorkspaceEditor(root, callbacks) {
   const files = new Map();
   const tabNodes = new Map();
+  const projectCurrents = new Map(), projectHistories = new Map(), visibleProjects = new Set();
   const documentVersions = new Map(), documentEpochs = new Map(), analysisStates = new Map();
   const errorText = error => typeof error.detail === "string" ? error.detail : error.message;
-  let current = null, monaco = null, editor = null, opener = null, disposed = false, reopen = false;
+  let activeProjectId = null, current = null, monaco = null, editor = null, opener = null, disposed = false, reopen = false;
   let navigationGeneration = 0;
   let navigation = null;
   let preferences = {defaultEditing: false, autoSave: false};
@@ -22,13 +23,25 @@ function createWorkspaceEditor(root, callbacks) {
   const canvas = el("div", { class: "wsp-editor-canvas" });
   const language = el("select", { "aria-label": "代码语言" });
   const button = (text, action, attrs = {}) => el("button", { type: "button", text, onclick: action, ...attrs });
-  const back = button("后退", () => { void history.move(-1); }, {title: "Ctrl+← 回到上一位置", disabled: true});
-  const forward = button("前进", () => { void history.move(1); }, {title: "Ctrl+→ 回到下一位置", disabled: true});
-  const history = createCodeHistory({capture: capturePosition,
-    openTarget: place => openTarget(place.projectId, place.path, place.selection,
-      {recordHistory: false, viewState: place.viewState, historyMove: true}),
-    onChange: () => { back.disabled = !history.canBack; forward.disabled = !history.canForward; },
-    onError: callbacks.error});
+  const back = button("后退", () => { void activeHistory()?.move(-1); }, {title: "Ctrl+← 回到上一位置", disabled: true});
+  const forward = button("前进", () => { void activeHistory()?.move(1); }, {title: "Ctrl+→ 回到下一位置", disabled: true});
+  function updateHistoryButtons() {
+    const history = projectHistories.get(activeProjectId);
+    back.disabled = !history?.canBack; forward.disabled = !history?.canForward;
+  }
+  function historyFor(projectId) {
+    if (!projectId) return null;
+    let history = projectHistories.get(projectId);
+    if (!history) {
+      history = createCodeHistory({capture: () => current?.projectId === projectId ? capturePosition() : null,
+        openTarget: place => activeProjectId === projectId && openTarget(place.projectId, place.path, place.selection,
+          {recordHistory: false, viewState: place.viewState, historyMove: true}),
+        onChange: updateHistoryButtons, onError: callbacks.error});
+      projectHistories.set(projectId, history);
+    }
+    return history;
+  }
+  function activeHistory() { return historyFor(activeProjectId); }
   const client = createLanguageClient({urlFor: callbacks.languageUrl, onError: callbacks.error,
     onStatus: value => {analysisStates.set(JSON.stringify([value.projectId, value.family]), value); render();}});
   const analysisSettings = createAnalysisSettings({api: callbacks.api, projectId: () => current?.projectId,
@@ -98,14 +111,22 @@ function createWorkspaceEditor(root, callbacks) {
   }
   function dirty(file) { return !!file.model && file.model.getValue() !== file.saved; }
   function show() {
+    if (activeProjectId) visibleProjects.add(activeProjectId);
     if (!disposed) { panel.hidden = false; callbacks.visibility?.(true); }
     const source = documentSnapshot(); client.setActive(source?.projectId, source && workspaceLanguageFamily(source.language));
     requestAnimationFrame(layoutPanel);
   }
-  function hide() {
+  function conceal() {
     panel.hidden = true;
     if (!disposed) { client.setActive(null, null); navigation?.invalidate(); }
     callbacks.visibility?.(false);
+  }
+  function hide() {
+    if (activeProjectId) visibleProjects.delete(activeProjectId);
+    conceal();
+  }
+  function projectFiles(projectId = activeProjectId) {
+    return Array.from(files.values()).filter(file => file.projectId === projectId);
   }
   function render() {
     if (disposed) return;
@@ -125,6 +146,7 @@ function createWorkspaceEditor(root, callbacks) {
           button("×", () => closeFile(file), {"aria-label": "关闭文件 " + file.path, title: "关闭此文件"}));
         tab = {node, select}; tabNodes.set(file.key, tab); tabs.append(node);
       }
+      tab.node.hidden = file.projectId !== activeProjectId;
       tab.node.setAttribute("class", "wsp-editor-tab" + (current === file ? " active" : ""));
       tab.select.textContent = (dirty(file) ? "● " : "") + file.path.split("/").at(-1);
       tab.select.setAttribute("aria-selected", String(current === file));
@@ -157,6 +179,8 @@ function createWorkspaceEditor(root, callbacks) {
   function activate(file) {
     if (current?.model && editor) current.viewState = editor.saveViewState();
     current = file;
+    activeProjectId = file.projectId;
+    projectCurrents.set(file.projectId, file);
     if (editor) {
       editor.setModel(file.model || null);
       if (file.viewState) editor.restoreViewState(file.viewState);
@@ -164,6 +188,22 @@ function createWorkspaceEditor(root, callbacks) {
     }
     render();
     tabNodes.get(file.key)?.node.scrollIntoView?.({block: "nearest", inline: "nearest"});
+  }
+  function setProject(projectId) {
+    if (disposed || activeProjectId === (projectId || null)) return;
+    ++navigationGeneration; navigation?.invalidate();
+    if (current?.model && editor) current.viewState = editor.saveViewState();
+    activeProjectId = projectId || null;
+    current = projectCurrents.get(activeProjectId) || projectFiles().findLast(file => file.model && !file.analysisPending) || null;
+    if (current) projectCurrents.set(activeProjectId, current);
+    if (editor) {
+      editor.setModel(current?.model || null);
+      if (current?.viewState) editor.restoreViewState(current.viewState);
+      editor.layout();
+    }
+    updateHistoryButtons(); render();
+    if (current && visibleProjects.has(activeProjectId)) show();
+    else conceal();
   }
   function capturePosition() {
     if (!current?.model || !editor) return null;
@@ -206,9 +246,8 @@ function createWorkspaceEditor(root, callbacks) {
         unicodeHighlight: { ambiguousCharacters: false }, padding: { top: 12, bottom: 12 } });
       opener = monaco.editor.registerEditorOpener({async openCodeEditor(source, resource, selection) {
         if (source !== editor || disposed) return false;
-        const target = Array.from(files.values()).find(file => file.model?.uri.toString() === resource.toString());
-        if (!target) return false;
-        return openTarget(target.projectId, target.path, selection);
+        if (resource.scheme !== "inmemory" || resource.authority !== activeProjectId || !resource.path.startsWith("/")) return false;
+        return openTarget(resource.authority, resource.path.slice(1), selection);
       }});
       const languages = monaco.languages.getLanguages().sort((a, b) => a.id.localeCompare(b.id));
       language.replaceChildren(...languages.map(item => el("option", { value: item.id, text: item.aliases?.[0] || item.id })));
@@ -217,7 +256,7 @@ function createWorkspaceEditor(root, callbacks) {
         status.textContent = status.textContent.split(" · 行 ")[0] + ` · 行 ${event.position.lineNumber}, 列 ${event.position.column}`;
       });
       navigation = createCodeNavigation({monaco, editor, canvas, client, snapshot: documentSnapshot, openTarget,
-        history, onError: callbacks.error});
+        onError: callbacks.error});
     }
     return true;
   }
@@ -262,21 +301,22 @@ function createWorkspaceEditor(root, callbacks) {
       if (historyMove) throw {status: 404, detail: "项目已移除"};
       callbacks.error("项目已移除"); return false;
     }
+    if (activeProjectId !== projectId) setProject(projectId);
     const key = JSON.stringify([projectId, path]);
     let file = files.get(key);
-    if (!file && files.size >= 12) { callbacks.error("最多打开 12 个文件，请先关闭部分标签"); return false; }
+    if (!file && projectFiles(projectId).length >= 12) { callbacks.error("每个项目最多打开 12 个文件，请先关闭部分标签"); return false; }
     const stamp = ++navigationGeneration;
     if (!file) {
       file = { key, projectId, projectName: project.name, path, editing: false,
         model: null, data: null, saved: "", loading: true, saving: false, notice: "" };
       files.set(key, file);
-      render(); show(); file.pending = load(file, {deferAnalysis: true});
+      render(); file.pending = load(file, {deferAnalysis: true});
     }
     if (file.pending) await file.pending;
     if (disposed || stamp !== navigationGeneration || files.get(key) !== file || navigationGuard && !navigationGuard()) return false;
     if (!file.model) {
       files.delete(key); render();
-      if (!files.size) hide();
+      if (!projectFiles(projectId).length && activeProjectId === projectId) hide();
       if (historyMove && file.loadError?.status === 404) throw file.loadError;
       callbacks.error(file.notice || "无法打开文件"); return false;
     }
@@ -292,7 +332,7 @@ function createWorkspaceEditor(root, callbacks) {
     const bounded = applySelection(selection || keepSelection);
     if (bounded && !viewState) editor.revealRangeInCenter(bounded);
     editor.focus();
-    if (recordHistory) history.record(from, capturePosition());
+    if (recordHistory) historyFor(projectId).record(from?.projectId === projectId ? from : null, capturePosition());
     try { await callbacks.locate?.(projectId, path); }
     catch (error) { if (!disposed) callbacks.error("文件树定位失败：" + errorText(error)); }
     return !disposed && stamp === navigationGeneration;
@@ -329,27 +369,31 @@ function createWorkspaceEditor(root, callbacks) {
     const leaving = current === file ? capturePosition() : null;
     client.close(file.projectId, file.path);
     clearTimeout(file.autoTimer); files.delete(file.key); file.change?.dispose();
+    if (projectCurrents.get(file.projectId) === file) projectCurrents.delete(file.projectId);
     if (current === file) {
-      const next = Array.from(files.values()).at(-1);
+      const next = projectFiles(file.projectId).at(-1);
       if (next) {
-        activate(next); history.record(leaving, capturePosition());
+        activate(next); historyFor(file.projectId).record(leaving, capturePosition());
         const source = documentSnapshot(); client.setActive(source?.projectId, source && workspaceLanguageFamily(source.language));
         Promise.resolve(callbacks.locate?.(next.projectId, next.path)).catch(error => callbacks.error(errorText(error)));
       }
-      else { current = null; editor?.setModel(null); hide(); history.clear(); }
+      else { current = null; editor?.setModel(null); hide(); historyFor(file.projectId).clear(); }
     }
-    if (!files.size) { hide(); history.clear(); }
+    if (!projectFiles(file.projectId).length) {
+      visibleProjects.delete(file.projectId); historyFor(file.projectId).clear();
+    }
     file.model?.dispose(); render();
   }
   function closePanel() {
-    if (Array.from(files.values()).some(file => file.saving)) { callbacks.error("请等待保存完成后关闭"); return; }
-    const changed = Array.from(files.values()).filter(dirty);
+    const closing = projectFiles();
+    if (closing.some(file => file.saving)) { callbacks.error("请等待保存完成后关闭"); return; }
+    const changed = closing.filter(dirty);
     if (changed.length && !window.confirm(`关闭将丢弃 ${changed.length} 个文件的未保存修改，是否继续？`)) return;
-    ++navigationGeneration; history.clear();
-    const closing = Array.from(files.values());
+    ++navigationGeneration; activeHistory()?.clear();
     // Closing a language group reports status synchronously and renders again.
     // Detach every model from UI state before disposing any of them.
-    files.clear(); current = null; editor?.setModel(null); hide(); render();
+    for (const file of closing) files.delete(file.key);
+    projectCurrents.delete(activeProjectId); current = null; editor?.setModel(null); hide(); render();
     for (const file of closing) { client.close(file.projectId, file.path); clearTimeout(file.autoTimer); file.change?.dispose(); file.model?.dispose(); }
   }
   const beforeUnload = event => {
@@ -361,7 +405,7 @@ function createWorkspaceEditor(root, callbacks) {
     const key = event.key.toLowerCase();
     if (editor?.hasTextFocus() && event.ctrlKey && ["ArrowLeft", "ArrowRight"].includes(event.key)) {
       event.preventDefault(); event.stopPropagation();
-      void history.move(event.key === "ArrowLeft" ? -1 : 1); return;
+      void activeHistory()?.move(event.key === "ArrowLeft" ? -1 : 1); return;
     }
     if (key !== "s" && key !== "i") return;
     event.preventDefault(); event.stopPropagation();
@@ -375,12 +419,12 @@ function createWorkspaceEditor(root, callbacks) {
       client.setActive(current.projectId, source && workspaceLanguageFamily(source.language)); render();
     }
   });
-  return { open, openTarget,
+  return { open, openTarget, setProject,
     hide() { ++navigationGeneration; reopen = false; hide(); },
-    suspend() { reopen = !panel.hidden; hide(); },
-    resume() { if (reopen && files.size) show(); reopen = false; },
+    suspend() { reopen = !panel.hidden; conceal(); },
+    resume() { if (reopen && projectFiles().length) show(); reopen = false; },
     dispose() {
-      disposed = true; ++navigationGeneration; history.clear(); window.removeEventListener("beforeunload", beforeUnload);
+      disposed = true; ++navigationGeneration; for (const history of projectHistories.values()) history.clear(); window.removeEventListener("beforeunload", beforeUnload);
       document.removeEventListener("keydown", shortcut, true);
       opener?.dispose();
       layoutObserver?.disconnect();

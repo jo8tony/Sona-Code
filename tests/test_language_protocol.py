@@ -106,6 +106,8 @@ async def test_hung_shutdown_kills_owned_process():
 async def test_malformed_response_fails_pending_immediately():
     rpc = peer()
     try:
+        # Exclude cold Windows/Python startup from the short framing deadline.
+        assert await rpc.request('echo', {'value': 'ready'}) == 'ready'
         with pytest.raises(NavigationError) as error:
             await rpc.request('bad-id', {}, timeout=.2)
         assert error.value.code != 'timeout'

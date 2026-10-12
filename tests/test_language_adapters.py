@@ -1,6 +1,7 @@
 """Launch behavior: fixed tools, constrained environment and offline configuration."""
 from pathlib import Path
 from types import SimpleNamespace
+import xml.etree.ElementTree as ET
 
 from sona_code.language_services.adapters import build_launch
 
@@ -79,6 +80,38 @@ def test_java_does_not_activate_optional_annotation_processors(tmp_path):
     assert 'm2e.apt.core_' not in config
     assert 'jdt.apt.pluggable.core_' not in config
     assert 'org.eclipse.jdt.ls.core_' in config
+
+
+def test_java_source_mode_links_maven_sources_only_in_cache(tmp_path):
+    (tmp_path / 'config_win').mkdir()
+    project = tmp_path / 'project & nested'
+    source = project / 'module/src/main/java'
+    source.mkdir(parents=True)
+    (project / 'module/pom.xml').write_text('<project/>')
+    (source / 'Foo.java').write_text('class Foo {}')
+    cache = tmp_path / 'cache'
+    launch = build_launch(Bundle(tmp_path), 'java', project, settings(), cache)
+    folder = cache / 'source-project'
+    assert launch.initialize['rootUri'] == project.as_uri()
+    assert launch.initialize['initializationOptions']['workspaceFolders'] == [folder.as_uri()]
+    assert launch.initialize['workspaceFolders'][0]['uri'] == folder.as_uri()
+    description = ET.parse(folder / '.project')
+    assert description.findtext('linkedResources/link/locationURI') == project.as_uri()
+    entries = ET.parse(folder / '.classpath').getroot()
+    assert any(e.attrib == {'kind': 'src', 'path': 'sources/module/src/main/java'} for e in entries)
+    assert not list(project.rglob('.project')) and not list(project.rglob('.classpath'))
+    assert not (project / 'bin').exists()
+
+
+def test_java_source_cache_libraries_are_existing_project_files(tmp_path):
+    (tmp_path / 'config_win').mkdir()
+    project = tmp_path / 'project'
+    (project / 'lib').mkdir(parents=True)
+    library = project / 'lib/local.jar'
+    library.write_bytes(b'fixture')
+    build_launch(Bundle(tmp_path), 'java', project, settings(), tmp_path / 'cache')
+    entries = ET.parse(tmp_path / 'cache/source-project/.classpath').getroot()
+    assert [e.attrib['path'] for e in entries if e.attrib['kind'] == 'lib'] == [str(library)]
 
 
 def test_project_jdk_runtime_name_uses_its_release_version(tmp_path):

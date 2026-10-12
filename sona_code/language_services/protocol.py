@@ -5,6 +5,7 @@ import asyncio
 import inspect
 import json
 from contextlib import suppress
+from concurrent.futures import ThreadPoolExecutor
 from typing import BinaryIO
 
 from .errors import NavigationError
@@ -71,6 +72,10 @@ class JsonRpcPeer:
         self._failure = None
         self.stderr_tail = bytearray()
         self._handlers = set()
+        # These three pipe/process waits last for the service lifetime. Sharing
+        # asyncio's small default pool starves writes and new service launches
+        # once several projects are analyzed on a low-core Windows machine.
+        self._read_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix='sona-lsp')
         self._reader = asyncio.create_task(self._read())
         self._stderr = asyncio.create_task(self._drain_stderr())
         self._monitor = asyncio.create_task(self._wait_process())
@@ -150,7 +155,7 @@ class JsonRpcPeer:
     async def _read(self):
         try:
             while True:
-                message = await asyncio.to_thread(read_frame, self.process.stdout)
+                message = await asyncio.get_running_loop().run_in_executor(self._read_pool, read_frame, self.process.stdout)
                 if message is None:
                     raise NavigationError('service_exit', '语言服务已退出')
                 request_id = message.get('id')
@@ -179,7 +184,7 @@ class JsonRpcPeer:
                 future.set_exception(self._failure)
 
     async def _wait_process(self):
-        await asyncio.to_thread(self.process.wait)
+        await asyncio.get_running_loop().run_in_executor(self._read_pool, self.process.wait)
         # Drain replies already in the pipe before reporting process exit.
         await asyncio.sleep(.05)
         self._fail(NavigationError('service_exit', '语言服务已退出'))
@@ -187,7 +192,7 @@ class JsonRpcPeer:
     async def _drain_stderr(self):
         try:
             while True:
-                data = await asyncio.to_thread(self.process.stderr.read1, 4096)
+                data = await asyncio.get_running_loop().run_in_executor(self._read_pool, self.process.stderr.read1, 4096)
                 if not data:
                     break
                 self.stderr_tail.extend(data)
@@ -212,6 +217,7 @@ class JsonRpcPeer:
         finally:
             await asyncio.to_thread(self.scope.close)
             await asyncio.gather(self._reader, self._stderr, self._monitor, return_exceptions=True)
+            self._read_pool.shutdown(wait=False, cancel_futures=True)
             for task in list(self._handlers):
                 task.cancel()
             await asyncio.gather(*self._handlers, return_exceptions=True)

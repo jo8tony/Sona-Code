@@ -27,7 +27,7 @@ function harness(preferences = {}, {realClient = false} = {}) {
   const listeners = {};
   const timers = new Map(); let timerId = 0;
   const storage = new Map([['sona-code:editor-preferences', JSON.stringify(preferences)]]);
-  let selected, languageOptions, confirmClose=true;
+  let selected, languageOptions, opener, confirmClose=true;
   const locations = [], errors = [], languageCalls = [];
   const actions = [], cursors = [], modelChanges = [];
   const client = {open:s=>languageCalls.push(['open',s]),change:s=>languageCalls.push(['change',s]),
@@ -51,7 +51,7 @@ function harness(preferences = {}, {realClient = false} = {}) {
     KeyMod:{CtrlCmd:2048,Alt:512},KeyCode:{F12:59,KeyB:32},languages: { getLanguages: () => [{ id: 'plaintext' },{id:'typescript'}],registerDefinitionProvider:()=>({dispose(){}}),registerImplementationProvider:()=>({dispose(){}}) },
     editor: {
       create: () => editor,MouseTargetType:{CONTENT_TEXT:6},
-      registerEditorOpener: () => ({dispose(){}}),
+      registerEditorOpener: value => {opener=value;return {dispose(){}};},
       createModel(value, language, uri) {
         if (models.has(uri)) throw Error('ModelService: Cannot add model because it already exists!');
         const model = {
@@ -122,6 +122,7 @@ function harness(preferences = {}, {realClient = false} = {}) {
   return { api, requests, editor, models, find, root, listeners, timers, locations, errors, languageCalls, client, actions, cursors, selected: () => selected,
     analysisStatus: value=>languageOptions.onStatus(value),
     setConfirm:value=>{confirmClose=value;},
+    opener:()=>opener,
     fireTimers() {const pending = [...timers.values()]; timers.clear(); pending.forEach(fn => fn());} };
 }
 const data = content => ({ content, revision: 'a'.repeat(64), read_only: false, encoding: 'utf-8', eol: 'LF' });
@@ -206,7 +207,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
     const h=harness();const a=h.api.open({id:'p',name:'P'},'a.txt');h.requests.shift()(data('a\nb\nc'));await a;
     h.editor.setSelection({startLineNumber:2,startColumn:1,endLineNumber:2,endColumn:2});h.editor.view.scrollTop=99;
     h.selected().value='draft\nb\nc';
-    const b=h.api.openTarget('other','b.txt',{startLineNumber:99,startColumn:99,endLineNumber:99,endColumn:99});
+    const b=h.api.openTarget('p','b.txt',{startLineNumber:99,startColumn:99,endLineNumber:99,endColumn:99});
     assert.equal(h.selected().value,'draft\nb\nc','Pending target preserves active draft');
     h.editor.view.scrollTop=123;
     h.requests.shift()(data('target'));assert.equal(await b,true);assert.equal(h.editor.selection.startLineNumber,1);
@@ -221,6 +222,42 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
     h.find('后退').onclick();await tick();
     assert.equal(h.requests.length,1,'Closed history target reloads from disk');h.requests.shift()(data('reopened'));await tick();
     assert.equal(h.selected().value,'reopened');h.api.dispose();
+  } else if (process.argv[2] === 'project-isolation') {
+    const h=harness({defaultEditing:true});
+    const tabs=h.root.children[0].children.find(item=>item.role==='tablist');
+    const visibleTabs=()=>tabs.children.filter(item=>!item.hidden).map(item=>item.children[0].textContent);
+    const first=h.api.open({id:'p',name:'P'},'same.java');h.requests.shift()(data('project p'));await first;
+    h.selected().value='draft p';h.selected().change();
+    assert.deepEqual(visibleTabs(),['● same.java']);
+    h.api.setProject('other');
+    assert.equal(h.root.children[0].hidden,true,'A project without previews has no shared editor window');
+    assert.equal(h.selected(),null);assert.deepEqual(visibleTabs(),[]);
+    const second=h.api.open({id:'other',name:'Other'},'same.java');h.requests.shift()(data('project other'));await second;
+    h.selected().value='draft other';h.selected().change();
+    assert.deepEqual(visibleTabs(),['● same.java']);assert.equal(h.selected().value,'draft other');
+    h.api.setProject('p');
+    assert.equal(h.root.children[0].hidden,false);assert.equal(h.selected().value,'draft p');
+    assert.deepEqual(visibleTabs(),['● same.java'],'Only the selected project\'s tabs are visible');
+    const next=h.api.openTarget('p','next.java');h.requests.shift()(data('next p'));await next;
+    assert.equal(h.find('后退').disabled,false);
+    h.api.setProject('other');assert.equal(h.find('后退').disabled,true,'History belongs to the selected project');
+    h.api.setProject('p');h.find('后退').onclick();await tick();assert.equal(h.selected().value,'draft p');
+    const late=h.api.openTarget('p','late.java');h.api.setProject('other');h.requests.shift()(data('late p'));
+    assert.equal(await late,false,'Switching projects cancels late navigation');assert.equal(h.selected().value,'draft other');
+    h.api.setProject('p');
+    h.find('关闭').onclick();
+    assert.equal(h.models.size,1,'Closing one project preview preserves another project\'s draft');
+    h.api.setProject('other');assert.equal(h.selected().value,'draft other');assert.equal(h.root.children[0].hidden,false);
+    h.api.dispose();
+  } else if (process.argv[2] === 'unopened-opener') {
+    const h=harness();const opening=h.api.open({id:'p',name:'P'},'a.ts');h.requests.shift()(data('source'));await opening;
+    const selection={startLineNumber:2,startColumn:1,endLineNumber:2,endColumn:4};
+    const jump=h.opener().openCodeEditor(h.editor,{scheme:'inmemory',authority:'p',path:'/new.ts'},selection);
+    assert.equal(h.requests.length,1,'Native definition opener can load a target without an existing tab');
+    h.requests.shift()(data('first\nsecond'));assert.equal(await jump,true);assert.equal(h.selected().value,'first\nsecond');
+    assert.equal(h.editor.selection.startLineNumber,2);
+    assert.equal(await h.opener().openCodeEditor(h.editor,{scheme:'inmemory',authority:'other',path:'/new.ts'},selection),false);
+    assert.equal(h.requests.length,0,'Stale native targets cannot switch project contexts');h.api.dispose();
   } else if (process.argv[2] === 'navigation-failure') {
     const h=harness();const a=h.api.open({id:'p',name:'P'},'a.txt');h.requests.shift()(data('draft'));await a;
     const bad=h.api.openTarget('p','bad.txt');h.requests.shift().reject({status:500,detail:'failed'});assert.equal(await bad,false);
